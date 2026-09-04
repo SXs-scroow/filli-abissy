@@ -263,23 +263,43 @@ function derivedMax(e,attr){return Math.min(MAX_HP,Math.max(0,effectiveAttr(e,at
 function syncDerivedResources(e){if(!e)return e;const hpMax=derivedMax(e,'Corpo');const sanityMax=derivedMax(e,'Sanidade');e.hpMax=Math.max(1,hpMax);e.hp=clamp(e.hp??e.hpMax,0,e.hpMax);e.sanityMax=sanityMax;e.sanity=clamp(e.sanity??sanityMax,0,sanityMax);return e}
 function normalize(e){e.hpMax=clamp(e.hpMax??35,1,MAX_HP);e.hp=clamp(e.hp??e.hpMax,0,e.hpMax);e.attrLimits=e.attrLimits||blankLimits();e.attrs=e.attrs||blankAttrs();e.skills=e.skills||blankSkills();e.soul=e.soul||'';e.soulPhoto=e.soulPhoto||'';e.belovedObjects=e.belovedObjects||'';e.personality=e.personality||'';e.destiny=e.destiny||'';e.description=e.description||'';e.history=e.history||'';e.conditions=Array.isArray(e.conditions)?e.conditions:[];e.conditionTurns=e.conditionTurns&&typeof e.conditionTurns==='object'?e.conditionTurns:{};initializeConditionTurns(e);e.rolls=Array.isArray(e.rolls)?e.rolls.slice(-12):[];ATTRS.forEach(a=>{e.attrLimits[a]=e.attrLimits[a]||{min:0,max:MAX_ATTR};e.attrLimits[a].min=0;e.attrLimits[a].max=MAX_ATTR;e.attrs[a]=clamp(e.attrs[a]??0,0,MAX_ATTR)});e.backpack=Array.isArray(e.backpack)?e.backpack:[];e.backpack.forEach(b=>{b.qty=Math.max(1,Number(b.qty)||1);const it=item(b.id);if(it)b.qty=Math.min(it.maxQty,b.qty)});e.attack=Number(e.attack)||0;e.defense=Number(e.defense)||0;e.status=e.status||'Ativo';e.initialSpell=e.initialSpell||'';if(Object.prototype.hasOwnProperty.call(e,'login'))syncDerivedResources(e)}
 function rollDiceFor(p,sides,label=null){
- if(!p)return;
+ if(!p)return null;
  const die=Math.max(2,Number(sides)||20);
  let n;
  if(window.crypto?.getRandomValues){
+  const limit=Math.floor(0x100000000/die)*die;
   const arr=new Uint32Array(1);
-  crypto.getRandomValues(arr);
+  do{crypto.getRandomValues(arr)}while(arr[0]>=limit);
   n=arr[0]%die+1;
  }else n=Math.floor(Math.random()*die)+1;
- const rollLabel=label||`1d${die}`;
- p.rolls=[...(p.rolls||[]),{
+ const roll={
   value:n,
-  label:rollLabel,
+  label:label||`1d${die}`,
   die:`d${die}`,
   time:new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
- }].slice(-30);
+ };
+ p.rolls=[...(p.rolls||[]),roll].slice(-30);
  save();
- render('sheet');
+ updateDiceUI(roll);
+ return roll;
+}
+function updateDiceUI(roll){
+ const value=document.getElementById('diceResultValue');
+ const die=document.getElementById('diceResultDie');
+ const status=document.getElementById('rollStatus');
+ const history=document.querySelector('.dice-history-v2');
+ if(value)value.textContent=String(roll.value);
+ if(die)die.textContent=String(roll.die||roll.label||'DADO');
+ if(status)status.innerHTML=`Último resultado: <strong>${esc(roll.value)}</strong> em ${esc(roll.die||roll.label||'d20')}`;
+ if(history){
+  const empty=history.querySelector('.empty');
+  if(empty)empty.remove();
+  const entry=document.createElement('div');
+  entry.className='roll-entry roll-entry-new';
+  entry.innerHTML=`<strong>${esc(roll.value)}</strong><span>${esc(roll.die||roll.label)}</span><time>${esc(roll.time)}</time>`;
+  history.prepend(entry);
+  while(history.children.length>12)history.lastElementChild?.remove();
+ }
 }
 function toggleCondition(p,id){p.conditions=Array.isArray(p.conditions)?p.conditions:[];const i=p.conditions.indexOf(id);if(i>=0)p.conditions.splice(i,1);else p.conditions.push(id);save();render('sheet')}
 function conditionsMarkup(p,master=false){const active=new Set(p.conditions||[]);return `<div class="conditions-grid">${CONDITION_DEFS.map(c=>{const img=state.uiIcons?.conditions?.[c.id]||c.image;const left=conditionTurnsLeft(p,c.id);return `<button type="button" class="condition-chip ${active.has(c.id)?'active':''} ${master?'editable':'readonly'}" data-condition="${c.id}" ${master?'':'disabled'} title="${esc(conditionEffectText(c.id,p))}">${img?`<img class="condition-image" src="${esc(img)}" alt="">`:`<span class="condition-glyph">${esc(c.icon)}</span>`}<span>${esc(c.name)}</span>${active.has(c.id)?`<small>${esc(conditionEffectText(c.id,p))}</small>`:''}</button>`}).join('')}</div>`}
@@ -472,8 +492,14 @@ function playerWallpaperMarkup(p){return `<article class="sheet-card character-w
 function bindSheet(){const p=player();if(!p)return;syncDerivedResources(p);const saveId=document.getElementById('saveIdentity');const cls=document.getElementById('pClass');if(cls)cls.onchange=()=>{if(classChosen(p)){toast('A classe já está selada.');render('sheet');return}if(!cls.value)return;if(!confirm(`Escolher ${cls.value}?\n\nEsta escolha é definitiva para este personagem.`)){render('sheet');return}p.class=cls.value;p.initialSpell='';save();toast('Seu destino está selado.');render('sheet')};if(saveId)saveId.onclick=()=>{p.name=document.getElementById('pName').value.trim()||p.name;if(!classChosen(p)&&document.getElementById('pClass'))p.class=document.getElementById('pClass').value;p.extra=Math.max(0,Number(document.getElementById('extra')?.value)||p.extra||0);p.soul=document.getElementById('soul').value.trim();p.belovedObjects=document.getElementById('belovedObjects').value.trim();p.personality=document.getElementById('personality').value.trim();p.destiny=document.getElementById('destiny').value.trim();p.description=document.getElementById('description').value.trim();p.history=document.getElementById('history').value.trim();p.attrs.Corpo=clamp(p.attrs.Corpo,0,MAX_ATTR);p.attrs.Sanidade=clamp(p.attrs.Sanidade,0,MAX_ATTR);syncDerivedResources(p);p.hp=clamp(document.getElementById('hp').value,0,p.hpMax);p.sanity=clamp(document.getElementById('sanity').value,0,p.sanityMax);p.attack=Number(document.getElementById('attack').value)||0;p.defense=Number(document.getElementById('defense').value)||0;save();toast('Ficha atualizada.');render('sheet')};const history=document.getElementById('saveHistory');if(history)history.onclick=()=>{p.description=document.getElementById('description').value;p.history=document.getElementById('history').value;save();toast('Descrição e história salvas.');render('sheet')};const photo=document.getElementById('photoInput');if(photo)photo.onchange=e=>{const f=e.target.files[0];if(!f)return;if(!f.type.startsWith('image/')||f.size>5*1024*1024){toast('Imagem inválida ou maior que 5 MB.');return}imageFileToDataURL(f,900,.8).then(data=>{p.photo=data;save();document.getElementById('charPhoto').src=data;toast('Imagem salva.')}).catch(()=>toast('Não foi possível processar a imagem.'))};const soulPhoto=document.getElementById('soulPhotoInput');if(soulPhoto)soulPhoto.onchange=e=>{const f=e.target.files[0];if(!f)return;if(!f.type.startsWith('image/')||f.size>5*1024*1024){toast('Imagem inválida ou maior que 5 MB.');return}imageFileToDataURL(f,700,.8).then(data=>{p.soulPhoto=data;save();document.getElementById('soulPhoto').src=data;toast('Imagem da alma salva.')}).catch(()=>toast('Não foi possível processar a imagem.'))};const sa=document.getElementById('saveAttrs');if(sa)sa.onclick=()=>{document.querySelectorAll('.pAttr').forEach(x=>p.attrs[x.dataset.attr]=clamp(x.value,0,MAX_ATTR));syncDerivedResources(p);save();toast('Atributos salvos. Máximo 8.');render('sheet')};const ss=document.getElementById('saveSkills');if(ss)ss.onclick=()=>{document.querySelectorAll('.pSkill').forEach(x=>p.skills[x.dataset.skill]=clamp(x.value,0,MAX_SKILL));save();toast('Perícias salvas. Máximo 15.');render('sheet')};const wp=document.getElementById('playerWallpaperInput');if(wp)wp.onchange=e=>{const f=e.target.files?.[0];if(!f)return;if(!f.type.startsWith('image/')||f.size>5*1024*1024){toast('Wallpaper inválido ou maior que 5 MB.');return}imageFileToDataURL(f,1400,.82).then(data=>{p.homeWallpaper=data;save();toast('Wallpaper do personagem salvo.');render('sheet')}).catch(()=>toast('Não foi possível processar o wallpaper.'))};const cwp=document.getElementById('clearPlayerWallpaper');if(cwp)cwp.onclick=()=>{p.homeWallpaper='';save();toast('Wallpaper removido.');render('sheet')};const addTheme=document.getElementById('addTheme');if(addTheme)addTheme.onclick=()=>{const label=document.getElementById('themeLabel')?.value.trim(),title=document.getElementById('themeTitle')?.value.trim(),url=document.getElementById('themeUrl')?.value.trim();if(!label||!title||!url){toast('Preencha tipo, nome e link da trilha.');return}p.musicThemes=p.musicThemes||[];p.musicThemes.push({label,title,url});save();toast('Trilha do personagem adicionada.');render('sheet')};document.querySelectorAll('[data-remove-theme]').forEach(b=>b.onclick=()=>{p.musicThemes.splice(Number(b.dataset.removeTheme),1);save();toast('Trilha removida.');render('sheet')});document.querySelectorAll('[data-roll-die]').forEach(button=>button.onclick=()=>{
  const sides=Number(button.dataset.rollDie);
  const visual=document.getElementById('diceSkullVisual');
- if(visual){visual.classList.remove('throw');void visual.offsetWidth;visual.classList.add('throw')}
+ if(visual){
+  visual.classList.remove('throw');
+  void visual.offsetWidth;
+  visual.classList.add('throw');
+ }
+ button.disabled=true;
  rollDiceFor(p,sides,`1d${sides}`);
+ requestAnimationFrame(()=>requestAnimationFrame(()=>{button.disabled=false}));
 });document.querySelectorAll('[data-spell-choice]').forEach(b=>b.onclick=()=>{if(!hasMagicClass(p.class)||p.initialSpell)return;const sp=getSpells().find(x=>x.id===b.dataset.spellChoice);if(!sp)return;if(!confirm(`Escolher ${sp.name}?\n\nVocê só poderá escolher uma magia inicial.`))return;p.initialSpell=b.dataset.spellChoice;save();toast('Magia inicial escolhida.');render('sheet')});document.querySelectorAll('[data-remove-slot]').forEach(b=>b.onclick=()=>{p.backpack.splice(Number(b.dataset.removeSlot),1);save();render('sheet')});const add=document.getElementById('addBagItem');if(add)add.onclick=()=>addBag(p)}
 
 function home(){

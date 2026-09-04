@@ -353,3 +353,28 @@ body{background:#030303}
   .dice-choice{min-height:58px}
   .dice-history-v2{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
+
+
+/* V36 — CORREÇÃO DEFINITIVA: rolagem sem desmontar a ficha */
+.dice-section-fixed,.dice-v2,.dice-v2-layout,.dice-skull-wrap,.dice-skull-visual{
+  content-visibility:visible!important;
+  contain:none!important;
+  visibility:visible!important;
+  opacity:1!important;
+}
+.dice-skull-visual{
+  transform:translateZ(0);
+  -webkit-transform:translateZ(0);
+  backface-visibility:visible;
+  -webkit-backface-visibility:visible;
+  will-change:transform;
+}
+.dice-skull-visual img{transform:translateZ(0);}
+.dice-result-overlay{
+  z-index:5;
+  transform:translateZ(0);
+  -webkit-transform:translateZ(0);
+}
+.dice-choice:disabled{opacity:.65;cursor:wait;transform:none!important;}
+.roll-entry-new{animation:diceEntryIn .24s ease-out both;}
+@keyframes diceEntryIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
