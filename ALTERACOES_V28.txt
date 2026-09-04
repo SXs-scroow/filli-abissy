@@ -1,0 +1,39 @@
+A PROFECIA V29 — VITE + FICHA + CONDICOES + SPOTIFY
+
+BASE
+- Base usada: V27 de emergencia corrigida.
+- Login, Mestre, Players, fichas, LocalStorage e IndexedDB preservados.
+- Estrutura preparada para Vite: package.json, vite.config.js e src/main.js.
+
+INICIO
+- Home do Player agora e uma ficha-resumo de leitura rapida.
+- Atributos mostram somente o total efetivo.
+- Pericias mostram somente as treinadas.
+- Nada nessa tela inicial e editavel.
+- A ficha completa continua sendo o lugar de edicao.
+
+FUNDOS
+- Mantido o painel Fundos do Mestre.
+- Fundo global, login, home, ficha, cabecalho, classes e Camara do Mestre podem ser trocados.
+- Imagens ficam no IndexedDB.
+
+CONDICOES
+- Sangramento: 2 de dano por rodada.
+- Cegueira: 3 turnos.
+- Contusao: desorientado por 3 turnos.
+- Paralisia temporaria: 2 turnos.
+- Veneno: 1 dano por rodada.
+- Sangramento severo: 3 dano por rodada.
+- Outras condicoes persistentes exibem seu efeito.
+- Botao + Rodada para Players e Monstros aplica dano e reduz duracoes automaticamente.
+
+SPOTIFY
+- OAuth PKCE mantido.
+- Uma conexao por navegador, reutilizada ao trocar entre Mestre/Player nesse mesmo navegador.
+- Reconexao automatica quando houver sessao salva.
+- VITE_SPOTIFY_CLIENT_ID opcional via .env.
+- Reproducao completa continua dependente de Spotify Premium, por exigencia do Spotify.
+
+COMANDOS
+npm install
+npm run dev
