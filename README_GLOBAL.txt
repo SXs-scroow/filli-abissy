@@ -24,3 +24,6 @@ Sem configurar Supabase, o projeto continua funcionando exatamente em modo local
 
 SEGURANÇA:
 O login Mestre/Player atual é frontend/local e não é autenticação de servidor. O SQL está configurado para permitir a sincronização do modelo atual. Se o site for público, a próxima evolução recomendada é migrar autenticação e permissões para Supabase Auth ou backend/Netlify Functions.
+
+
+V38 - IMPORTANTE: crie um arquivo .env na raiz (ao lado do package.json) com VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY reais. O arquivo .env.example não é lido automaticamente. Depois reinicie npm run dev. No Netlify, cadastre as mesmas variáveis em Site configuration > Environment variables e faça novo deploy. Execute novamente SUPABASE_GLOBAL.sql no SQL Editor para habilitar Realtime.
