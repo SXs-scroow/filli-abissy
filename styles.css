@@ -420,3 +420,22 @@ body{background:#030303}
   .global-music-head strong{max-width:220px}
   .music-mini-main small{display:none}
 }
+
+/* ===== V41 — ESTABILIDADE E PERFORMANCE ===== */
+/* Evita composição GPU excessiva no Chrome Android e aparelhos mais fracos. */
+@media (max-width: 800px){
+  .global-music,.music-reopen,.soundboard-mini{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+  .global-music.music-panel{box-shadow:0 8px 24px rgba(0,0,0,.45)!important}
+  .abyss-bg:before,.abyss-bg:after{filter:none!important}
+  .abyss-bg:before{background-size:145px 145px!important}
+  .abyss-bg:after{background-size:180px 180px!important}
+  .card,.sheet-card,.background-card,.music-admin-section{box-shadow:0 6px 18px rgba(0,0,0,.18)!important}
+  img{content-visibility:auto}
+}
+@media (prefers-reduced-motion: reduce){
+  *,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+}
+/* Painéis longos só são pintados quando entram na área visível. */
+@supports (content-visibility:auto){
+  .card,.sheet-card,.class-card,.item-card,.background-card{content-visibility:auto;contain-intrinsic-size:auto 180px}
+}

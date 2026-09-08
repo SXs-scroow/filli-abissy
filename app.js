@@ -271,31 +271,34 @@ function globalPayload(){
   // compartilhados. Sons soltos continuam locais para não inflar o estado.
   return {version:shared.version,players:shared.players,creatures:shared.creatures,items:shared.items,spells:shared.spells,uiIcons:shared.uiIcons,backgrounds:shared.backgrounds,music:shared.music};
 }
+function sameGlobalValue(a,b){
+  if(a===b)return true;
+  try{return JSON.stringify(a)===JSON.stringify(b)}catch{return false}
+}
 function mergeGlobal(remote){
-  if(!remote||typeof remote!=='object')return false;
-  // Sessão é sempre local; música e dados da campanha vêm do servidor.
+  if(!remote||typeof remote!=='object')return {changed:false,domains:[]};
   const localSession=state.session,localSounds=state.sounds;
-  let changed=false;
+  const domains=[];
   for(const key of ['players','creatures','items','spells','uiIcons','backgrounds','music']){
-    if(remote[key]!==undefined){state[key]=clone(remote[key]);changed=true;}
+    if(remote[key]!==undefined&&!sameGlobalValue(state[key],remote[key])){state[key]=clone(remote[key]);domains.push(key);}
   }
-  state.session=localSession;
-  state.sounds=localSounds;
-  // Normaliza diretamente o estado recebido, preservando sessão e mídia local.
-  state.items=migrateItems(state.items);
-  state.players=Array.isArray(state.players)?state.players:[];
-  if(!state.players.some(p=>p.login===TEST.login))state.players.push(basePlayer());
-  state.creatures=Array.isArray(state.creatures)?state.creatures:[];
-  state.spells=Array.isArray(state.spells)&&state.spells.length?state.spells:INITIAL_SPELLS.map(clone);
-  state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};
-  state.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(state.uiIcons.attrs||{})};
-  state.uiIcons.skills={...DEFAULT_SKILL_ICONS,...(state.uiIcons.skills||{})};
-  state.uiIcons.conditions={...(state.uiIcons.conditions||{})};
-  state.backgrounds={...(state.backgrounds||{})};
-  state.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});
-  state.creatures.forEach(normalize);
-  state.version=Math.max(Number(state.version)||0,30);
-  return changed;
+  state.session=localSession;state.sounds=localSounds;
+  if(domains.length){
+    state.items=migrateItems(state.items);
+    state.players=Array.isArray(state.players)?state.players:[];
+    if(!state.players.some(p=>p.login===TEST.login))state.players.push(basePlayer());
+    state.creatures=Array.isArray(state.creatures)?state.creatures:[];
+    state.spells=Array.isArray(state.spells)&&state.spells.length?state.spells:INITIAL_SPELLS.map(clone);
+    state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};
+    state.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(state.uiIcons.attrs||{})};
+    state.uiIcons.skills={...DEFAULT_SKILL_ICONS,...(state.uiIcons.skills||{})};
+    state.uiIcons.conditions={...(state.uiIcons.conditions||{})};
+    state.backgrounds={...(state.backgrounds||{})};
+    state.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});
+    state.creatures.forEach(normalize);
+    state.version=Math.max(Number(state.version)||0,30);
+  }
+  return {changed:domains.length>0,domains};
 }
 function hasRemoteSharedData(remote){
   return !!(remote&&typeof remote==='object'&&['players','creatures','items','spells','uiIcons','backgrounds','music'].some(k=>remote[k]!==undefined));
@@ -495,12 +498,15 @@ async function handleSpotifyCallback(){
   if(!expected||!stateParam||stateParam!==expected){toast('Falha de segurança na autenticação do Spotify. Tente conectar novamente.');return}
   try{await spotifyExchangeCode(code);localRemove(spotifyKey(SPOTIFY_OAUTH_STATE_KEY));localRemove(spotifyKey(SPOTIFY_VERIFIER_KEY));history.replaceState({},document.title,spotifyRedirectUri());toast('Spotify conectado com sucesso.');await ensureSpotifyPlayer()}catch(e){toast(e?.message||'Não foi possível concluir a conexão com o Spotify.');}
 }
-const MUSIC_UI_KEY='a_profecia_music_ui_v1';
-let globalMusicObjectUrl='';
+const MUSIC_UI_KEY='a_profecia_music_ui_v2';
+// V41: player de áudio desacoplado da renderização. O elemento Audio é único
+// durante toda a sessão, evitando recriações, downloads e picos de memória no mobile.
 let globalMusicAudio=null;
 let globalMusicBlocked=false;
+let globalMusicSrc='';
+let globalMusicLastCommand=0;
 function musicUiState(){
-  try{return JSON.parse(localStorage.getItem(MUSIC_UI_KEY)||'{}')}catch{return {}}
+  try{return JSON.parse(localStorage.getItem(MUSIC_UI_KEY)||localStorage.getItem('a_profecia_music_ui_v1')||'{}')}catch{return {}}
 }
 function setMusicUiState(patch){
   const next={...musicUiState(),...patch};
@@ -510,17 +516,11 @@ function setMusicUiState(patch){
 function musicIsMaster(){return state.session?.role==='master'}
 function normalizeMusic(){
   const m=state.music||{};
-  return {
-    type:m.type||'audio', title:m.title||'', url:m.url||'', kind:m.kind||'url',
-    playing:!!m.playing, loop:!!m.loop, position:Math.max(0,Number(m.position)||0),
-    commandAt:Number(m.commandAt)||0, startedAt:Number(m.startedAt)||0,
-    mediaId:m.mediaId||''
-  };
+  return {type:m.type||'audio',title:m.title||'',url:m.url||'',kind:m.kind||'url',playing:!!m.playing,loop:!!m.loop,position:Math.max(0,Number(m.position)||0),commandAt:Number(m.commandAt)||0,startedAt:Number(m.startedAt)||0,mediaId:m.mediaId||''};
 }
 function musicTargetPosition(m){
   if(!m.playing)return Math.max(0,Number(m.position)||0);
-  if(m.startedAt)return Math.max(0,(Date.now()-Number(m.startedAt))/1000);
-  return Math.max(0,Number(m.position)||0);
+  return m.startedAt?Math.max(0,(Date.now()-Number(m.startedAt))/1000):Math.max(0,Number(m.position)||0);
 }
 async function saveMusicCommand(patch){
   const current=normalizeMusic();
@@ -529,88 +529,89 @@ async function saveMusicCommand(patch){
   await saveGlobalNow();
   syncGlobalMusic(true);
 }
-function musicIcon(){
-  return `<img class="music-volume-icon" src="/volume-control.png" alt="Volume">`;
+function musicIcon(){return `<img class="music-volume-icon" src="/volume-control.png" alt="Volume">`;}
+function ensureGlobalMusicAudio(){
+  if(globalMusicAudio)return globalMusicAudio;
+  const audio=new Audio();
+  audio.preload='metadata';
+  audio.playsInline=true;
+  audio.crossOrigin='anonymous';
+  audio.addEventListener('error',()=>{console.warn('Falha ao carregar áudio global');});
+  audio.addEventListener('ended',()=>{if(!audio.loop&&musicIsMaster()&&normalizeMusic().playing){saveMusicCommand({playing:false,position:0,startedAt:0}).catch(()=>{});}});
+  globalMusicAudio=audio;
+  return audio;
+}
+function releaseGlobalMusicAudio(){
+  if(!globalMusicAudio)return;
+  try{globalMusicAudio.pause();globalMusicAudio.removeAttribute('src');globalMusicAudio.load()}catch{}
+  globalMusicSrc='';globalMusicLastCommand=0;
+}
+function applyGlobalMusicPlayback(m,localVolume,force=false){
+  if(m.type==='spotify'||!m.url){releaseGlobalMusicAudio();return null;}
+  const audio=ensureGlobalMusicAudio();
+  audio.loop=!!m.loop;
+  audio.volume=localVolume;
+  const srcChanged=globalMusicSrc!==m.url;
+  if(srcChanged){
+    try{audio.pause();audio.src=m.url;audio.load()}catch{}
+    globalMusicSrc=m.url;
+    globalMusicLastCommand=0;
+  }
+  const applyPosition=()=>{
+    const target=musicTargetPosition(m);
+    if(Number.isFinite(target)&&target>=0&&Math.abs((audio.currentTime||0)-target)>2){
+      try{audio.currentTime=Math.min(target,Math.max(0,(audio.duration||target)-.05));}catch{}
+    }
+  };
+  if(srcChanged||force||globalMusicLastCommand!==m.commandAt){
+    if(audio.readyState>=1)applyPosition();else audio.addEventListener('loadedmetadata',applyPosition,{once:true});
+    globalMusicLastCommand=m.commandAt;
+  }
+  if(m.playing){
+    audio.play().then(()=>{globalMusicBlocked=false;}).catch(()=>{globalMusicBlocked=true;});
+  }else{try{audio.pause();}catch{}}
+  return audio;
+}
+function bindMusicUi(root,m,audio,localVolume){
+  root.querySelector('#musicMinimize')?.addEventListener('click',()=>{setMusicUiState({minimized:true,closed:false});syncGlobalMusic(true)});
+  root.querySelector('#musicClose')?.addEventListener('click',()=>{setMusicUiState({closed:true,minimized:false});syncGlobalMusic(true)});
+  root.querySelector('#musicReopen')?.addEventListener('click',()=>{setMusicUiState({closed:false,minimized:false});syncGlobalMusic(true)});
+  root.querySelector('#musicExpand')?.addEventListener('click',()=>{setMusicUiState({minimized:false,closed:false});syncGlobalMusic(true)});
+  root.querySelector('#musicEnable')?.addEventListener('click',async()=>{try{await audio?.play();globalMusicBlocked=false;syncGlobalMusic(true)}catch{toast('O navegador ainda bloqueou o áudio. Tente novamente.')}});
+  root.querySelector('#musicLocalVolume')?.addEventListener('input',e=>{
+    const v=Math.max(0,Math.min(100,Number(e.target.value)||0));
+    if(audio)audio.volume=v/100;setMusicUiState({volume:v/100});
+    const label=root.querySelector('#musicVolumeValue');if(label)label.textContent=`${v}%`;
+  });
+  if(musicIsMaster()){
+    root.querySelector('#musicGlobalPlay')?.addEventListener('click',async()=>{
+      const nowPos=m.playing?(audio?.currentTime||musicTargetPosition(m)):Math.max(0,audio?.currentTime||m.position||0);
+      await saveMusicCommand({playing:!m.playing,position:nowPos,startedAt:!m.playing?Date.now()-nowPos*1000:0});
+    });
+    root.querySelector('#musicGlobalStop')?.addEventListener('click',async()=>{if(audio){audio.pause();try{audio.currentTime=0}catch{}}await saveMusicCommand({playing:false,position:0,startedAt:0});});
+    root.querySelector('#musicGlobalLoop')?.addEventListener('click',async()=>{await saveMusicCommand({loop:!m.loop});});
+  }
 }
 function syncGlobalMusic(force=false){
   const root=document.getElementById('global-player');if(!root)return;
   const m=normalizeMusic();
-  if(!m.url&&!m.mediaId){root.innerHTML='';delete root.dataset.signature;globalMusicAudio=null;return}
+  if(!m.url&&!m.mediaId){releaseGlobalMusicAudio();root.replaceChildren();delete root.dataset.signature;return;}
   const ui=musicUiState();
-  const signature=`${m.type}|${m.url}|${m.title}|${m.playing}|${m.loop}|${m.commandAt}|${m.position}|${m.startedAt}|${ui.closed?'c':''}|${ui.minimized?'m':''}`;
+  const localVolume=Math.max(0,Math.min(1,Number(ui.volume??0.8)));
+  const audio=applyGlobalMusicPlayback(m,localVolume,force);
+  const signature=`${m.type}|${m.url}|${m.title}|${m.playing}|${m.loop}|${m.commandAt}|${ui.closed?'c':''}|${ui.minimized?'m':''}|${globalMusicBlocked?'b':''}`;
   if(!force&&root.dataset.signature===signature)return;
-
-  // Spotify legado permanece disponível para o Mestre, mas o áudio global da
-  // campanha usa arquivo/URL público para funcionar sem conta Spotify.
   if(m.type==='spotify'){
     root.innerHTML=`<div class="global-music spotify"><div class="global-music-head"><div><span class="muted">Trilha Spotify</span><strong>${esc(m.title||'Spotify')}</strong></div></div><div class="spotify-controls"><button class="btn gold" id="spotifyPlayGlobal">▶ Reproduzir</button><button class="btn" id="spotifyPauseGlobal">Ⅱ Pausar</button><button class="btn ghost" id="musicClose">×</button></div><p class="tiny muted">Spotify continua individual por conta/dispositivo.</p></div>`;
-    document.getElementById('spotifyPlayGlobal')?.addEventListener('click',spotifyPlayCurrent);
-    document.getElementById('spotifyPauseGlobal')?.addEventListener('click',spotifyPause);
-    document.getElementById('musicClose')?.addEventListener('click',()=>{setMusicUiState({closed:true,minimized:false});syncGlobalMusic(true)});
-    root.dataset.signature=signature;return;
+    root.querySelector('#spotifyPlayGlobal')?.addEventListener('click',spotifyPlayCurrent);
+    root.querySelector('#spotifyPauseGlobal')?.addEventListener('click',spotifyPause);
+    bindMusicUi(root,m,null,localVolume);root.dataset.signature=signature;return;
   }
-
-  if(ui.closed){
-    root.innerHTML=`<button class="music-reopen" id="musicReopen" title="Abrir controle de música">♪</button>`;
-    document.getElementById('musicReopen')?.addEventListener('click',()=>{setMusicUiState({closed:false,minimized:false});syncGlobalMusic(true)});
-    root.dataset.signature=signature;return;
-  }
-
+  if(ui.closed){root.innerHTML=`<button class="music-reopen" id="musicReopen" title="Abrir controle de música">♪</button>`;bindMusicUi(root,m,audio,localVolume);root.dataset.signature=signature;return;}
+  if(ui.minimized){root.innerHTML=`<div class="global-music music-minimized"><button class="music-mini-main" id="musicExpand"><span class="music-note">♪</span><span>${esc(m.title||'Trilha da campanha')}</span><small>${m.playing?'TOCANDO':'PAUSADA'}</small></button><button class="music-mini-close" id="musicClose" title="Fechar">×</button></div>`;bindMusicUi(root,m,audio,localVolume);root.dataset.signature=signature;return;}
   const master=musicIsMaster();
-  const localVolume=Math.max(0,Math.min(1,Number(ui.volume??0.8)));
-  if(ui.minimized){
-    root.innerHTML=`<div class="global-music music-minimized"><button class="music-mini-main" id="musicExpand"><span class="music-note">♪</span><span>${esc(m.title||'Trilha da campanha')}</span><small>${m.playing?'TOCANDO':'PAUSADA'}</small></button><button class="music-mini-close" id="musicClose" title="Fechar">×</button></div>`;
-    document.getElementById('musicExpand')?.addEventListener('click',()=>{setMusicUiState({minimized:false,closed:false});syncGlobalMusic(true)});
-    document.getElementById('musicClose')?.addEventListener('click',()=>{setMusicUiState({closed:true,minimized:false});syncGlobalMusic(true)});
-    root.dataset.signature=signature;return;
-  }
-
-  root.innerHTML=`<div class="global-music music-panel">
-    <div class="global-music-head">
-      <div><span class="muted">TRILHA DA CAMPANHA</span><strong>${esc(m.title||'Áudio')}</strong></div>
-      <div class="music-window-controls"><button class="music-window-btn" id="musicMinimize" title="Minimizar">−</button><button class="music-window-btn" id="musicClose" title="Fechar">×</button></div>
-    </div>
-    <div class="music-status"><span class="music-status-dot ${m.playing?'on':''}"></span>${m.playing?'Tocando para a sessão':'Pausada'}</div>
-    ${master?`<div class="music-master-controls"><button class="music-control" id="musicGlobalPlay">${m.playing?'Ⅱ':'▶'}</button><button class="music-control" id="musicGlobalStop">■</button><button class="music-loop ${m.loop?'active':''}" id="musicGlobalLoop" title="Repetição global">↻ ${m.loop?'LOOP ATIVO':'LOOP'}</button></div>`:`<div class="music-player-note">O Mestre controla a trilha. Você controla apenas seu volume.</div>`}
-    <div class="music-volume-row">${musicIcon()}<input id="musicLocalVolume" type="range" min="0" max="100" value="${Math.round(localVolume*100)}" aria-label="Volume local"><span id="musicVolumeValue">${Math.round(localVolume*100)}%</span></div>
-    ${globalMusicBlocked?`<button class="btn primary music-enable-btn" id="musicEnable">Ativar áudio da sessão</button>`:''}
-    <audio id="globalAudio" preload="auto" src="${esc(m.url)}"></audio>
-  </div>`;
-  const audio=document.getElementById('globalAudio');
-  globalMusicAudio=audio;
-  if(!audio){root.dataset.signature=signature;return}
-  audio.loop=!!m.loop;
-  audio.volume=localVolume;
-
-  const target=musicTargetPosition(m);
-  const setPosition=()=>{try{if(Number.isFinite(target)&&target>0&&Math.abs((audio.currentTime||0)-target)>1.5)audio.currentTime=Math.min(target,Math.max(0,(audio.duration||target)-.05))}catch{}};
-  if(audio.readyState>=1)setPosition();else audio.addEventListener('loadedmetadata',setPosition,{once:true});
-
-  const attemptPlay=async()=>{
-    if(!m.playing)return;
-    try{await audio.play();globalMusicBlocked=false;}
-    catch(err){globalMusicBlocked=true;syncGlobalMusic(true);}
-  };
-  if(m.playing)attemptPlay();else audio.pause();
-
-  document.getElementById('musicMinimize')?.addEventListener('click',()=>{setMusicUiState({minimized:true,closed:false});syncGlobalMusic(true)});
-  document.getElementById('musicClose')?.addEventListener('click',()=>{setMusicUiState({closed:true,minimized:false});syncGlobalMusic(true)});
-  document.getElementById('musicEnable')?.addEventListener('click',async()=>{try{await audio.play();globalMusicBlocked=false;syncGlobalMusic(true)}catch{toast('O navegador ainda bloqueou o áudio. Tente novamente.')}});
-  document.getElementById('musicLocalVolume')?.addEventListener('input',e=>{
-    const v=Math.max(0,Math.min(100,Number(e.target.value)||0));
-    audio.volume=v/100;setMusicUiState({volume:v/100});
-    const label=document.getElementById('musicVolumeValue');if(label)label.textContent=`${v}%`;
-  });
-
-  if(master){
-    document.getElementById('musicGlobalPlay')?.addEventListener('click',async()=>{
-      const nowPos=m.playing?(audio.currentTime||musicTargetPosition(m)):Math.max(0,audio.currentTime||m.position||0);
-      await saveMusicCommand({playing:!m.playing,position:nowPos,startedAt:!m.playing?Date.now()-nowPos*1000:0});
-    });
-    document.getElementById('musicGlobalStop')?.addEventListener('click',async()=>{audio.pause();try{audio.currentTime=0}catch{};await saveMusicCommand({playing:false,position:0,startedAt:0});});
-    document.getElementById('musicGlobalLoop')?.addEventListener('click',async()=>{await saveMusicCommand({loop:!m.loop});});
-  }
-  root.dataset.signature=signature;
+  root.innerHTML=`<div class="global-music music-panel"><div class="global-music-head"><div><span class="muted">TRILHA DA CAMPANHA</span><strong>${esc(m.title||'Áudio')}</strong></div><div class="music-window-controls"><button class="music-window-btn" id="musicMinimize" title="Minimizar">−</button><button class="music-window-btn" id="musicClose" title="Fechar">×</button></div></div><div class="music-status"><span class="music-status-dot ${m.playing?'on':''}"></span>${m.playing?'Tocando para a sessão':'Pausada'}</div>${master?`<div class="music-master-controls"><button class="music-control" id="musicGlobalPlay">${m.playing?'Ⅱ':'▶'}</button><button class="music-control" id="musicGlobalStop">■</button><button class="music-loop ${m.loop?'active':''}" id="musicGlobalLoop" title="Repetição global">↻ ${m.loop?'LOOP ATIVO':'LOOP'}</button></div>`:`<div class="music-player-note">O Mestre controla a trilha. Você controla apenas seu volume.</div>`}<div class="music-volume-row">${musicIcon()}<input id="musicLocalVolume" type="range" min="0" max="100" value="${Math.round(localVolume*100)}" aria-label="Volume local"><span id="musicVolumeValue">${Math.round(localVolume*100)}%</span></div>${globalMusicBlocked?`<button class="btn primary music-enable-btn" id="musicEnable">Ativar áudio da sessão</button>`:''}</div>`;
+  bindMusicUi(root,m,audio,localVolume);root.dataset.signature=signature;
 }
 
 let activeSoundAudio=null,activeSoundUrl='';
@@ -788,49 +789,41 @@ async function boot(){
       const remoteRow=await fetchGlobal();
       const remote=remoteRow?.data || remoteRow;
       if(hasRemoteSharedData(remote)){
-        remoteApplying=true;
-        mergeGlobal(remote);
-        storageSet(KEY,JSON.stringify(state));
-        remoteApplying=false;
+        remoteApplying=true;mergeGlobal(remote);storageSet(KEY,JSON.stringify(state));remoteApplying=false;
       }else{
-        // A linha pode existir vazia após executar o SQL. Nesse caso publica os
-        // dados atuais uma única vez, em vez de assumir que {} é um estado válido.
-        remoteApplying=true;
-        await pushGlobal(globalPayload());
-        remoteApplying=false;
+        remoteApplying=true;await pushGlobal(globalPayload());remoteApplying=false;
       }
       remoteHydrated=true;
-      subscribeGlobal(row=>{
-        const data=row?.data || row;
-        if(!hasRemoteSharedData(data)||remoteApplying)return;
-        remoteApplying=true;
-        mergeGlobal(data);
-        storageSet(KEY,JSON.stringify(state));
-        remoteApplying=false;
-        bgAppliedSignature='';
-        applyBackgrounds(true);
-        render(currentView||'home');
-      });
-      // Realtime pode demorar ou falhar em algumas redes móveis. A verificação
-      // periódica garante que wallpapers globais também se atualizem nesses casos.
       let lastRemoteStamp=remoteRow?.updated_at||'';
+      const applyIncoming=async(row)=>{
+        const data=row?.data||row;if(!hasRemoteSharedData(data)||remoteApplying)return;
+        remoteApplying=true;
+        const result=mergeGlobal(data);
+        storageSet(KEY,JSON.stringify(state));remoteApplying=false;
+        if(!result.changed)return;
+        const d=result.domains;
+        if(d.includes('backgrounds')){bgAppliedSignature='';await applyBackgrounds(true);}
+        // Música e fundos não precisam reconstruir a página inteira.
+        if(d.some(x=>!['music','backgrounds'].includes(x)))render(currentView||'home');
+        else {syncGlobalMusic(true);syncSoundboard();}
+      };
+      subscribeGlobal(row=>{lastRemoteStamp=row?.updated_at||lastRemoteStamp;applyIncoming(row).catch(e=>console.warn('Falha ao aplicar atualização global:',e));});
+      // V41: polling leve. A versão anterior buscava o estado inteiro a cada 4s,
+      // inclusive em celulares e em segundo plano, causando alto uso de memória/CPU.
+      const isMobile=matchMedia('(max-width: 800px)').matches;
+      const pollDelay=isMobile?90000:45000;
       setInterval(async()=>{
-        if(!remoteEnabled||remoteApplying)return;
+        if(document.hidden||!remoteEnabled||remoteApplying)return;
         try{
           const row=await fetchGlobal();
           if(!row?.updated_at||row.updated_at===lastRemoteStamp)return;
-          lastRemoteStamp=row.updated_at;
-          const data=row.data||row;
-          if(!hasRemoteSharedData(data))return;
-          remoteApplying=true;
-          mergeGlobal(data);
-          storageSet(KEY,JSON.stringify(state));
-          remoteApplying=false;
-          bgAppliedSignature='';
-          await applyBackgrounds(true);
-          render(currentView||'home');
+          lastRemoteStamp=row.updated_at;await applyIncoming(row);
         }catch(e){remoteApplying=false;}
-      },4000);
+      },pollDelay);
+      document.addEventListener('visibilitychange',()=>{
+        if(document.hidden||!remoteEnabled)return;
+        setTimeout(async()=>{try{const row=await fetchGlobal();if(row?.updated_at&&row.updated_at!==lastRemoteStamp){lastRemoteStamp=row.updated_at;await applyIncoming(row)}}catch{}},700);
+      });
     }
   }catch(e){console.warn('Modo global indisponível; usando dados locais.',e);remoteHydrated=true;}
   try{await handleSpotifyCallback();if(spotifyLogged())await ensureSpotifyPlayer();}finally{render();syncGlobalMusic();syncSoundboard();applyBackgrounds();}
