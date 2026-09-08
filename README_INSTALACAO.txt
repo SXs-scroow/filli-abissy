@@ -27,7 +27,3 @@ NÃO copie apenas alguns arquivos e NÃO deixe uma pasta "rpg_project" dentro de
 
 SOBRE O SPOTIFY:
 O .env.example mostra a variável opcional VITE_SPOTIFY_CLIENT_ID. Para login real, configure um Client ID válido do seu próprio aplicativo Spotify e crie um arquivo .env baseado no exemplo. O Spotify também impõe suas próprias regras para reprodução completa via navegador.
-
-
-V40: Antes de testar wallpapers globais, execute SUPABASE_GLOBAL.sql no SQL Editor do Supabase.
-Formatos aceitos: JPG, JPEG, JFIF, PNG, WEBP, AVIF e GIF (até 10 MB).
