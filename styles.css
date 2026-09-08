@@ -378,3 +378,45 @@ body{background:#030303}
 .dice-choice:disabled{opacity:.65;cursor:wait;transform:none!important;}
 .roll-entry-new{animation:diceEntryIn .24s ease-out both;}
 @keyframes diceEntryIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+
+
+/* ===== V40 — PLAYER GLOBAL DE ÁUDIO ===== */
+#global-player{position:fixed;right:16px;bottom:16px;z-index:120;pointer-events:none}
+#global-player>*{pointer-events:auto}
+.global-music.music-panel{width:min(360px,calc(100vw - 32px));padding:12px 14px;background:linear-gradient(145deg,rgba(11,7,8,.98),rgba(4,3,3,.98));border:1px solid rgba(188,49,58,.58);border-radius:12px;box-shadow:0 18px 55px rgba(0,0,0,.62);backdrop-filter:blur(14px)}
+.global-music .global-music-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.global-music-head .muted{display:block;font-size:9px;letter-spacing:.16em;color:#a78d74}
+.global-music-head strong{display:block;margin-top:3px;color:#f0d9aa;font:600 14px Cinzel,serif;max-width:270px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.music-window-controls{display:flex;gap:5px}
+.music-window-btn,.music-mini-close{width:27px;height:27px;border:1px solid rgba(181,48,56,.48);background:rgba(30,8,10,.9);color:#dfc3bc;border-radius:7px;cursor:pointer;font-size:16px;line-height:1}
+.music-window-btn:hover,.music-mini-close:hover{border-color:#d6a84b;color:#f3d48b}
+.music-status{display:flex;align-items:center;gap:7px;margin:9px 0;color:#a89b95;font-size:10px}
+.music-status-dot{width:7px;height:7px;border-radius:50%;background:#6a5555;box-shadow:0 0 0 2px rgba(255,255,255,.03)}
+.music-status-dot.on{background:#c82b35;box-shadow:0 0 10px rgba(216,38,49,.65)}
+.music-master-controls{display:flex;align-items:center;gap:7px;margin:8px 0 11px}
+.music-control{min-width:42px;height:35px;border:1px solid rgba(202,52,62,.5);background:linear-gradient(145deg,#2a090c,#120607);color:#f0d8d1;border-radius:8px;cursor:pointer;font-weight:700}
+.music-control:hover{border-color:#d6a84b;color:#f4d99c}
+.music-loop{height:35px;padding:0 11px;border:1px solid rgba(128,95,53,.48);background:rgba(22,13,10,.82);color:#aa9b88;border-radius:8px;cursor:pointer;font-size:10px;letter-spacing:.08em}
+.music-loop.active{border-color:#d6a84b;color:#f0c96b;background:rgba(110,72,20,.2)}
+.music-volume-row{display:grid;grid-template-columns:32px 1fr 38px;align-items:center;gap:8px;padding-top:4px}
+.music-volume-icon{width:25px;height:25px;object-fit:contain;filter:invert(1);opacity:.9}
+.music-volume-row input[type=range]{width:100%;accent-color:#c62e38;cursor:pointer}
+.music-volume-row span{font:600 10px Inter,sans-serif;color:#d7c1aa;text-align:right}
+.music-player-note{margin:7px 0 10px;color:#8f817c;font-size:10px;line-height:1.45}
+.music-enable-btn{width:100%;margin-top:10px}
+.global-music.music-panel audio{display:none}
+.global-music.music-minimized{display:flex;align-items:center;gap:5px;width:min(300px,calc(100vw - 32px));padding:5px 6px 5px 10px;background:rgba(9,6,7,.96);border:1px solid rgba(156,35,44,.5);border-radius:10px;box-shadow:0 12px 35px rgba(0,0,0,.5)}
+.music-mini-main{min-width:0;flex:1;display:flex;align-items:center;gap:8px;border:0;background:transparent;color:#ead9bd;cursor:pointer;text-align:left;padding:5px}
+.music-mini-main span:nth-child(2){min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:600 11px Inter,sans-serif}
+.music-mini-main small{font-size:8px;color:#b89665;letter-spacing:.08em}
+.music-note{color:#d43a45;font-size:18px}
+.music-reopen{width:46px;height:46px;border-radius:50%;border:1px solid rgba(192,47,58,.6);background:radial-gradient(circle at 35% 30%,#3a1115,#100607);color:#f0d7ba;font:700 24px Cinzel,serif;cursor:pointer;box-shadow:0 12px 32px rgba(0,0,0,.55)}
+.music-reopen:hover{border-color:#d6a84b;transform:translateY(-1px)}
+.music-current-admin{margin:10px 0;padding:9px 11px;border-left:2px solid #a82630;background:rgba(87,17,24,.12);font-size:11px;color:#d8c7b1}
+.music-current-admin span{margin-left:8px;font-size:9px;color:#c98a69}
+@media(max-width:700px){
+  #global-player{right:8px;bottom:8px}
+  .global-music.music-panel{width:calc(100vw - 16px)}
+  .global-music-head strong{max-width:220px}
+  .music-mini-main small{display:none}
+}
