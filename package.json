@@ -13,8 +13,5 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4"
-  },
-  "allowScripts": {
-    "esbuild@0.28.2": true
   }
 }

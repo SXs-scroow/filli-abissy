@@ -453,3 +453,39 @@ body{background:#030303}
 @media(max-width:700px){.login-card{width:calc(100vw - 24px);padding:55px 22px 34px;min-height:500px}.content-admin-grid{grid-template-columns:1fr}.dice-expression-row{grid-template-columns:1fr}.deity-grid{grid-template-columns:repeat(2,1fr)}.deity-option img{height:90px}.book-content{padding:15px}.main-sheet .slot{min-height:135px}}
 
 .book-page-editor{border:1px solid rgba(233,189,85,.14);padding:12px;border-radius:10px;margin:10px 0}.book-page-editor textarea{width:100%;box-sizing:border-box}.book-reader-page{min-height:320px;padding:20px;border:1px solid rgba(233,189,85,.14);border-radius:12px;background:rgba(0,0,0,.2);line-height:1.8}.book-reader-controls{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:14px}
+
+/* V50 — origem e profissões do Slasher */
+.slasher-origin-card{position:relative;overflow:hidden;margin:18px 0 20px;padding:28px;background:linear-gradient(145deg,rgba(12,3,4,.98),rgba(3,3,3,.98));border:1px solid rgba(122,20,28,.72);box-shadow:0 20px 55px rgba(0,0,0,.45)}
+.slasher-origin-card:before{content:"";position:absolute;inset:9px;border:1px solid rgba(135,24,31,.28);pointer-events:none}
+.slasher-origin-kicker{font-size:10px;letter-spacing:.18em;color:#7e2027;font-weight:700}
+.slasher-origin-card h2{position:relative;margin:7px 0;color:#a82b34;font:600 27px Cinzel,serif}
+.slasher-origin-card>p{position:relative;color:#78696a;max-width:760px;line-height:1.55}
+.slasher-question{position:relative;margin-top:20px;padding:18px;background:rgba(70,5,10,.28);border:1px solid rgba(142,25,34,.55);border-left:3px solid #8f202a}
+.slasher-question>span{display:block;color:#a92b34;font:600 17px Cinzel,serif;line-height:1.45}
+.slasher-options{display:flex;gap:9px;flex-wrap:wrap;margin-top:13px}
+.slasher-option{padding:10px 15px;background:#070303;color:#8d7475;border:1px solid #421116;border-radius:8px;cursor:pointer;transition:.16s;font:600 12px Inter,sans-serif}
+.slasher-option:hover{border-color:#8f202a;color:#b52d37;transform:translateY(-1px)}
+.slasher-option.selected{background:#3d070c;color:#d23b45;border-color:#a42b35;box-shadow:0 0 18px rgba(132,17,26,.2)}
+.slasher-question-secondary{margin-top:12px}
+.slasher-intro-music{position:relative;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;align-items:center;margin-top:16px;padding:13px 15px;background:#050202;border-top:1px solid #351014}
+.slasher-intro-music span{font-size:9px;letter-spacing:.16em;color:#672026}
+.slasher-intro-music strong{color:#8f7777;font-size:11px}
+.slasher-intro-music audio{grid-column:1/-1;width:100%;height:32px;filter:sepia(.15) saturate(.7)}
+.slasher-profession-grid{margin-top:18px}
+.slasher-profession-card{min-height:300px;background:linear-gradient(145deg,rgba(13,5,6,.98),rgba(3,3,3,.98));border-color:rgba(111,20,28,.62)}
+.slasher-profession-card .class-card-head h2{color:#c8a9a9}
+.slasher-profession-card .class-bonus-line{background:rgba(76,7,13,.18);border-left-color:#79202a}
+.slasher-profession-card .ability b{color:#bd6268}
+.class-choice-disabled{opacity:.48;filter:saturate(.55)}
+@media(max-width:600px){.slasher-origin-card{padding:22px 16px}.slasher-origin-card h2{font-size:22px}.slasher-question>span{font-size:15px}.slasher-options{display:grid;grid-template-columns:1fr}.slasher-option{width:100%}.slasher-intro-music{grid-template-columns:1fr}.slasher-intro-music audio{grid-column:1}}
+
+
+/* V51 — editor de bônus das profissões Slasher */
+.bonus-editor{margin-top:24px;padding-top:4px}
+.bonus-editor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px}
+.bonus-editor-card{padding:16px;border:1px solid rgba(255,70,70,.22);border-radius:12px;background:rgba(0,0,0,.24)}
+.bonus-editor-card h3{margin:0 0 12px;color:#f0caca}
+.bonus-editor-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0}
+.bonus-editor-row span{font-weight:600}
+.bonus-editor-row input{width:82px;min-width:82px}
+@media(max-width:600px){.bonus-editor-grid{grid-template-columns:1fr}.bonus-editor-row input{width:72px;min-width:72px}}
