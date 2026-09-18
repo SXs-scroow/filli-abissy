@@ -607,3 +607,31 @@ body{background:#030303}
 .terror-master-close{position:fixed;top:18px;right:18px;z-index:4;box-shadow:0 8px 30px rgba(0,0,0,.55);opacity:.95}
 .terror-master-close:hover{opacity:1}
 @media(max-width:600px){.terror-master-close{top:10px;right:10px;font-size:12px;padding:9px 11px}}
+
+
+/* A PROFECIA V60 — Tela da TV / cinemáticas */
+.tv-screen{position:fixed;inset:0;z-index:99999;background:#000;overflow:hidden;color:#fff}
+.tv-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
+.tv-stage video,.tv-stage img{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+.tv-solid{position:absolute;inset:0}
+.tv-black{background:#000}.tv-red{background:#b00000}
+.tv-screen.tv-fading .tv-stage{opacity:0;transition:opacity .22s ease}
+.tv-stage{opacity:1;transition:opacity .22s ease}
+.tv-overlay-ui{position:absolute;left:24px;bottom:20px;display:flex;gap:8px;align-items:center;font:600 12px/1 system-ui,sans-serif;letter-spacing:.12em;text-transform:uppercase;opacity:.0;transition:opacity .3s ease;text-shadow:0 2px 8px #000}
+.tv-screen:hover .tv-overlay-ui{opacity:.75}
+.tv-live-dot{color:#d00}.tv-fullscreen-btn{position:absolute;right:18px;top:18px;width:42px;height:42px;border:1px solid rgba(255,255,255,.22);border-radius:8px;background:rgba(0,0,0,.35);color:#fff;font-size:20px;cursor:pointer;opacity:.25;transition:opacity .2s}
+.tv-screen:hover .tv-fullscreen-btn{opacity:.8}
+.tv-admin .tv-connect-note{margin:16px 0;padding:14px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.18);border-radius:10px;display:grid;gap:7px}
+.tv-connect-note code{font-size:12px;word-break:break-all;color:#ddd}
+.tv-connect-note span{font-size:12px;line-height:1.5;color:#aaa}
+.tv-upload-grid{display:grid;grid-template-columns:1fr 1.2fr 1.2fr auto auto;gap:12px;align-items:end}
+.checkline{display:flex;align-items:center;gap:7px;white-space:nowrap;font-size:13px}
+.tv-quick-grid{display:flex;gap:10px;margin:16px 0}
+.tv-library{display:grid;gap:8px;margin-top:16px}
+.tv-scene-card{display:grid;grid-template-columns:48px 1fr auto;align-items:center;gap:12px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.02)}
+.tv-scene-card strong,.tv-scene-card small{display:block}.tv-scene-card small{margin-top:3px;color:#888;font-size:11px}
+.tv-scene-thumb{width:48px;height:40px;border-radius:7px;background:#080808;display:grid;place-items:center;font-size:18px}
+.slot-damage{font-size:12px;font-weight:700;color:#e9d5b5;margin-top:3px;letter-spacing:.02em}
+@media(max-width:900px){.tv-upload-grid{grid-template-columns:1fr}.tv-scene-card{grid-template-columns:42px 1fr}.tv-scene-card .row{grid-column:1/-1}.tv-connect-note code{font-size:10px}}
+
+.tv-stage .tv-layer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;opacity:1;transition:opacity .28s ease}.tv-stage .tv-enter{opacity:0}.tv-stage .tv-exit{opacity:0}

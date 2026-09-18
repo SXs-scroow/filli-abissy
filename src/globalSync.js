@@ -96,7 +96,7 @@ export function subscribeLive(callback) {
   if (!supabase) return () => {};
   ensureLiveChannel().catch(() => {});
   if (!liveChannel) return () => {};
-  const events = ['sound-trigger','secret-clue','nexus-join','nexus-offer','nexus-answer','nexus-ice','nexus-start','nexus-stop'];
+  const events = ['sound-trigger','secret-clue','session-start','tv-scene','nexus-join','nexus-offer','nexus-answer','nexus-ice','nexus-start','nexus-stop'];
   events.forEach(event => liveChannel.on('broadcast', { event }, ({ payload }) => callback({ event, payload: payload || {} })));
   return () => {};
 }
