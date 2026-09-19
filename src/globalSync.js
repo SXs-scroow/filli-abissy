@@ -31,6 +31,23 @@ export async function fetchGlobal() {
   return data || null;
 }
 
+
+export async function backupGlobal(data, label = 'auto') {
+  if (!supabase || !data) return null;
+  const id = `backup-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+  const payload = { id, data: { ...data, __backup: { label, createdAt: new Date().toISOString() } }, updated_at: new Date().toISOString() };
+  const { error } = await supabase.from(TABLE).insert(payload);
+  if (error) throw error;
+  return id;
+}
+
+export async function listGlobalBackups(limit = 20) {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from(TABLE).select('id,data,updated_at').like('id','backup-%').order('updated_at',{ascending:false}).limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+
 export async function pushGlobal(data) {
   if (!supabase) return null;
   const payload = { id: ROW, data, updated_at: new Date().toISOString() };
