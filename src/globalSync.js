@@ -49,15 +49,27 @@ export async function listGlobalBackups(limit = 20) {
 }
 
 export async function pushGlobal(data) {
-  if (!supabase) return null;
+  if (!supabase) throw new Error('Supabase não está configurado.');
   const payload = { id: ROW, data, updated_at: new Date().toISOString() };
-  const { data: result, error } = await supabase
-    .from(TABLE)
-    .upsert(payload)
-    .select('updated_at')
-    .single();
-  if (error) throw error;
-  return result || null;
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { data: result, error } = await supabase
+        .from(TABLE)
+        .upsert(payload, { onConflict: 'id' })
+        .select('updated_at,data')
+        .single();
+      if (error) throw error;
+      if (!result?.data || typeof result.data !== 'object') {
+        throw new Error('O Supabase confirmou a escrita, mas não devolveu o estado salvo.');
+      }
+      return { updated_at: result.updated_at, verified: true };
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await new Promise(r => setTimeout(r, 250 * attempt));
+    }
+  }
+  throw lastError || new Error('Falha ao salvar o estado global.');
 }
 
 export async function uploadGlobalFile(path, file) {
@@ -65,7 +77,7 @@ export async function uploadGlobalFile(path, file) {
   const contentType = file.type || (path.toLowerCase().endsWith('.jfif') ? 'image/jpeg' : undefined);
   const { error } = await supabase.storage
     .from(BUCKET)
-    .upload(path, file, { upsert: true, contentType, cacheControl: '60' });
+    .upload(path, file, { upsert: true, contentType, cacheControl: '31536000' });
   if (error) throw error;
   // Cache-buster: garante que todos os aparelhos peguem a imagem nova mesmo
   // quando o arquivo substitui outro no mesmo caminho.
