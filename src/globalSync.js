@@ -20,6 +20,78 @@ export function publicUrl(path) {
   return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl || '';
 }
 
+// ===================== V66: autenticação no servidor =====================
+// Login, senhas (hash bcrypt) e sessões vivem no Supabase (funções a_profecia_*). O navegador só guarda um token aleatório.
+const TOKEN_KEY = 'a_profecia_auth_token_v1';
+export function getAuthToken() {
+  try { return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+}
+export function setAuthToken(token) {
+  try {
+    if (token) { sessionStorage.setItem(TOKEN_KEY, token); localStorage.setItem(TOKEN_KEY, token); }
+    else { sessionStorage.removeItem(TOKEN_KEY); localStorage.removeItem(TOKEN_KEY); }
+  } catch {}
+}
+export function handleAuthError(error) {
+  if (/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
+    setAuthToken('');
+    try { window.dispatchEvent(new CustomEvent('a-profecia-auth-expired')); } catch {}
+  }
+  return error;
+}
+async function rpc(name, args) {
+  if (!supabase) throw new Error('Supabase não configurado');
+  const { data, error } = await supabase.rpc(name, args);
+  if (error) throw handleAuthError(error);
+  return data;
+}
+export function authErrorText(error) {
+  const m = String(error?.message || error || '');
+  if (/MUITAS_TENTATIVAS/.test(m)) return 'Muitas tentativas. Aguarde alguns minutos e tente de novo.';
+  if (/LOGIN_EXISTE/.test(m)) return 'Esse login já existe.';
+  if (/LOGIN_RESERVADO/.test(m)) return 'Esse login é reservado ao Mestre.';
+  if (/LOGIN_INVALIDO/.test(m)) return 'O login deve ter de 3 a 32 caracteres.';
+  if (/SENHA_INVALIDA/.test(m)) return 'A senha deve ter de 4 a 72 caracteres.';
+  if (/SENHA_FRACA/.test(m)) return 'Use uma senha com pelo menos 10 caracteres.';
+  if (/SESSAO_INVALIDA/.test(m)) return 'Sua sessão expirou. Entre novamente.';
+  if (/NAO_AUTORIZADO/.test(m)) return 'Você não tem permissão para essa ação.';
+  return 'Não foi possível conectar ao servidor. Tente novamente.';
+}
+export async function authMasterLogin(password) {
+  const token = await rpc('a_profecia_master_login', { p_password: String(password || '') });
+  if (!token) return false;
+  setAuthToken(token);
+  return true;
+}
+export async function authPlayerLogin(login, password) {
+  const r = await rpc('a_profecia_player_login', { p_login: String(login || ''), p_password: String(password || '') });
+  if (!r?.token) return null;
+  setAuthToken(r.token);
+  return r;
+}
+export async function authRegisterPlayer(login, password, player) {
+  const r = await rpc('a_profecia_register_player', { p_login: String(login || ''), p_password: String(password || ''), p_player: player || {} });
+  if (r?.token) setAuthToken(r.token);
+  return r;
+}
+export async function authLogout() {
+  const token = getAuthToken();
+  setAuthToken('');
+  if (token && supabase) { try { await supabase.rpc('a_profecia_logout', { p_token: token }); } catch {} }
+}
+// Retorna {role, player_id} se a sessão é válida, null se não é; lança erro só quando não há rede.
+export async function authCheck() {
+  const token = getAuthToken();
+  if (!token || !supabase) return null;
+  const { data, error } = await supabase.rpc('a_profecia_whoami', { p_token: token });
+  if (error) throw error;
+  return data || null;
+}
+export async function changeMasterPassword(oldPassword, newPassword) {
+  return await rpc('a_profecia_change_master_password', { p_token: getAuthToken(), p_old: String(oldPassword || ''), p_new: String(newPassword || '') });
+}
+// =========================================================================
+
 export async function fetchGlobal() {
   if (!supabase) return null;
   const { data, error } = await supabase
@@ -34,11 +106,7 @@ export async function fetchGlobal() {
 
 export async function backupGlobal(data, label = 'auto') {
   if (!supabase || !data) return null;
-  const id = `backup-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
-  const payload = { id, data: { ...data, __backup: { label, createdAt: new Date().toISOString() } }, updated_at: new Date().toISOString() };
-  const { error } = await supabase.from(TABLE).insert(payload);
-  if (error) throw error;
-  return id;
+  return await rpc('a_profecia_backup_global', { p_token: getAuthToken(), p_data: data, p_label: String(label || 'auto') });
 }
 
 export async function listGlobalBackups(limit = 20) {
@@ -50,22 +118,16 @@ export async function listGlobalBackups(limit = 20) {
 
 export async function pushGlobal(data) {
   if (!supabase) throw new Error('Supabase não está configurado.');
-  const payload = { id: ROW, data, updated_at: new Date().toISOString() };
+  if (!getAuthToken()) { const e = new Error('SESSAO_INVALIDA'); handleAuthError(e); throw e; }
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const { data: result, error } = await supabase
-        .from(TABLE)
-        .upsert(payload, { onConflict: 'id' })
-        .select('updated_at,data')
-        .single();
-      if (error) throw error;
-      if (!result?.data || typeof result.data !== 'object') {
-        throw new Error('O Supabase confirmou a escrita, mas não devolveu o estado salvo.');
-      }
-      return { updated_at: result.updated_at, verified: true };
+      // V66: só o Mestre autenticado grava; o servidor devolve apenas o carimbo (antes devolvia o estado inteiro de volta).
+      const result = await rpc('a_profecia_push_global', { p_token: getAuthToken(), p_data: data });
+      return { updated_at: result?.updated_at, verified: true };
     } catch (error) {
       lastError = error;
+      if (/SESSAO_INVALIDA|NAO_AUTORIZADO|DADOS_/.test(String(error?.message || ''))) break;
       if (attempt < 3) await new Promise(r => setTimeout(r, 250 * attempt));
     }
   }
