@@ -648,22 +648,24 @@ body{background:#030303}
 .app-version-corner{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.48);white-space:nowrap;padding:8px 0}
 @media (max-width:700px){.master-hero{gap:10px}.app-version-corner{font-size:9px}}
 
-/* V66.4: impressão da Ficha em PDF EM CORES (antes forçava preto e branco;
-   agora mantém o visual real do site — navegadores só imprimem cores de
-   fundo se a gente pedir explicitamente com print-color-adjust). Continua
-   sem depender de nenhuma biblioteca nova, e ainda some com o que não faz
-   sentido no papel (menu, botões, modais, seletor de arquivo). */
+/* V65.10: impressão da Ficha em PDF (usa o "Salvar como PDF" do navegador,
+   sem depender de nenhuma biblioteca nova). Some com tudo que não faz
+   sentido no papel e deixa o conteúdo legível em fundo branco. */
 @media print{
-  *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;box-shadow:none !important;text-shadow:none !important}
+  body,.shell{background:#fff !important}
   .topbar,.toast,#toast-root,.modal,.dice-section-fixed,.roll-history,
   .character-themes,.character-wallpaper,.upload-label,input[type="file"],
   .terror-overlay,button,.no-print{display:none !important}
   .main{padding:0 !important;max-width:100% !important}
-  .sheet-card,article,section{break-inside:avoid;margin-bottom:10px !important}
-  input,select,textarea{-webkit-appearance:none;appearance:none}
+  *{background:#fff !important;color:#000 !important;box-shadow:none !important;
+    border-color:#999 !important;text-shadow:none !important}
+  .sheet-card,article,section{break-inside:avoid;border:1px solid #999 !important;
+    margin-bottom:10px !important}
+  input,select,textarea{border:1px solid #999 !important;color:#000 !important;
+    -webkit-appearance:none;appearance:none}
   input[type="number"]::-webkit-inner-spin-button,
   input[type="number"]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-  img{max-width:160px !important}
+  img{max-width:120px !important}
 }
 
 /* ===================== V66.1 — Determinação, cartão de sessão, Modo Sessão, trilha pessoal ===================== */
@@ -742,18 +744,11 @@ button.home-theme-card{font:inherit;color:inherit;text-align:left;cursor:pointer
 
 @media (prefers-reduced-motion:reduce){.curtain-fx .cf-l,.curtain-fx .cf-r{transition-duration:.01s}}
 
-/* V66.3: Cortina dos Players na Mesa do Mestre — reaproveita o losango
-   (.sess-diamond) e as barras (.horror-resource) já usados no Modo Sessão. */
-.mesa-curtain-section{margin-top:18px}
-.mesa-curtain-grid{display:flex;flex-direction:column;gap:10px;margin-top:10px}
-.mesa-curtain-card{border:1px solid rgba(239,58,69,.28);border-radius:12px;background:rgba(10,4,5,.55);overflow:hidden}
-.mesa-curtain-head{display:flex;align-items:center;gap:12px;padding:10px 14px;flex-wrap:wrap}
-.mesa-curtain-name{font-family:Cinzel,serif;letter-spacing:.06em;text-transform:uppercase;color:#fff}
-.mesa-curtain-hp-pill{margin-left:auto;font-size:.8rem;color:rgba(255,255,255,.6)}
-.mesa-curtain-toggle{white-space:nowrap}
-.mesa-curtain-card.open{border-color:rgba(239,58,69,.55);box-shadow:0 0 24px rgba(197,29,40,.18) inset}
-.mesa-curtain-body{padding:6px 18px 20px;display:flex;flex-direction:column;gap:16px}
-.mesa-curtain-body .sess-card{padding-top:6px}
-.mesa-curtain-bars{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.mesa-curtain-trained{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-@media (max-width:640px){.mesa-curtain-bars,.mesa-curtain-trained{grid-template-columns:1fr}.mesa-curtain-hp-pill{margin-left:0}}
+/* V66.5 — Mesa refeita: histórico e estado de combate */
+.session-history{margin-top:8px;border-top:1px solid rgba(255,255,255,.08);padding-top:8px}
+.session-history-item{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:.88rem}
+.session-history-item small{min-width:52px;opacity:.55;font-variant-numeric:tabular-nums}
+.session-history-item span{line-height:1.35}
+.session-toolbar{align-items:center}
+.session-toolbar .small{margin-left:auto}
+@media (max-width:760px){.session-toolbar .small{width:100%;margin-left:0}.initiative-input{max-width:70px}.session-grid{grid-template-columns:1fr}}

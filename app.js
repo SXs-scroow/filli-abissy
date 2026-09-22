@@ -1,6 +1,6 @@
 import { remoteEnabled, fetchGlobal, pushGlobal, backupGlobal, listGlobalBackups, uploadGlobalFile, subscribeGlobal, subscribeLive, broadcastLive, authMasterLogin, authPlayerLogin, authRegisterPlayer, authLogout, authCheck, changeMasterPassword, authErrorText, getAuthToken } from './src/globalSync.js';
 import { playerStoreEnabled, fetchPlayers as fetchPlayerRows, upsertPlayers, upsertPlayerTombstones, subscribePlayers } from './src/playerStore.js';
-const APP_VERSION='V66.4 · PDF COR + TV + SEGURANÇA';
+const APP_VERSION='V66.3 · CORREÇÕES + DESEMPENHO';
 // ===== V66.1: declarações do Modo Sessão/segurança ficam AQUI, no topo. load() roda logo abaixo e chama normalize(),
 // que usa estas constantes; declaradas mais adiante elas ainda estariam "não inicializadas" (erro do console). =====
 let loadFailed=false;
@@ -251,6 +251,14 @@ function makeFearItems(){
 const DEFAULT_ITEMS=makeItems().concat(makeFearItems());
 function inferWeight(i){if(Number(i?.weight)>=1&&Number(i?.weight)<=3)return Number(i.weight);const n=String(i?.name||'').toLowerCase(),c=String(i?.category||'').toLowerCase();if(n.includes('lanterna')||n.includes('livro')||n.includes('corda')||c.includes('arma de fogo')||n.includes('rifle')||n.includes('espingarda'))return 2;if(c==='armas'||c==='armadura'||n.includes('espada')||n.includes('machado'))return 3;return 1}
 function oldAutoItem(i){return i&&typeof i.name==='string'&&(/\s\d+$/.test(i.name))&&String(i.description||'').includes('para uso nas jornadas de Filii Abyssi.')}
+// V66.3: os 1.961 itens do catálogo vêm do código (CURATED_ITEMS). Guardá-los no estado global (~900 KB) fazia todo aparelho
+// baixá-los ao abrir, regravá-los no navegador a cada alteração e o Mestre reenviá-los a cada salvamento. Agora só vão para
+// o servidor/navegador os itens EDITADOS ou CRIADOS; o resto é recomposto pelo migrateItems() ao carregar.
+var _defItemSigs=null;
+const itemSig=i=>JSON.stringify(i,Object.keys(i).sort());
+function defaultItemSigs(){if(!_defItemSigs){_defItemSigs=new Map();for(const i of migrateItems([]))_defItemSigs.set(Number(i.id),itemSig(i))}return _defItemSigs}
+function slimItems(items){const sigs=defaultItemSigs();return (Array.isArray(items)?items:[]).filter(i=>i&&sigs.get(Number(i.id))!==itemSig(i))}
+function serializeState(){const full=state.items;try{state.items=slimItems(full);return JSON.stringify(state)}finally{state.items=full}}
 function migrateItems(items){const current=Array.isArray(items)?items:[];const kept=current.filter(i=>!oldAutoItem(i));const ids=new Set(kept.map(i=>Number(i.id)));DEFAULT_ITEMS.forEach(i=>{if(!ids.has(i.id))kept.push(clone(i))});kept.forEach(i=>{const legacy={Arma:'Armas',Missão:'Itens Chave',Consumível:'Consumíveis',Material:'Materiais',Relíquia:'Relíquias',Mágico:'Relíquias',Armadura:'Diversos',Comum:'Diversos'};if(legacy[i.category])i.category=legacy[i.category];i.weight=inferWeight(i);i.maxQty=Math.max(1,Number(i.maxQty)||10);if(isWeaponItem(i)&&!String(i.damage||'').trim())i.damage=weaponDamageFallback(i);if(i.id===300){i.name='Chave';i.category='Itens Chave';i.icon='asset:key';i.weight=1}});return kept}
 
 function blankLimits(){return Object.fromEntries(ATTRS.map(a=>[a,{min:0,max:MAX_ATTR}]));}
@@ -265,14 +273,14 @@ function effectiveSkill(e,name){return Math.min(MAX_SKILL,Number(e?.skills?.[nam
 function getSpells(){return (Array.isArray(state.spells)&&state.spells.length?state.spells:INITIAL_SPELLS).map(x=>({...x}));}
 function hasMagicClass(name){return ['Mago Amarelo','Ocultista','Sacerdote'].includes(name)||!!CLASSES[name]?.magic;}
 function classChosen(p){return !!String(p?.class||'').trim()}
-function defaultSessionBoard(){return {active:false,title:'Sessão atual',scene:'',round:1,turn:0,participants:[],gmNotes:[],history:[],updatedAt:0}}
+function defaultSessionBoard(){return {active:false,sessionId:'',title:'Sessão atual',scene:'',round:1,turn:0,currentParticipantId:'',participants:[],gmNotes:[],history:[],updatedAt:0}}
 function defaultTerrorMode(){return {active:false,title:'MODO TERROR',message:'',subtext:'',image:'',updatedAt:0}}
 function defaultTvScreen(){return {active:false,kind:'black',url:'',title:'',loop:false,commandAt:0,updatedAt:0}}
 function normalizeTvScreen(){state.tvScreen={...defaultTvScreen(),...(state.tvScreen||{})};}
-function normalizeSessionBoard(){state.sessionBoard={...defaultSessionBoard(),...(state.sessionBoard||{})};state.sessionBoard.participants=Array.isArray(state.sessionBoard.participants)?state.sessionBoard.participants:[];state.sessionBoard.gmNotes=Array.isArray(state.sessionBoard.gmNotes)?state.sessionBoard.gmNotes:[];state.sessionBoard.history=Array.isArray(state.sessionBoard.history)?state.sessionBoard.history:[]}
+function normalizeSessionBoard(){state.sessionBoard={...defaultSessionBoard(),...(state.sessionBoard||{})};if(!state.sessionBoard.sessionId)state.sessionBoard.sessionId=cryptoRandomId('session');state.sessionBoard.currentParticipantId=state.sessionBoard.currentParticipantId||'';state.sessionBoard.participants=Array.isArray(state.sessionBoard.participants)?state.sessionBoard.participants:[];state.sessionBoard.gmNotes=Array.isArray(state.sessionBoard.gmNotes)?state.sessionBoard.gmNotes:[];state.sessionBoard.history=Array.isArray(state.sessionBoard.history)?state.sessionBoard.history:[]}
 function normalizeTerrorMode(){state.terrorMode={...defaultTerrorMode(),...(state.terrorMode||{})}}
 
-const DEFAULT={version:65.3,siteBrand:{name:'A Profecia',image:'runa-gold.png'},session:null,characterRules:clone(DEFAULT_RULES),classBonuses:clone(DEFAULT_CLASS_BONUSES),music:{type:'',url:'',title:'',kind:'url',mediaId:''},slasherIntroMusic:{url:'',title:'',kind:'url'},sounds:[],players:[basePlayer()],creatures:[],items:DEFAULT_ITEMS,spells:INITIAL_SPELLS,uiIcons:{attrs:{...DEFAULT_ATTR_ICONS},skills:{...DEFAULT_SKILL_ICONS},conditions:{}},backgrounds:{},customContent:{attrs:[],skills:[],conditions:[],deities:[]},sessionBoard:defaultSessionBoard(),terrorMode:defaultTerrorMode(),nexus:{active:false,title:'Nexus Tabletop',url:'',updatedAt:0},tvScreen:defaultTvScreen(),tvScenes:[],soundboard:{volume:0.85,enabled:true},secretClues:[]};
+const DEFAULT={version:65.3,siteBrand:{name:'A Profecia',image:'runa-gold.png'},session:null,characterRules:clone(DEFAULT_RULES),classBonuses:clone(DEFAULT_CLASS_BONUSES),music:{type:'',url:'',title:'',kind:'url',mediaId:''},slasherIntroMusic:{url:'',title:'',kind:'url'},sounds:[],players:[],creatures:[],items:DEFAULT_ITEMS,spells:INITIAL_SPELLS,uiIcons:{attrs:{...DEFAULT_ATTR_ICONS},skills:{...DEFAULT_SKILL_ICONS},conditions:{}},backgrounds:{},customContent:{attrs:[],skills:[],conditions:[],deities:[]},sessionBoard:defaultSessionBoard(),terrorMode:defaultTerrorMode(),nexus:{active:false,title:'Nexus Tabletop',url:'',updatedAt:0},tvScreen:defaultTvScreen(),tvScenes:[],soundboard:{volume:0.85,enabled:true},secretClues:[]};
 let memoryStore={};
 let bgObjectUrls={};
 function bgOpen(){return new Promise((resolve,reject)=>{try{const r=indexedDB.open(BG_DB_NAME,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(BG_STORE))r.result.createObjectStore(BG_STORE);};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('IndexedDB indisponível'));}catch(e){reject(e)}})}
@@ -321,9 +329,9 @@ const idbGetSound=id=>mediaGet(MEDIA_STORES.sounds,id);
 const idbDeleteSound=id=>mediaDelete(MEDIA_STORES.sounds,id);
 const STATE_BACKUP_DB='a-profecia-recovery-v1',STATE_BACKUP_STORE='snapshots';
 function stateBackupOpen(){return new Promise((resolve,reject)=>{try{const r=indexedDB.open(STATE_BACKUP_DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STATE_BACKUP_STORE))r.result.createObjectStore(STATE_BACKUP_STORE);};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('IndexedDB indisponível'));}catch(e){reject(e)}})}
-async function saveLocalRecovery(label='auto'){if(label==='save'||label==='global-save'){const t=Date.now();if(t-lastRecoveryAt<45000)return;lastRecoveryAt=t}try{const db=await stateBackupOpen();const snap={label,createdAt:Date.now(),state:clone(state)};await new Promise((resolve,reject)=>{const tx=db.transaction(STATE_BACKUP_STORE,'readwrite');tx.objectStore(STATE_BACKUP_STORE).put(snap,String(snap.createdAt));tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>{db.close();reject(tx.error||new Error('backup'))}});const db2=await stateBackupOpen();await new Promise((resolve,reject)=>{const tx=db2.transaction(STATE_BACKUP_STORE,'readwrite'),store=tx.objectStore(STATE_BACKUP_STORE),req=store.getAllKeys();req.onsuccess=()=>{const keys=(req.result||[]).map(Number).sort((a,b)=>b-a);keys.slice(8).forEach(k=>store.delete(String(k)))};tx.oncomplete=()=>{db2.close();resolve()};tx.onerror=()=>{db2.close();reject(tx.error||new Error('cleanup'))}})}catch(e){console.warn('Backup local de recuperação falhou:',e)}}
+async function saveLocalRecovery(label='auto'){if(label==='save'||label==='global-save'){const t=Date.now();if(t-lastRecoveryAt<45000)return;lastRecoveryAt=t}try{const db=await stateBackupOpen();const snap={label,createdAt:Date.now(),state:JSON.parse(serializeState())};await new Promise((resolve,reject)=>{const tx=db.transaction(STATE_BACKUP_STORE,'readwrite');tx.objectStore(STATE_BACKUP_STORE).put(snap,String(snap.createdAt));tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>{db.close();reject(tx.error||new Error('backup'))}});const db2=await stateBackupOpen();await new Promise((resolve,reject)=>{const tx=db2.transaction(STATE_BACKUP_STORE,'readwrite'),store=tx.objectStore(STATE_BACKUP_STORE),req=store.getAllKeys();req.onsuccess=()=>{const keys=(req.result||[]).map(Number).sort((a,b)=>b-a);keys.slice(8).forEach(k=>store.delete(String(k)))};tx.oncomplete=()=>{db2.close();resolve()};tx.onerror=()=>{db2.close();reject(tx.error||new Error('cleanup'))}})}catch(e){console.warn('Backup local de recuperação falhou:',e)}}
 async function getLocalRecoveries(){try{const db=await stateBackupOpen();return await new Promise((resolve,reject)=>{const tx=db.transaction(STATE_BACKUP_STORE,'readonly'),req=tx.objectStore(STATE_BACKUP_STORE).getAll();req.onsuccess=()=>{db.close();resolve((req.result||[]).sort((a,b)=>b.createdAt-a.createdAt))};req.onerror=()=>{db.close();reject(req.error)}})}catch{return []}}
-async function restoreLocalRecovery(){const list=await getLocalRecoveries();if(list.length<2&&list.length<1)throw new Error('Nenhum backup local encontrado');const snap=list[0];await saveLocalRecovery('antes-da-restauracao');state=clone(snap.state);storageSet(KEY,JSON.stringify(state));if(remoteEnabled){try{const old=await fetchGlobal();if(old?.data)await backupGlobal(old.data,'antes-da-restauracao-local');await pushGlobal(globalPayload())}catch(e){console.warn('Falha ao enviar restauração ao Supabase:',e)}}render(currentView||'home');toast(`Backup restaurado: ${new Date(snap.createdAt).toLocaleString('pt-BR')}`)}
+async function restoreLocalRecovery(){const list=await getLocalRecoveries();if(list.length<2&&list.length<1)throw new Error('Nenhum backup local encontrado');const snap=list[0];await saveLocalRecovery('antes-da-restauracao');state=clone(snap.state);state.items=migrateItems(state.items);storageSet(KEY,serializeState());if(remoteEnabled){try{const old=await fetchGlobal();if(old?.data)await backupGlobal(old.data,'antes-da-restauracao-local');await pushGlobal(globalPayload())}catch(e){console.warn('Falha ao enviar restauração ao Supabase:',e)}}render(currentView||'home');toast(`Backup restaurado: ${new Date(snap.createdAt).toLocaleString('pt-BR')}`)}
 function localRichness(s){if(!s)return 0;const arr=k=>Array.isArray(s[k])?s[k].length:0;const obj=k=>s[k]&&typeof s[k]==='object'?Object.keys(s[k]).length:0;const cc=s.customContent||{};return arr('players')*100+arr('creatures')*70+arr('items')*3+arr('spells')*2+arr('sounds')*5+arr('tvScenes')*10+obj('backgrounds')*15+obj('uiIcons')*2+Object.values(cc).reduce((n,v)=>n+(Array.isArray(v)?v.length:0),0)*8+(s.sessionBoard?.history?.length||0)*4+(s.sessionBoard?.participants?.length||0)*3}
 function mergePreferRicherLocal(remote){if(!remote)return false;const before=clone(state);const localScore=localRichness(before),remoteState={...remote};const remoteScore=localRichness(remoteState);if(localScore<=remoteScore)return false;const arrays=['players','creatures','items','spells','sounds','tvScenes'];for(const k of arrays){if(Array.isArray(before[k])&&Array.isArray(remoteState[k])&&before[k].length>remoteState[k].length)remoteState[k]=before[k]}for(const k of ['backgrounds','uiIcons','customContent']){if(before[k]&&remoteState[k]&&Object.keys(before[k]).length>Object.keys(remoteState[k]).length)remoteState[k]=before[k]}mergeGlobal(remoteState);return true}
 
@@ -383,14 +391,14 @@ function clone(v){return JSON.parse(JSON.stringify(v))}
 let state=clone(DEFAULT);
 state=load();
 let lastPlayersSnapshot=clone(state.players||[]);
-function load(){try{const raw=storageGet(KEY)||storageGet('filii_abyssi_state_v10')||storageGet('filii_abyssi_state_v8');const saved=raw?JSON.parse(raw):null;if(!saved){const fresh=clone(DEFAULT);try{const cs=readStoredSession();if(cs?.role)fresh.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{}try{const cm=JSON.parse(storageGet(MEDIA_CACHE_KEY)||'null');mergeCriticalCacheIntoState(cm,fresh)}catch{}return fresh;}try{const tabS=tabSessionGet(),cs=tabS||(!saved.session?readStoredSession():null);if(cs?.role)saved.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{};try{const cachedMedia=storageGet(MEDIA_CACHE_KEY);if(cachedMedia)saved.__criticalMediaCache=JSON.parse(cachedMedia)}catch{};saved.siteBrand={name:'A Profecia',image:'runa-gold.png',...(saved.siteBrand||{})};saved.siteBrand.name=String(saved.siteBrand.name||'A Profecia').trim()||'A Profecia';saved.siteBrand.image=saved.siteBrand.image||'runa-gold.png';saved.characterRules={campaign:{...DEFAULT_RULES.campaign,...(saved.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(saved.characterRules?.slasher||{})}};saved.classBonuses={...clone(DEFAULT_CLASS_BONUSES),...(saved.classBonuses||{})};saved.items=migrateItems(saved.items);saved.players=Array.isArray(saved.players)?saved.players:[];saved.playerTombstones=saved.playerTombstones&&typeof saved.playerTombstones==='object'?saved.playerTombstones:{};if(!saved.players.some(p=>p.login===TEST.login))saved.players.push(basePlayer());saved.creatures=Array.isArray(saved.creatures)?saved.creatures:[];saved.sounds=Array.isArray(saved.sounds)?saved.sounds:[];saved.spells=Array.isArray(saved.spells)&&saved.spells.length?saved.spells:INITIAL_SPELLS.map(clone);saved.uiIcons=saved.uiIcons||{attrs:{},skills:{}};saved.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(saved.uiIcons.attrs||{})};saved.uiIcons.skills={...DEFAULT_SKILL_ICONS,...(saved.uiIcons.skills||{})};saved.uiIcons.conditions={...(saved.uiIcons.conditions||{})};saved.backgrounds={...(saved.backgrounds||{})};saved.customContent={attrs:[],skills:[],conditions:[],deities:[],...(saved.customContent||{})};saved.sessionBoard={...defaultSessionBoard(),...(saved.sessionBoard||{})};saved.sessionBoard.participants=Array.isArray(saved.sessionBoard.participants)?saved.sessionBoard.participants:[];saved.sessionBoard.gmNotes=Array.isArray(saved.sessionBoard.gmNotes)?saved.sessionBoard.gmNotes:[];saved.sessionBoard.history=Array.isArray(saved.sessionBoard.history)?saved.sessionBoard.history:[];saved.terrorMode={...defaultTerrorMode(),...(saved.terrorMode||{})};saved.nexus={active:false,title:'Nexus Tabletop',url:'',...(saved.nexus||{})};saved.tvScreen={...defaultTvScreen(),...(saved.tvScreen||{})};saved.tvScenes=Array.isArray(saved.tvScenes)?saved.tvScenes:[];saved.soundboard={volume:.85,enabled:true,...(saved.soundboard||{})};saved.secretClues=Array.isArray(saved.secretClues)?saved.secretClues:[];if(typeof saved.music==='string')saved.music={type:'audio',url:saved.music,title:'Trilha da sessão'};saved.music=saved.music||{type:'',url:'',title:'',kind:'url',mediaId:''};saved.slasherIntroMusic=saved.slasherIntroMusic||{url:'',title:'',kind:'url'};if(typeof saved.music==='object'){saved.music.kind=saved.music.kind||'url';saved.music.mediaId=saved.music.mediaId||''}state=saved;saved.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});mergeCriticalCacheIntoState(saved.__criticalMediaCache,saved);delete saved.__criticalMediaCache;saved.version=Math.max(Number(saved.version)||0,65.5);return saved}catch(e){console.error('[A Profecia] load() falhou; usando estado padrão:',e);loadFailed=true;try{const raw=storageGet(KEY);if(raw&&!storageGet(KEY+'_backup_loadfail'))storageSet(KEY+'_backup_loadfail',raw)}catch{}return clone(DEFAULT)}}
+function load(){try{const raw=storageGet(KEY)||storageGet('filii_abyssi_state_v10')||storageGet('filii_abyssi_state_v8');const saved=raw?JSON.parse(raw):null;if(!saved){const fresh=clone(DEFAULT);try{const cs=readStoredSession();if(cs?.role)fresh.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{}try{const cm=JSON.parse(storageGet(MEDIA_CACHE_KEY)||'null');mergeCriticalCacheIntoState(cm,fresh)}catch{}return fresh;}try{const tabS=tabSessionGet(),cs=tabS||(!saved.session?readStoredSession():null);if(cs?.role)saved.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{};try{const cachedMedia=storageGet(MEDIA_CACHE_KEY);if(cachedMedia)saved.__criticalMediaCache=JSON.parse(cachedMedia)}catch{};saved.siteBrand={name:'A Profecia',image:'runa-gold.png',...(saved.siteBrand||{})};saved.siteBrand.name=String(saved.siteBrand.name||'A Profecia').trim()||'A Profecia';saved.siteBrand.image=saved.siteBrand.image||'runa-gold.png';saved.characterRules={campaign:{...DEFAULT_RULES.campaign,...(saved.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(saved.characterRules?.slasher||{})}};saved.classBonuses={...clone(DEFAULT_CLASS_BONUSES),...(saved.classBonuses||{})};saved.items=migrateItems(saved.items);saved.players=Array.isArray(saved.players)?saved.players:[];saved.playerTombstones=saved.playerTombstones&&typeof saved.playerTombstones==='object'?saved.playerTombstones:{};saved.creatures=Array.isArray(saved.creatures)?saved.creatures:[];saved.sounds=Array.isArray(saved.sounds)?saved.sounds:[];saved.spells=Array.isArray(saved.spells)&&saved.spells.length?saved.spells:INITIAL_SPELLS.map(clone);saved.uiIcons=saved.uiIcons||{attrs:{},skills:{}};saved.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(saved.uiIcons.attrs||{})};saved.uiIcons.skills={...DEFAULT_SKILL_ICONS,...(saved.uiIcons.skills||{})};saved.uiIcons.conditions={...(saved.uiIcons.conditions||{})};saved.backgrounds={...(saved.backgrounds||{})};saved.customContent={attrs:[],skills:[],conditions:[],deities:[],...(saved.customContent||{})};saved.sessionBoard={...defaultSessionBoard(),...(saved.sessionBoard||{})};saved.sessionBoard.participants=Array.isArray(saved.sessionBoard.participants)?saved.sessionBoard.participants:[];saved.sessionBoard.gmNotes=Array.isArray(saved.sessionBoard.gmNotes)?saved.sessionBoard.gmNotes:[];saved.sessionBoard.history=Array.isArray(saved.sessionBoard.history)?saved.sessionBoard.history:[];saved.terrorMode={...defaultTerrorMode(),...(saved.terrorMode||{})};saved.nexus={active:false,title:'Nexus Tabletop',url:'',...(saved.nexus||{})};saved.tvScreen={...defaultTvScreen(),...(saved.tvScreen||{})};saved.tvScenes=Array.isArray(saved.tvScenes)?saved.tvScenes:[];saved.soundboard={volume:.85,enabled:true,...(saved.soundboard||{})};saved.secretClues=Array.isArray(saved.secretClues)?saved.secretClues:[];if(typeof saved.music==='string')saved.music={type:'audio',url:saved.music,title:'Trilha da sessão'};saved.music=saved.music||{type:'',url:'',title:'',kind:'url',mediaId:''};saved.slasherIntroMusic=saved.slasherIntroMusic||{url:'',title:'',kind:'url'};if(typeof saved.music==='object'){saved.music.kind=saved.music.kind||'url';saved.music.mediaId=saved.music.mediaId||''}state=saved;saved.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});mergeCriticalCacheIntoState(saved.__criticalMediaCache,saved);delete saved.__criticalMediaCache;saved.version=Math.max(Number(saved.version)||0,66.4);return saved}catch(e){console.error('[A Profecia] load() falhou; usando estado padrão:',e);loadFailed=true;try{const raw=storageGet(KEY);if(raw&&!storageGet(KEY+'_backup_loadfail'))storageSet(KEY+'_backup_loadfail',raw)}catch{}return clone(DEFAULT)}}
 let remoteSaveTimer=null,remoteHydrated=false,remoteApplying=false;
 let playerDbTimer=null,playerDbHydrated=false,playerDbApplying=false;
 let playerDbUnsubscribe=null;
 let playerDbSyncBusy=false;
 function globalPayload(){
   const {session,sounds,players,playerTombstones,...shared}=state;
-  const payload={version:shared.version,siteBrand:shared.siteBrand,creatures:shared.creatures,items:shared.items,spells:shared.spells,uiIcons:shared.uiIcons,backgrounds:shared.backgrounds,music:shared.music,slasherIntroMusic:shared.slasherIntroMusic,characterRules:shared.characterRules,classBonuses:shared.classBonuses,customContent:shared.customContent,sessionBoard:shared.sessionBoard,terrorMode:shared.terrorMode,nexus:shared.nexus,tvScreen:shared.tvScreen,tvScenes:shared.tvScenes,sounds:shared.sounds,soundboard:shared.soundboard};
+  const payload={version:shared.version,siteBrand:shared.siteBrand,creatures:shared.creatures,items:slimItems(shared.items),spells:shared.spells,uiIcons:shared.uiIcons,backgrounds:shared.backgrounds,music:shared.music,slasherIntroMusic:shared.slasherIntroMusic,characterRules:shared.characterRules,classBonuses:shared.classBonuses,customContent:shared.customContent,sessionBoard:shared.sessionBoard,terrorMode:shared.terrorMode,nexus:shared.nexus,tvScreen:shared.tvScreen,tvScenes:shared.tvScenes,sounds:shared.sounds,soundboard:shared.soundboard};
   // Fallback temporário: se o banco de Players ainda não foi criado ou ficou
   // indisponível, mantém o formato antigo para que o site continue funcionando.
   if(!playerStoreEnabled||!playerDbHydrated){payload.players=players;payload.playerTombstones=playerTombstones||{}}
@@ -430,7 +438,7 @@ function mergePlayersRemote(remotePlayers,remoteTombstones){
     const p=merged.get(k);if(p&&(Number(t)||0)>=(Number(p._syncUpdatedAt)||0))merged.delete(k);
   }
   const before=JSON.stringify(state.players||[]);state.players=[...merged.values()];state.playerTombstones=tomb;
-  if(!state.players.some(p=>p.login===TEST.login))state.players.push(basePlayer());
+  
   state.players.forEach(normalize);
   lastPlayersSnapshot=clone(state.players);
   return before!==JSON.stringify(state.players);
@@ -463,7 +471,8 @@ function mergeGlobal(remote){
     if(key==='customContent'){
       next={attrs:[],skills:[],conditions:[],deities:[],...(next||{})};const local=state.customContent||{};const localD=new Map((local.deities||[]).map(x=>[String(x.id),x]));next.deities=(next.deities||[]).map(d=>{const l=localD.get(String(d.id));if(l&&!imageValue(d.image)&&imageValue(l.image))d.image=l.image;return d});for(const l of (local.deities||[]))if(!next.deities.some(d=>String(d.id)===String(l.id)))next.deities.push(clone(l));
     }
-    if(!sameGlobalValue(state[key],next)){state[key]=next;domains.push(key);}
+    const curCmp=key==='items'?slimItems(state[key]):state[key],nextCmp=key==='items'?slimItems(next):next;
+    if(!sameGlobalValue(curCmp,nextCmp)){state[key]=next;domains.push(key);}
   }
   mergeCriticalCacheIntoState(criticalMediaSnapshot(state));
   persistCriticalCache();
@@ -471,7 +480,7 @@ function mergeGlobal(remote){
   if(domains.length){
     state.siteBrand={name:'A Profecia',image:'runa-gold.png',...(state.siteBrand||{})};state.siteBrand.name=String(state.siteBrand.name||'A Profecia').trim()||'A Profecia';state.siteBrand.image=state.siteBrand.image||'runa-gold.png';state.items=migrateItems(state.items);
     state.players=Array.isArray(state.players)?state.players:[];state.playerTombstones=state.playerTombstones&&typeof state.playerTombstones==='object'?state.playerTombstones:{};
-    if(!state.players.some(p=>p.login===TEST.login))state.players.push(basePlayer());
+    
     state.creatures=Array.isArray(state.creatures)?state.creatures:[];
     state.spells=Array.isArray(state.spells)&&state.spells.length?state.spells:INITIAL_SPELLS.map(clone);
     state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};
@@ -516,7 +525,7 @@ function applyPlayerRows(rows,{initial=false}={}){
     const p=byId.get(key);if(p&&Number(t)>=(Number(p._syncUpdatedAt)||0)){byId.delete(key)}
   }
   state.players=[...byId.values()];
-  if(!state.players.some(p=>p.login===TEST.login))state.players.push(basePlayer());
+  
   state.players.forEach(normalize);
   state.playerTombstones=tomb;
   lastPlayersSnapshot=clone(state.players);
@@ -528,7 +537,7 @@ async function hydratePlayersDb(){
     const rows=await fetchPlayerRows();
     if(rows.length){
       playerDbApplying=true;applyPlayerRows(rows,{initial:true});playerDbApplying=false;
-      persistCriticalCache();persistSessionCache();storageSet(KEY,JSON.stringify(state));
+      persistCriticalCache();persistSessionCache();storageSet(KEY,serializeState());
     }else{
       // Migração inicial: usa o estado local/global existente apenas uma vez.
       const list=Array.isArray(state.players)?state.players:[];
@@ -601,9 +610,9 @@ async function syncPlayersDbNow(){
     if(tombRows.length&&state.session?.role==='master')await upsertPlayerTombstones(Object.fromEntries(tombRows.map(x=>[x.id,x._syncUpdatedAt])),index);
     const before=JSON.stringify(state.players||[]);
     state.players=[...localById.values()];
-    if(!state.players.some(p=>p.login===TEST.login))state.players.push(basePlayer());
+    
     state.players.forEach(normalize);lastPlayersSnapshot=clone(state.players);
-    if(before!==JSON.stringify(state.players||[]))storageSet(KEY,JSON.stringify(state));
+    if(before!==JSON.stringify(state.players||[]))storageSet(KEY,serializeState());
     // Never log the player out merely because a transient sync response omitted a row.
     // A confirmed deletion is handled by the realtime/delete confirmation path.
   }catch(e){console.warn('Falha ao sincronizar Players:',e)}
@@ -626,7 +635,7 @@ function queueRemoteSave(){
 // localStorage e clonava tudo para o IndexedDB TODA vez, travando o site. Agora as gravações são agrupadas (~300 ms)
 // e a cópia de recuperação é limitada; ao fechar/ocultar a página o que estiver pendente é gravado na hora.
 function save(){saveDirty=true;const now=Date.now();if(!saveFirstAt)saveFirstAt=now;clearTimeout(saveTimer);saveTimer=setTimeout(()=>flushSave(),Math.max(0,Math.min(300,1500-(now-saveFirstAt))))}
-function flushSave(force=false,opts={}){clearTimeout(saveTimer);if(!saveDirty&&!force)return;saveDirty=false;saveFirstAt=0;markLocalPlayerChanges();persistCriticalCache();persistSessionCache();const isPlayer=state.session?.role==='player';if(isPlayer){const current=state.players.find(x=>playerSyncKey(x)===state.session.playerId)||state.players.find(x=>String(x.login||'').toLowerCase()===String(state.session.login||'').toLowerCase());if(current){state.session.playerId=current.id;state.session.playerSnapshot=clone(current)}}storageSet(KEY,JSON.stringify(state));storageSet('a_profecia_local_changed_at',String(Date.now()));if(!opts.skipRemote){if(state.session?.role==='master')queueRemoteSave();queuePlayerDbSave();saveLocalRecovery('save').catch(()=>{})}}
+function flushSave(force=false,opts={}){clearTimeout(saveTimer);if(!saveDirty&&!force)return;saveDirty=false;saveFirstAt=0;markLocalPlayerChanges();persistCriticalCache();persistSessionCache();const isPlayer=state.session?.role==='player';if(isPlayer){const current=state.players.find(x=>playerSyncKey(x)===state.session.playerId)||state.players.find(x=>String(x.login||'').toLowerCase()===String(state.session.login||'').toLowerCase());if(current){state.session.playerId=current.id;state.session.playerSnapshot=clone(current)}}storageSet(KEY,serializeState());storageSet('a_profecia_local_changed_at',String(Date.now()));if(!opts.skipRemote){if(state.session?.role==='master')queueRemoteSave();queuePlayerDbSave();saveLocalRecovery('save').catch(()=>{})}}
 let globalSaveChain=Promise.resolve();
 let pendingGlobalPayload=null;
 let pendingGlobalWaiters=[];
@@ -685,7 +694,7 @@ async function saveGlobalNow(){
     clearGlobalDirty(stamp);
     return result;
   }catch(e){
-    console.error('Falha ao sincronizar alteração global:',e);
+    (/SESSAO_INVALIDA|NAO_AUTORIZADO/.test(String(e?.message||''))?console.warn:console.error)('Falha ao sincronizar alteração global:',e);
     toast(`Alteração salva neste dispositivo, mas NÃO foi enviada aos outros: ${e?.message||'erro de sincronização'}`);
     return null;
   }
@@ -1131,7 +1140,7 @@ function syncSoundboard(){
   if(root.dataset.signature===signature)return;
   root.innerHTML=`<div class="soundboard-mini"><div class="soundboard-head"><span class="soundboard-title">SOUNDBOARD</span><button type="button" class="soundboard-mini-btn" id="soundEnable">${soundAudioUnlocked?'ÁUDIO ATIVO':'ATIVAR SONS'}</button><button type="button" class="soundboard-mini-btn" id="soundStop">■</button><label class="soundboard-volume" title="Volume dos efeitos">🔊<input id="soundVolume" type="range" min="0" max="100" value="${Math.round(Number(state.soundboard?.volume??.85)*100)}"></label></div><div class="soundboard-buttons">${sounds.map(s=>`<button type="button" class="soundboard-button" data-sound-play="${esc(s.id)}">${esc(s.name)}</button>`).join('')}</div></div>`;
   root.querySelector('#soundEnable')?.addEventListener('click',()=>{unlockSoundAudio();root.querySelector('#soundEnable').textContent='ÁUDIO ATIVO';toast('Sons ativados neste dispositivo.')});
-  root.querySelector('#soundStop')?.addEventListener('click',stopAllSounds);root.querySelector('#soundVolume')?.addEventListener('input',e=>{state.soundboard=state.soundboard||{volume:.85,enabled:true};state.soundboard.volume=Math.max(0,Math.min(1,Number(e.target.value)/100));storageSet(KEY,JSON.stringify(state));});
+  root.querySelector('#soundStop')?.addEventListener('click',stopAllSounds);root.querySelector('#soundVolume')?.addEventListener('input',e=>{state.soundboard=state.soundboard||{volume:.85,enabled:true};state.soundboard.volume=Math.max(0,Math.min(1,Number(e.target.value)/100));storageSet(KEY,serializeState());});
   root.querySelectorAll('[data-sound-play]').forEach(b=>b.onclick=()=>{const s=sounds.find(x=>String(x.id)===String(b.dataset.soundPlay));if(s)triggerSound(s)});
   root.dataset.signature=signature;
 }
@@ -1473,19 +1482,14 @@ function applyTvCommand(next,transition=true){
     screen.classList.remove('tv-fading');
   };
   if(s.active&&s.kind==='video'&&s.url){
-    // V66.4: trocar de uma cena de imagem/tela sólida direto para um vídeo deixava a
-    // cena anterior (que não era <video>) esquecida por trás do vídeo novo. Também
-    // cobre o caso raro de duas trocas de vídeo muito rápidas (mais de um <video>
-    // "sobrando" ao mesmo tempo), removendo tudo que não é o vídeo que está entrando.
-    const olds=[...stage.querySelectorAll('video')];
-    [...stage.children].forEach(el=>{if(el.tagName!=='VIDEO')el.remove()});
+    const old=stage.querySelector('video');
     const v=document.createElement('video');v.autoplay=true;v.playsInline=true;v.preload='auto';v.loop=!!s.loop;v.src=s.url;v.className='tv-layer tv-enter';
     stage.appendChild(v);
-    const swap=()=>{if(!v.isConnected)return;v.classList.remove('tv-enter');v.classList.add('tv-visible');olds.forEach(o=>{if(o!==v){o.classList.add('tv-exit');setTimeout(()=>o.remove(),280)}});finish();playTvVideo(v)};
+    const swap=()=>{if(!v.isConnected)return;v.classList.remove('tv-enter');v.classList.add('tv-visible');if(old&&old!==v){old.classList.add('tv-exit');setTimeout(()=>old.remove(),280)}finish();playTvVideo(v)};
     v.addEventListener('canplay',swap,{once:true});
-    v.addEventListener('error',()=>{if(!olds.length)v.remove();finish()},{once:true});
+    v.addEventListener('error',()=>{if(!old)v.remove();finish()},{once:true});
     v.load();
-    if(!olds.length)screen.classList.add('tv-fading');
+    if(!old)screen.classList.add('tv-fading');
     return;
   }
   screen.classList.add('tv-fading');
@@ -1598,56 +1602,84 @@ function handleSessionStartLive(payload){
   try{navigator.vibrate?.(300)}catch{}
 }
 
-function orderedActiveParticipants(b){return [...(b?.participants||[])].filter(x=>x.active).sort((a,c)=>(Number(c.iniciativa)||0)-(Number(a.iniciativa)||0))}
-function currentTurnParticipant(b){return orderedActiveParticipants(b).find(x=>!x.acted)||null}
-// V65.10: lembra de quem era a vez na última checagem, para só vibrar quando a vez
-// PASSA A SER do Player deste aparelho (e não a cada atualização da mesa).
+function sessionParticipantKey(e,type){if(!e)return '';return String(e.id||e.login||e.name||'').trim();}
+function sessionParticipantFromEntity(e,type,existing={}){const entityId=sessionParticipantKey(e,type);return {...existing,id:String(existing.id||`${type}-${entityId}`),entityId,entityLogin:type==='player'?String(e.login||''):String(existing.entityLogin||''),name:e.name||e.login||type,kind:type,iniciativa:Number(existing.iniciativa)||0,order:Number.isFinite(Number(existing.order))&&Number(existing.order)>0?Math.floor(Number(existing.order)):null,hp:Number(e.hp)||0,hpMax:Number(e.hpMax)||0,acted:!!existing.acted,active:existing.active!==false};}
+function normalizeSessionParticipants(){normalizeSessionBoard();const b=state.sessionBoard,players=new Map((state.players||[]).map(p=>[sessionParticipantKey(p,'player'),p])),monsters=new Map((state.creatures||[]).map(m=>[sessionParticipantKey(m,'monster'),m])),seen=new Set();b.participants=(b.participants||[]).map(x=>{const type=x.kind==='monster'?'monster':'player',source=(type==='player'?players:monsters).get(String(x.entityId||x.entityLogin||''));if(!source)return {...x,active:false};const y=sessionParticipantFromEntity(source,type,x),key=`${type}:${y.entityId}`;if(seen.has(key))return null;seen.add(key);return y}).filter(Boolean);return b;}
+function ensureSessionPlayers(){const b=normalizeSessionParticipants();let changed=false;const existing=new Set((b.participants||[]).filter(x=>x.kind==='player').map(x=>String(x.entityId||x.entityLogin||'')));for(const p of (state.players||[])){const key=sessionParticipantKey(p,'player');if(!key||existing.has(key))continue;b.participants.push(sessionParticipantFromEntity(p,'player'));existing.add(key);changed=true;}return changed;}
+function ensureSessionPlayersForMaster(){const changed=ensureSessionPlayers();if(changed&&state.session?.role==='master')saveGlobalNow().catch(()=>{});return true;}
+function sessionOrderedParticipants(b){return [...(b?.participants||[])].filter(x=>x.active!==false).sort((a,c)=>{const ao=Number(a.order),co=Number(c.order),ah=Number.isFinite(ao)&&ao>0,ch=Number.isFinite(co)&&co>0;if(ah!==ch)return ah?-1:1;if(ah&&ao!==co)return ao-co;return String(a.id).localeCompare(String(c.id));});}
+function orderedActiveParticipants(b){return sessionOrderedParticipants(b)}
+function currentTurnParticipant(b){if(!b)return null;if(b.currentParticipantId){const cur=(b.participants||[]).find(x=>String(x.id)===String(b.currentParticipantId)&&x.active!==false);if(cur)return cur;}return sessionOrderedParticipants(b).find(x=>!x.acted)||null;}
 let lastKnownTurnParticipantId='';
-function sessionParticipantFromEntity(e,type){return {id:`${type}-${e.id}`,entityId:e.id,name:e.name||type,kind:type,iniciativa:0,hp:Number(e.hp)||0,hpMax:Number(e.hpMax)||0,acted:false,active:true}}
-function sessionPage(){normalizeSessionBoard();const b=state.sessionBoard;const rows=[...b.participants].sort((a,c)=>(Number(c.iniciativa)||0)-(Number(a.iniciativa)||0));return shell(`<section class="hero session-hero"><span class="badge">MESA DO MESTRE</span><h1>${esc(b.title||'Sessão atual')}</h1><p>${esc(b.scene||'Defina a cena atual e organize a iniciativa.')}</p><div class="session-status"><span>Rodada <b>${b.round||1}</b></span><span>Turno <b>${b.turn||0}</b></span>${b.active?'<span class="live">● SESSÃO ATIVA</span>':'<span>SESSÃO PAUSADA</span>'}</div></section>${mesaCurtainSection(b)}<div class="session-grid"><section class="card"><div class="row space"><div><span class="section-kicker">CONTROLE</span><h2>Iniciativa</h2></div><div class="row"><button class="btn" id="newSession">Nova sessão</button><button class="btn primary" id="startSession">▶ Iniciar sessão</button><button class="btn gold" id="advanceSessionTurn">Avançar turno</button></div></div><div class="input-grid session-settings"><div class="field"><label>Nome da sessão</label><input id="sessionTitle" value="${esc(b.title)}"></div><div class="field"><label>Cena atual</label><input id="sessionScene" value="${esc(b.scene)}"></div></div><div class="row" style="margin:12px 0;flex-wrap:wrap"><select id="sessionEntitySelect"><option value="">Adicionar Player/Monstro...</option>${state.players.map(p=>`<option value="player:${esc(p.id)}">Player • ${esc(p.name||p.login)}</option>`).join('')}${state.creatures.map(m=>`<option value="monster:${esc(m.id)}">Monstro • ${esc(m.name)}</option>`).join('')}</select><button class="btn primary" id="addSessionParticipant">+ Adicionar</button></div><div class="initiative-list">${rows.length?rows.map((x,i)=>`<div class="initiative-row ${x.acted?'acted':''} ${i===0?'top':''}"><span class="initiative-order">${i+1}</span><div class="initiative-main"><strong>${esc(x.name)}</strong><small>${x.kind==='player'?'Player':'Monstro'} • Vida ${x.hp}/${x.hpMax||'?'}</small></div><input class="initiative-input" type="number" value="${Number(x.iniciativa)||0}" data-session-init="${esc(x.id)}" title="Iniciativa"><button class="btn small ${x.acted?'gold':''}" data-session-toggle="${esc(x.id)}">${x.acted?'Já agiu':'Marcar ação'}</button><button class="btn small danger" data-session-remove="${esc(x.id)}">×</button></div>`).join(''):'<div class="empty">Adicione os participantes para começar a ordem de iniciativa.</div>'}</div></section><aside class="card"><div class="section-heading"><div><span class="section-kicker">MESTRE</span><h2>Anotações</h2></div><span class="corner-mark">PRIVADAS</span></div><textarea id="sessionNotes" rows="16" placeholder="Pistas, NPCs, portas, eventos, informações secretas...">${esc((b.gmNotes||[]).join('\n'))}</textarea><button class="btn primary full" id="saveSessionNotes" style="margin-top:10px">Salvar anotações</button></aside></div><section class="card session-terror-control"><div class="row space"><div><span class="section-kicker">ATMOSFERA</span><h2>Modo Terror</h2><p class="small muted">Mostra uma cena de tensão para todos os Players. Não revela as anotações privadas do Mestre.</p></div><button class="btn danger" id="openTerrorEditor">${state.terrorMode?.active?'Editar / Encerrar':'Ativar Modo Terror'}</button></div></section>`,'session')}
+function sessionLog(board,message){
+  if(!board||!message)return;
+  board.history=Array.isArray(board.history)?board.history:[];
+  board.history.unshift({id:cryptoRandomId('log'),at:Date.now(),round:Number(board.round)||1,turn:Number(board.turn)||0,message:String(message)});
+  if(board.history.length>100)board.history=board.history.slice(0,100);
+}
+function sessionNewBoard(){return {...defaultSessionBoard(),sessionId:cryptoRandomId('session'),title:'Sessão atual',scene:'',round:1,turn:0,currentParticipantId:'',participants:[],gmNotes:[],history:[],active:false,updatedAt:Date.now()};}
+function sessionPage(){
+  normalizeSessionBoard();
+  const b=state.sessionBoard,rows=sessionOrderedParticipants(b),currentId=String(b.currentParticipantId||''),current=currentTurnParticipant(b);
+  const recent=(b.history||[]).slice(0,8);
+  return shell(`<section class="hero session-hero"><span class="badge">MESA DO MESTRE</span><h1>${esc(b.title||'Sessão atual')}</h1><p>${esc(b.scene||'O centro de controle da sessão. Players entram automaticamente no Modo Sessão.')}</p><div class="session-status"><span>Rodada <b>${b.round||1}</b></span><span>Turno <b>${b.turn||0}</b></span>${b.active?'<span class="live">● SESSÃO ATIVA</span>':'<span>PREPARAÇÃO</span>'}${current?`<span>Vez: <b>${esc(current.name)}</b></span>`:''}</div></section>
+  <div class="session-grid"><section class="card">
+    <div class="row space"><div><span class="section-kicker">CONTROLE DE COMBATE</span><h2>Ordem da mesa</h2><p class="small muted">Players aparecem automaticamente. O número é definido somente pelo Mestre; sem número, o participante fica depois dos numerados.</p></div>
+      <div class="row"><button class="btn" id="newSession">Nova sessão</button><button class="btn primary" id="startSession">▶ Iniciar sessão</button><button class="btn gold" id="advanceSessionTurn">Avançar turno</button></div>
+    </div>
+    <div class="input-grid session-settings"><div class="field"><label>Nome da sessão</label><input id="sessionTitle" value="${esc(b.title)}"></div><div class="field"><label>Cena atual</label><input id="sessionScene" value="${esc(b.scene)}"></div></div>
+    <div class="row session-toolbar" style="margin:12px 0;flex-wrap:wrap"><button class="btn" id="pauseSession">${b.active?'⏸ Pausar sessão':'▶ Retomar sessão'}</button><button class="btn" id="resetTurnOrder">↺ Reiniciar rodada</button><span class="small muted">ID da sessão: ${esc(String(b.sessionId||'').slice(-12))}</span></div>
+    <div class="row" style="margin:12px 0;flex-wrap:wrap"><select id="sessionEntitySelect"><option value="">Adicionar Player/Monstro manualmente...</option>${state.players.map(p=>`<option value="player:${esc(sessionParticipantKey(p,'player'))}">Player • ${esc(p.name||p.login)}</option>`).join('')}${state.creatures.map(m=>`<option value="monster:${esc(sessionParticipantKey(m,'monster'))}">Monstro • ${esc(m.name)}</option>`).join('')}</select><button class="btn primary" id="addSessionParticipant">+ Adicionar</button></div>
+    <div class="initiative-list">${rows.length?rows.map((x)=>{const source=(x.kind==='player'?state.players:state.creatures).find(e=>String(sessionParticipantKey(e,x.kind))===String(x.entityId)),isCurrent=String(x.id)===currentId;return `<div class="initiative-row ${x.acted?'acted':''} ${isCurrent?'top':''}"><span class="initiative-order">${isCurrent?'▶':(Number(x.order)>0?Number(x.order):'—')}</span><div class="initiative-main"><strong>${esc(x.name)}</strong><small>${x.kind==='player'?'Player':'Monstro'} • Vida ${Number(source?.hp??x.hp)||0}/${Number(source?.hpMax??x.hpMax)||'?'}</small></div><input class="initiative-input" type="number" min="1" step="1" value="${Number(x.order)>0?Number(x.order):''}" data-session-order="${esc(x.id)}" title="Número definido pelo Mestre" placeholder="Nº"><button class="btn small ${x.acted?'gold':''}" data-session-toggle="${esc(x.id)}">${x.acted?'Já agiu':'Marcar ação'}</button><button class="btn small danger" data-session-remove="${esc(x.id)}">×</button></div>`}).join(''):'<div class="empty">Nenhum participante ainda. Players entram automaticamente quando abrirem o Modo Sessão.</div>'}</div>
+  </section><aside class="card"><div class="section-heading"><div><span class="section-kicker">MESTRE</span><h2>Diário da sessão</h2></div><span class="corner-mark">PRIVADO</span></div><textarea id="sessionNotes" rows="10" placeholder="Pistas, NPCs, portas, eventos...">${esc((b.gmNotes||[]).join('\n'))}</textarea><button class="btn primary full" id="saveSessionNotes" style="margin-top:10px">Salvar anotações</button><div class="session-history"><div class="section-kicker" style="margin-top:18px">HISTÓRICO</div>${recent.length?recent.map(h=>`<div class="session-history-item"><small>R${Number(h.round)||1} • T${Number(h.turn)||0}</small><span>${esc(h.message)}</span></div>`).join(''):'<div class="small muted">As ações da Mesa aparecerão aqui.</div>'}</div></aside></div>
+  <section class="card session-terror-control"><div class="row space"><div><span class="section-kicker">ATMOSFERA</span><h2>Modo Terror</h2><p class="small muted">Mostra uma cena de tensão para todos os Players. Não revela as anotações privadas do Mestre.</p></div><button class="btn danger" id="openTerrorEditor">${state.terrorMode?.active?'Editar / Encerrar':'Ativar Modo Terror'}</button></div></section>`, 'session');
+}
 function terrorOverlay(){const t=state.terrorMode||defaultTerrorMode();if(!t.active)return '';const isMaster=state.session?.role==='master';return `<div class="terror-overlay" id="terrorOverlay"><div class="terror-vignette"></div>${isMaster?'<button class="btn danger terror-master-close" id="forceDisableTerror" title="Desativar Modo Terror">× Encerrar Modo Terror</button>':''}<div class="terror-card">${t.image?`<img src="${esc(t.image)}" alt="">`:''}<span class="section-kicker">MODO TERROR</span><h2>${esc(t.title||'Algo está errado')}</h2>${t.message?`<p>${esc(t.message)}</p>`:''}${t.subtext?`<small>${esc(t.subtext)}</small>`:''}</div></div>`}
-function bindSession(){normalizeSessionBoard();const b=state.sessionBoard;const persist=async()=>{b.updatedAt=Date.now();save();await saveGlobalNow().catch(()=>{});render('session')};
-document.getElementById('startSession')?.addEventListener('click',async()=>{
-  if(b.active){toast('A sessão já está ativa.');return}
-  b.active=true;b.updatedAt=Date.now();save();await saveGlobalNow().catch(()=>{});
-  broadcastLive('session-start',{at:Date.now()}).catch(()=>{});
-  toast('Sessão iniciada.');render('session');
-});
-document.getElementById('newSession')?.addEventListener('click',async()=>{if(!confirm('Começar uma nova sessão e limpar a iniciativa atual?'))return;state.sessionBoard=defaultSessionBoard();await persist()});document.getElementById('advanceSessionTurn')?.addEventListener('click',async()=>{
-  // V65.10: usa a MESMA ordenação por iniciativa que a tela mostra. Antes,
-  // "Avançar turno" seguia a ordem em que os participantes foram
-  // adicionados, então podia marcar a ação de alguém fora da ordem exibida.
-  const rows=orderedActiveParticipants(b);
-  if(!rows.length){toast('Adicione participantes primeiro.');return}
-  let idx=rows.findIndex(x=>!x.acted);
-  if(idx<0){rows.forEach(x=>x.acted=false);b.round=Math.max(1,Number(b.round)||1)+1;idx=0}
-  else rows[idx].acted=true;
-  b.turn=Math.max(0,Number(b.turn)||0)+1;
-  // V66: condições (sangramento, veneno, turnos restantes) vencem quando CHEGA a vez de quem as tem.
-  const up=rows.find(x=>!x.acted),ent=up?(up.kind==='player'?state.players:state.creatures).find(x=>String(x.id)===String(up.entityId)):null,ev=ent?tickConditions(ent,Number(b.round)||1):[];
-  if(ent){up.hp=Number(ent.hp)||0;up.hpMax=Number(ent.hpMax)||up.hpMax}
-  await persist();
-  if(ev.length)toast(`${up.name}: ${ev.join(' • ')}`);
-});document.getElementById('addSessionParticipant')?.addEventListener('click',async()=>{const val=document.getElementById('sessionEntitySelect').value;if(!val)return;const [type,id]=val.split(':');const list=type==='player'?state.players:state.creatures;const e=list.find(x=>String(x.id)===id);if(!e)return;if(b.participants.some(x=>String(x.entityId)===String(e.id)&&x.kind===type)){toast('Esse participante já está na iniciativa.');return}b.participants.push(sessionParticipantFromEntity(e,type));b.active=true;await persist()});document.querySelectorAll('[data-session-remove]').forEach(btn=>btn.addEventListener('click',async()=>{b.participants=b.participants.filter(x=>x.id!==btn.dataset.sessionRemove);await persist()}));document.querySelectorAll('[data-session-toggle]').forEach(btn=>btn.addEventListener('click',async()=>{const x=b.participants.find(x=>x.id===btn.dataset.sessionToggle);if(x)x.acted=!x.acted;await persist()}));document.querySelectorAll('[data-session-init]').forEach(inp=>inp.addEventListener('change',async()=>{const x=b.participants.find(x=>x.id===inp.dataset.sessionInit);if(x)x.iniciativa=Number(inp.value)||0;await persist()}));document.getElementById('saveSessionNotes')?.addEventListener('click',async()=>{b.title=document.getElementById('sessionTitle').value.trim()||'Sessão atual';b.scene=document.getElementById('sessionScene').value.trim();b.gmNotes=document.getElementById('sessionNotes').value.split('\n').map(x=>x.trim()).filter(Boolean);b.active=true;await persist();toast('Anotações da sessão salvas.')});document.getElementById('sessionTitle')?.addEventListener('change',()=>{b.title=document.getElementById('sessionTitle').value.trim()||'Sessão atual';saveGlobalNow().catch(()=>{})});document.getElementById('sessionScene')?.addEventListener('change',()=>{b.scene=document.getElementById('sessionScene').value.trim();saveGlobalNow().catch(()=>{})});document.getElementById('openTerrorEditor')?.addEventListener('click',()=>openTerrorEditor());
-// V66.3: painel Cortina dos Players -- abrir/fechar e editar vida/sanidade/determinacao
-// direto na Mesa, sem precisar abrir a ficha completa de cada Player em outra aba.
-document.querySelectorAll('[data-curtain-toggle]').forEach(btn=>btn.addEventListener('click',()=>{
-  const card=btn.closest('.mesa-curtain-card');if(!card)return;
-  const id=card.dataset.playerId,set=curtainOpenSet();
-  if(set.has(id))set.delete(id);else set.add(id);
-  curtainOpenSave(set);render('session');
-}));
-document.querySelectorAll('.mesa-curtain-card .det-btn').forEach(btn=>btn.addEventListener('click',()=>{
-  const card=btn.closest('.mesa-curtain-card');const p=state.players.find(x=>String(x.id)===card?.dataset.playerId);if(!p)return;
-  const {max}=detValues(p),delta=Number(btn.dataset.detDelta)||0;
-  p.determination=clamp((p.determination??max)+delta,0,max);save();render('session');
-}));
-document.querySelectorAll('.mesa-curtain-card [data-resource-input]').forEach(inp=>inp.addEventListener('change',()=>{
-  const card=inp.closest('.mesa-curtain-card');const p=state.players.find(x=>String(x.id)===card?.dataset.playerId);if(!p)return;
-  const type=inp.dataset.resourceInput,max=type==='sanity'?derivedMax(p,'Sanidade'):derivedMax(p,'Corpo'),v=clamp(inp.value,0,max);
-  if(type==='sanity')p.sanity=v;else p.hp=v;
-  save();render('session');
-}));
+function bindSession(){
+  normalizeSessionBoard();
+  const getBoard=()=>{normalizeSessionBoard();return state.sessionBoard};
+  const persist=async(message='')=>{const board=getBoard();if(message)sessionLog(board,message);board.updatedAt=Date.now();save();await saveGlobalNow().catch(()=>{});render('session')};
+  if(ensureSessionPlayers()){const board=getBoard();board.updatedAt=Date.now();saveGlobalNow().catch(()=>{});}
+
+  document.getElementById('startSession')?.addEventListener('click',async()=>{
+    const board=getBoard();ensureSessionPlayers();const rows=sessionOrderedParticipants(board);
+    if(!rows.length){toast('Nenhum participante na mesa ainda.');return}
+    board.active=true;board.round=Math.max(1,Number(board.round)||1);board.turn=1;board.participants.forEach(x=>x.acted=false);board.currentParticipantId=rows[0].id;
+    await persist(`Sessão iniciada. Vez de ${rows[0].name}.`);broadcastLive('session-start',{at:Date.now(),sessionId:board.sessionId||'',currentParticipantId:board.currentParticipantId}).catch(()=>{});
+  });
+
+  document.getElementById('newSession')?.addEventListener('click',async()=>{
+    if(!confirm('Começar uma NOVA sessão? A sessão atual será encerrada e a nova receberá outro ID. Os Players serão mantidos, mas a ordem, monstros, turno e histórico serão zerados.'))return;
+    const players=(state.players||[]).map(p=>sessionParticipantFromEntity(p,'player'));
+    state.sessionBoard=sessionNewBoard();state.sessionBoard.participants=players;
+    await persist(`Nova sessão criada (${String(state.sessionBoard.sessionId).slice(-12)}).`);broadcastLive('session-new',{at:Date.now(),sessionId:state.sessionBoard.sessionId}).catch(()=>{});
+  });
+
+  document.getElementById('pauseSession')?.addEventListener('click',async()=>{const board=getBoard();board.active=!board.active;await persist(board.active?'Sessão retomada.':'Sessão pausada.');});
+  document.getElementById('resetTurnOrder')?.addEventListener('click',async()=>{const board=getBoard();board.round=1;board.turn=0;board.currentParticipantId='';board.participants.forEach(x=>x.acted=false);await persist('Rodada e turno reiniciados.');});
+
+  document.getElementById('advanceSessionTurn')?.addEventListener('click',async()=>{
+    const board=getBoard();ensureSessionPlayers();const rows=sessionOrderedParticipants(board);
+    if(!rows.length){toast('Nenhum participante na mesa.');return}
+    if(!board.active){board.active=true;board.round=Math.max(1,Number(board.round)||1);board.turn=1;board.participants.forEach(x=>x.acted=false);board.currentParticipantId=rows[0].id;await persist(`Sessão iniciada pelo Avançar turno. Vez de ${rows[0].name}.`);return}
+    let idx=rows.findIndex(x=>String(x.id)===String(board.currentParticipantId));if(idx<0)idx=-1;
+    const current=idx>=0?rows[idx]:null;if(current)current.acted=true;
+    let nextIdx=idx+1;
+    if(nextIdx>=rows.length||nextIdx<0){board.round=Math.max(1,Number(board.round)||1)+1;board.participants.forEach(x=>x.acted=false);nextIdx=0;}
+    const next=rows[nextIdx];board.currentParticipantId=next?.id||'';board.turn=Math.max(0,Number(board.turn)||0)+1;
+    const ent=next?(next.kind==='player'?state.players:state.creatures).find(x=>String(sessionParticipantKey(x,next.kind))===String(next.entityId)):null;
+    const ev=ent?tickConditions(ent,Number(board.round)||1):[];if(ent&&next){next.hp=Number(ent.hp)||0;next.hpMax=Number(ent.hpMax)||next.hpMax;}
+    await persist(next?`Turno avançou: ${next.name}.${ev.length?' '+ev.join(' • '):''}`:'Turno avançado.');
+  });
+
+  document.getElementById('addSessionParticipant')?.addEventListener('click',async()=>{const board=getBoard(),val=document.getElementById('sessionEntitySelect')?.value||'';if(!val)return;const [type,...rest]=val.split(':');const id=rest.join(':'),list=type==='player'?state.players:state.creatures,e=list.find(x=>String(sessionParticipantKey(x,type))===String(id));if(!e)return;const key=sessionParticipantKey(e,type);if(board.participants.some(x=>x.kind===type&&String(x.entityId)===String(key))){toast('Esse participante já está na Mesa.');return}board.participants.push(sessionParticipantFromEntity(e,type));await persist(`${e.name||e.login||'Participante'} adicionado à Mesa.`);});
+  document.querySelectorAll('[data-session-remove]').forEach(btn=>btn.addEventListener('click',async()=>{const board=getBoard(),id=String(btn.dataset.sessionRemove),x=board.participants.find(x=>String(x.id)===id);board.participants=board.participants.filter(x=>String(x.id)!==id);if(String(board.currentParticipantId)===id)board.currentParticipantId='';await persist(x?`${x.name} removido da Mesa.`:'Participante removido.');}));
+  document.querySelectorAll('[data-session-toggle]').forEach(btn=>btn.addEventListener('click',async()=>{const board=getBoard(),x=board.participants.find(x=>String(x.id)===String(btn.dataset.sessionToggle));if(x)x.acted=!x.acted;await persist(x?`${x.name}: ${x.acted?'ação marcada':'ação desmarcada'}.`:'Ação atualizada.');}));
+  document.querySelectorAll('[data-session-order]').forEach(inp=>inp.addEventListener('change',async()=>{const board=getBoard(),x=board.participants.find(x=>String(x.id)===String(inp.dataset.sessionOrder));if(!x)return;const n=Number(inp.value);x.order=Number.isFinite(n)&&n>0?Math.floor(n):null;await persist(`${x.name}: ordem ${x.order||'removida'}.`);}));
+  document.getElementById('saveSessionNotes')?.addEventListener('click',async()=>{const board=getBoard();board.title=document.getElementById('sessionTitle').value.trim()||'Sessão atual';board.scene=document.getElementById('sessionScene').value.trim();board.gmNotes=document.getElementById('sessionNotes').value.split('\n').map(x=>x.trim()).filter(Boolean);await persist('Anotações da sessão atualizadas.');});
+  document.getElementById('sessionTitle')?.addEventListener('change',()=>{const board=getBoard();board.title=document.getElementById('sessionTitle').value.trim()||'Sessão atual';saveGlobalNow().catch(()=>{})});
+  document.getElementById('sessionScene')?.addEventListener('change',()=>{const board=getBoard();board.scene=document.getElementById('sessionScene').value.trim();saveGlobalNow().catch(()=>{})});
+  document.getElementById('openTerrorEditor')?.addEventListener('click',()=>openTerrorEditor());
 }
 function openTerrorEditor(){const t={...defaultTerrorMode(),...(state.terrorMode||{})};openModal(`<div class="modal" id="terrorEditor"><div class="modal-card"><button class="modal-close" id="closeTerror">×</button><span class="badge">ATMOSFERA GLOBAL</span><h2>Modo Terror</h2><p class="small muted">O conteúdo abaixo será exibido para todos os Players enquanto estiver ativo.</p><div class="field"><label>Título</label><input id="terrorTitle" value="${esc(t.title)}"></div><div class="field"><label>Mensagem</label><textarea id="terrorMessage" rows="5" placeholder="Ex.: As luzes se apagam. Algo mudou na casa.">${esc(t.message)}</textarea></div><div class="field"><label>Texto menor</label><input id="terrorSubtext" value="${esc(t.subtext)}" placeholder="Ex.: 00:00"></div><div class="field"><label>Imagem opcional (URL)</label><input id="terrorImage" value="${esc(t.image)}" placeholder="URL de uma imagem"></div><div class="row" style="justify-content:flex-end"><button class="btn" id="cancelTerror">Cancelar</button>${t.active?'<button class="btn danger" id="disableTerror">Encerrar</button>':''}<button class="btn primary" id="saveTerror">Ativar / salvar</button></div></div></div>`);const close=()=>document.getElementById('terrorEditor')?.remove();document.getElementById('closeTerror').onclick=close;document.getElementById('cancelTerror').onclick=close;document.getElementById('disableTerror')?.addEventListener('click',async()=>{state.terrorMode={...t,active:false,updatedAt:Date.now()};await saveGlobalNow();close();render('session')});document.getElementById('saveTerror').onclick=async()=>{state.terrorMode={active:true,title:document.getElementById('terrorTitle').value.trim()||'MODO TERROR',message:document.getElementById('terrorMessage').value.trim(),subtext:document.getElementById('terrorSubtext').value.trim(),image:document.getElementById('terrorImage').value.trim(),updatedAt:Date.now()};await saveGlobalNow();close();render('session')};}
 
@@ -1655,7 +1687,7 @@ function siteBrandAdmin(){const b=siteBrand();return `<div class="card"><div cla
 function bindSiteBrand(){const preview=document.getElementById('siteBrandPreview');const input=document.getElementById('siteBrandImage');input?.addEventListener('change',()=>{const f=input.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>5*1024*1024){toast('Imagem inválida ou maior que 5 MB.');input.value='';return}if(preview){if(preview.dataset.objectUrl)URL.revokeObjectURL(preview.dataset.objectUrl);const u=URL.createObjectURL(f);preview.dataset.objectUrl=u;preview.src=u;}});document.getElementById('clearSiteBrandImage')?.addEventListener('click',()=>{state.siteBrand=state.siteBrand||{};state.siteBrand.image='runa-gold.png';save();applySiteBrand();toast('Imagem principal restaurada.');document.getElementById('adminContent').innerHTML=siteBrandAdmin();bindSiteBrand()});document.getElementById('saveSiteBrand')?.addEventListener('click',async()=>{const name=document.getElementById('siteBrandName')?.value.trim()||'A Profecia';const f=input?.files?.[0];try{let image=state.siteBrand?.image||'runa-gold.png';if(f){if(!remoteEnabled){const data=await imageFileToDataURL(f,900,.82);image=data}else{const ext=(f.name.split('.').pop()||'png').replace(/[^a-z0-9]/gi,'')||'png';image=await uploadGlobalFile(`branding/site-${Date.now()}.${ext}`,f);if(!image)throw new Error('URL da imagem não disponível')}}state.siteBrand={name,image};await saveGlobalNow();applySiteBrand();toast('Identidade do site atualizada globalmente.');render('master')}catch(e){toast('Não foi possível salvar a identidade do site.')}})}
 
 function recoveryAdmin(){return `<div class="card"><div class="row space"><div><span class="section-kicker">SEGURANÇA</span><h2>Recuperação de dados</h2><p class="small muted">Esta versão cria cópias locais automáticas antes de sincronizar com o Supabase e impede que um estado remoto claramente menor substitua silenciosamente o estado local.</p></div></div><div class="row"><button class="btn primary" id="restoreLatestLocal">Restaurar último backup local</button><button class="btn" id="makeRecoveryNow">Criar backup agora</button><button class="btn" id="restoreRemoteBackup">Ver backups do Supabase</button></div><div id="recoveryList" class="recovery-list"></div><p class="tiny muted">Importante: backups automáticos desta proteção começam a existir a partir desta versão. Eles não conseguem recriar um arquivo que já tenha sido apagado do Supabase antes desta atualização.</p></div>`}
-async function bindRecovery(){document.getElementById('makeRecoveryNow')?.addEventListener('click',async()=>{await saveLocalRecovery('backup-manual');toast('Backup local criado.');});document.getElementById('restoreLatestLocal')?.addEventListener('click',async()=>{if(!confirm('Restaurar o último backup local? O estado atual será salvo antes da restauração.'))return;try{await restoreLocalRecovery()}catch(e){toast(e?.message||'Não foi possível restaurar.')}});document.getElementById('restoreRemoteBackup')?.addEventListener('click',async()=>{const box=document.getElementById('recoveryList');if(!box)return;box.innerHTML='<div class="empty">Carregando backups...</div>';try{const rows=await listGlobalBackups(20);box.innerHTML=rows.length?rows.map((r,i)=>`<div class="recovery-row"><div><strong>Backup ${i+1}</strong><small>${new Date(r.updated_at).toLocaleString('pt-BR')}</small></div><button class="btn small" data-remote-recovery="${esc(r.id)}">Restaurar</button></div>`).join(''):'<div class="empty">Nenhum backup remoto disponível ainda.</div>';box.querySelectorAll('[data-remote-recovery]').forEach(b=>b.onclick=async()=>{const rows2=await listGlobalBackups(20),r=rows2.find(x=>x.id===b.dataset.remoteRecovery);if(!r?.data)return;if(!confirm('Restaurar este backup remoto? O estado atual será salvo antes.'))return;try{await saveLocalRecovery('antes-da-restauracao-remota');const d=clone(r.data);delete d.__backup;remoteApplying=true;mergeGlobal(d);await pushGlobal(globalPayload());remoteApplying=false;storageSet(KEY,JSON.stringify(state));render('master');toast('Backup remoto restaurado.')}catch(e){remoteApplying=false;toast(e?.message||'Falha ao restaurar backup remoto.')}})}catch(e){box.innerHTML='<div class="empty">Não foi possível consultar os backups.</div>'}})}
+async function bindRecovery(){document.getElementById('makeRecoveryNow')?.addEventListener('click',async()=>{await saveLocalRecovery('backup-manual');toast('Backup local criado.');});document.getElementById('restoreLatestLocal')?.addEventListener('click',async()=>{if(!confirm('Restaurar o último backup local? O estado atual será salvo antes da restauração.'))return;try{await restoreLocalRecovery()}catch(e){toast(e?.message||'Não foi possível restaurar.')}});document.getElementById('restoreRemoteBackup')?.addEventListener('click',async()=>{const box=document.getElementById('recoveryList');if(!box)return;box.innerHTML='<div class="empty">Carregando backups...</div>';try{const rows=await listGlobalBackups(20);box.innerHTML=rows.length?rows.map((r,i)=>`<div class="recovery-row"><div><strong>Backup ${i+1}</strong><small>${new Date(r.updated_at).toLocaleString('pt-BR')}</small></div><button class="btn small" data-remote-recovery="${esc(r.id)}">Restaurar</button></div>`).join(''):'<div class="empty">Nenhum backup remoto disponível ainda.</div>';box.querySelectorAll('[data-remote-recovery]').forEach(b=>b.onclick=async()=>{const rows2=await listGlobalBackups(20),r=rows2.find(x=>x.id===b.dataset.remoteRecovery);if(!r?.data)return;if(!confirm('Restaurar este backup remoto? O estado atual será salvo antes.'))return;try{await saveLocalRecovery('antes-da-restauracao-remota');const d=clone(r.data);delete d.__backup;remoteApplying=true;mergeGlobal(d);await pushGlobal(globalPayload());remoteApplying=false;storageSet(KEY,serializeState());render('master');toast('Backup remoto restaurado.')}catch(e){remoteApplying=false;toast(e?.message||'Falha ao restaurar backup remoto.')}})}catch(e){box.innerHTML='<div class="empty">Não foi possível consultar os backups.</div>'}})}
 function admin(){return shell(`<section class="hero master-hero"><div><span class="badge">MESTRE</span><h1>Câmara do Mestre</h1><p>Gerenciamento completo de Players, Monstros, classes, itens e trilha.</p></div><span class="app-version-corner">${APP_VERSION}</span></section><div class="panel-tabs"><button class="active" data-tab="players">Players</button><button data-tab="monsters">Monstros</button><button data-tab="classes">Classes</button><button data-tab="items">Banco de Itens</button><button data-tab="music">Trilha global</button><button data-tab="sounds">Soundboard</button><button data-tab="secrets">Pistas secretas</button><button data-tab="symbols">Símbolos</button><button data-tab="spells">Magias</button><button data-tab="content">Conteúdo</button><button data-tab="backgrounds">Fundos</button><button data-tab="branding">Identidade</button><button data-tab="tv">Tela da TV</button><button data-tab="recovery">RECUPERAÇÃO</button></div><div id="adminContent">${playersAdmin()}</div>`,'master')}
 function playersAdmin(){return `<div class="card"><div class="row space"><div><h2>Players</h2><p class="small muted">Criar, editar, excluir e controlar fichas.</p></div><div class="row"><button class="btn" id="openCharacterRules">⚙ Limites de criação</button><button class="btn" id="changeMasterPw">🔑 Senha do Mestre</button><button class="btn primary" id="newPlayer">+ Criar Player</button></div></div><div class="table-wrap" style="margin-top:12px"><table class="table"><thead><tr><th>Nome</th><th>Login</th><th>Tipo</th><th>Classe</th><th>Vida</th><th>Ataque</th><th>Defesa</th><th>Mochila</th><th>Ações</th></tr></thead><tbody>${state.players.map((p,i)=>`<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.login)}</td><td>${p.campaignType==='slasher'?'Slasher':'Campanha'}</td><td>${esc(p.class)}</td><td>${p.hp}/${p.hpMax}</td><td>${derivedCombat(p).atk}</td><td>${derivedCombat(p).def}</td><td>${bagWeight(p)}/${MAX_BAG}</td><td><button class="btn small" data-edit-p="${i}">Editar</button> <button class="btn small" data-bag-p="${i}">Mochila</button> <button class="btn small" data-round-p="${i}">+ Rodada</button> <button class="btn small danger" data-del-p="${i}">Excluir</button></td></tr>`).join('')}</tbody></table></div></div>`}
 
@@ -1741,15 +1773,17 @@ function allocationRemaining(e){const t=allocationTotals(e),r=characterRules(e?.
 function validateAllocation(e){const r=characterRules(e.campaignType),t=allocationTotals(e),ap=Number(e?.attrBonusPoints)||0,sp=Number(e?.skillBonusPoints)||0,al=Number(r.attrPoints)+ap,sl=Number(r.skillPoints)+sp;if(t.attrs>al||t.skills>sl)return `Limite excedido: ${t.attrs}/${al} pontos de Atributos e ${t.skills}/${sl} de Perícias.`;return ''}
 function rulesAdmin(){const r=state.characterRules||DEFAULT_RULES;return `<div class="card character-rules-card"><div class="section-kicker">REGRAS DE CRIAÇÃO</div><h2>Limites de pontos</h2><p class="small muted">Defina quantos pontos cada tipo de ficha pode distribuir. Atributos e Perícias são contados separadamente.</p><div class="rules-grid"><section><h3>Campanha principal</h3><div class="field"><label>Pontos de Atributos</label><input id="ruleCampaignAttrs" type="number" min="0" max="999" value="${Number(r.campaign?.attrPoints)||0}"></div><div class="field"><label>Pontos de Perícias</label><input id="ruleCampaignSkills" type="number" min="0" max="999" value="${Number(r.campaign?.skillPoints)||0}"></div><div class="field"><label>Vida máxima base</label><input id="ruleCampaignHp" type="number" min="1" max="999" value="${Number(r.campaign?.hpMax)||35}"></div></section><section><h3>Slasher</h3><div class="field"><label>Pontos de Atributos</label><input id="ruleSlasherAttrs" type="number" min="0" max="999" value="${Number(r.slasher?.attrPoints)||0}"></div><div class="field"><label>Pontos de Perícias</label><input id="ruleSlasherSkills" type="number" min="0" max="999" value="${Number(r.slasher?.skillPoints)||0}"></div><div class="field"><label>Vida máxima base</label><input id="ruleSlasherHp" type="number" min="1" max="9999" value="${Number(r.slasher?.hpMax)||100}"></div></section></div><div class="row" style="justify-content:flex-end"><button class="btn primary" id="saveCharacterRules">Salvar limites</button></div></div>`}
 function bindRulesAdmin(){const b=document.getElementById('saveCharacterRules');if(!b)return;b.onclick=()=>{state.characterRules={campaign:{attrPoints:clamp(document.getElementById('ruleCampaignAttrs').value,0,999),skillPoints:clamp(document.getElementById('ruleCampaignSkills').value,0,999),hpMax:clamp(document.getElementById('ruleCampaignHp').value,1,999)},slasher:{attrPoints:clamp(document.getElementById('ruleSlasherAttrs').value,0,999),skillPoints:clamp(document.getElementById('ruleSlasherSkills').value,0,999),hpMax:clamp(document.getElementById('ruleSlasherHp').value,1,9999)}};save();toast('Limites de criação atualizados globalmente.');document.getElementById('adminContent').innerHTML=playersAdmin();bindAdminContent()}}
-function registerPlayer(){lastRenderSig='';document.getElementById('root').innerHTML=`<div class="screen"><form class="login-card register-card" id="registerForm"><img class="sigil" src="/runa-gold.png" alt=""><h1 class="title">Criar Player</h1><p class="subtitle">Crie seu acesso e depois monte sua ficha.</p><div class="field"><label>Login</label><input id="regLogin" autocomplete="username" minlength="3" maxlength="32" required></div><div class="field"><label>Senha</label><input id="regPassword" type="password" autocomplete="new-password" minlength="4" maxlength="72" required></div><div class="field"><label>Tipo de ficha</label><select id="regType"><option value="campaign">Campanha principal</option><option value="slasher">Slasher</option></select></div><div class="field"><label>Nome do personagem</label><input id="regName" maxlength="60" placeholder="Pode preencher depois"></div><div class="row"><button type="button" class="btn" id="cancelRegister">Voltar</button><button class="btn primary" type="submit">Criar acesso</button></div></form></div>`;document.getElementById('cancelRegister').onclick=login;document.getElementById('registerForm').onsubmit=async e=>{e.preventDefault();const loginName=document.getElementById('regLogin').value.trim(),password=document.getElementById('regPassword').value,type=document.getElementById('regType').value==='slasher'?'slasher':'campaign',name=document.getElementById('regName').value.trim()||loginName;if(loginName.toLowerCase()===MASTER.login.toLowerCase()){toast('Esse login é reservado ao Mestre.');return}if(state.players.some(p=>String(p.login||'').trim().toLowerCase()===loginName.toLowerCase())){toast('Esse login já existe.');return}if(playerStoreEnabled){try{const rows=await fetchPlayerRows();if(rows.some(r=>!r.deleted_at&&String(r.login||r.data?.login||'').trim().toLowerCase()===loginName.toLowerCase())){toast('Esse login já existe.');return}}catch(err){console.warn('Não foi possível consultar os Players antes do cadastro:',err)}}const r=characterRules(type);const p={id:'p-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),login:loginName,password,name,class:'',campaignType:type,photo:'',soul:'',soulPhoto:'',belovedObjects:'',personality:'',destiny:'',description:'',history:'',playerNotes:'',masterNotes:'',attrBonusPoints:0,skillBonusPoints:0,deityId:'',homeWallpaper:'',musicThemes:[],hp:Math.min(Number(r.hpMax)||35,MAX_HP),hpMax:Math.min(Number(r.hpMax)||35,MAX_HP),attack:0,defense:0,status:'Ativo',extra:0,attrs:blankAttrs(),attrLimits:blankLimits(),skills:blankSkills(),backpack:[],conditions:[],conditionTurns:{},rolls:[],slasherReligion:'',slasherBelief:''};normalize(p);p._syncUpdatedAt=Date.now();state.players.push(p);lastPlayersSnapshot=clone(state.players);state.session={role:'player',login:loginName,playerId:p.id,playerSnapshot:clone(p)};storageSet(KEY,JSON.stringify(state));try{if(playerStoreEnabled){const rr=await authRegisterPlayer(loginName,password,p);if(rr?.player?._syncUpdatedAt)p._syncUpdatedAt=Number(rr.player._syncUpdatedAt)||p._syncUpdatedAt;playerDbHydrated=true}else{save();}}catch(err){state.players=state.players.filter(x=>playerSyncKey(x)!==p.id);state.session=null;storageSet(KEY,JSON.stringify(state));console.error('Falha ao criar Player:',err);toast(/LOGIN_|SENHA_|MUITAS_/.test(String(err?.message))?authErrorText(err):'Não foi possível salvar o Player no banco. Tente novamente.');return}save();await saveGlobalNow().catch(()=>{});state.session.playerSnapshot=clone(player()||p);toast('Player criado com sucesso.');render('sheet')}}
+function registerPlayer(){lastRenderSig='';document.getElementById('root').innerHTML=`<div class="screen"><form class="login-card register-card" id="registerForm"><img class="sigil" src="/runa-gold.png" alt=""><h1 class="title">Criar Player</h1><p class="subtitle">Crie seu acesso e depois monte sua ficha.</p><div class="field"><label>Login</label><input id="regLogin" autocomplete="username" minlength="3" maxlength="32" required></div><div class="field"><label>Senha</label><input id="regPassword" type="password" autocomplete="new-password" minlength="4" maxlength="72" required></div><div class="field"><label>Tipo de ficha</label><select id="regType"><option value="campaign">Campanha principal</option><option value="slasher">Slasher</option></select></div><div class="field"><label>Nome do personagem</label><input id="regName" maxlength="60" placeholder="Pode preencher depois"></div><div class="row"><button type="button" class="btn" id="cancelRegister">Voltar</button><button class="btn primary" type="submit">Criar acesso</button></div></form></div>`;document.getElementById('cancelRegister').onclick=login;document.getElementById('registerForm').onsubmit=async e=>{e.preventDefault();const loginName=document.getElementById('regLogin').value.trim(),password=document.getElementById('regPassword').value,type=document.getElementById('regType').value==='slasher'?'slasher':'campaign',name=document.getElementById('regName').value.trim()||loginName;if(loginName.toLowerCase()===MASTER.login.toLowerCase()){toast('Esse login é reservado ao Mestre.');return}if(state.players.some(p=>String(p.login||'').trim().toLowerCase()===loginName.toLowerCase())){toast('Esse login já existe.');return}if(playerStoreEnabled){try{const rows=await fetchPlayerRows();if(rows.some(r=>!r.deleted_at&&String(r.login||r.data?.login||'').trim().toLowerCase()===loginName.toLowerCase())){toast('Esse login já existe.');return}}catch(err){console.warn('Não foi possível consultar os Players antes do cadastro:',err)}}const r=characterRules(type);const p={id:'p-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),login:loginName,password,name,class:'',campaignType:type,photo:'',soul:'',soulPhoto:'',belovedObjects:'',personality:'',destiny:'',description:'',history:'',playerNotes:'',masterNotes:'',attrBonusPoints:0,skillBonusPoints:0,deityId:'',homeWallpaper:'',musicThemes:[],hp:Math.min(Number(r.hpMax)||35,MAX_HP),hpMax:Math.min(Number(r.hpMax)||35,MAX_HP),attack:0,defense:0,status:'Ativo',extra:0,attrs:blankAttrs(),attrLimits:blankLimits(),skills:blankSkills(),backpack:[],conditions:[],conditionTurns:{},rolls:[],slasherReligion:'',slasherBelief:''};normalize(p);p._syncUpdatedAt=Date.now();state.players.push(p);lastPlayersSnapshot=clone(state.players);state.session={role:'player',login:loginName,playerId:p.id,playerSnapshot:clone(p)};storageSet(KEY,serializeState());try{if(playerStoreEnabled){const rr=await authRegisterPlayer(loginName,password,p);if(rr?.player?._syncUpdatedAt)p._syncUpdatedAt=Number(rr.player._syncUpdatedAt)||p._syncUpdatedAt;playerDbHydrated=true}else{save();}}catch(err){state.players=state.players.filter(x=>playerSyncKey(x)!==p.id);state.session=null;storageSet(KEY,serializeState());console.error('Falha ao criar Player:',err);toast(/LOGIN_|SENHA_|MUITAS_/.test(String(err?.message))?authErrorText(err):'Não foi possível salvar o Player no banco. Tente novamente.');return}save();await saveGlobalNow().catch(()=>{});state.session.playerSnapshot=clone(player()||p);toast('Player criado com sucesso.');render('sheet')}}
 function login(){lastRenderSig='';const brand=siteBrand();document.getElementById('root').innerHTML=`<div class="screen"><form class="login-card" id="loginForm"><img class="sigil" src="${esc(brand.image)}"><h1 class="title">${esc(brand.name)}</h1><p class="welcome">Bem-vindos ao abismo</p><p class="subtitle">Entre para continuar sua jornada.</p><div class="field"><label>Login</label><input id="login" autocomplete="username" required></div><div class="field"><label>Senha</label><input id="password" type="password" autocomplete="current-password" required></div><button class="btn primary full">Entrar</button><button type="button" class="btn full" id="registerPlayerBtn">Criar login de Player</button></form></div>`;document.getElementById('registerPlayerBtn').onclick=registerPlayer;document.getElementById('loginForm').onsubmit=async e=>{e.preventDefault();const l=document.getElementById('login').value.trim(),p=document.getElementById('password').value;let found=null;
     const submitBtn=document.querySelector('#loginForm button.primary');if(submitBtn)submitBtn.disabled=true;
     try{
       if(remoteEnabled){
-        if(l===MASTER.login){if(await authMasterLogin(p)){state.session={role:'master'};save();render('home');return}}
-        else{const r=await authPlayerLogin(l,p);if(r?.player){found=clone(r.player);found._syncUpdatedAt=Number(found._syncUpdatedAt)||Date.now()}}
+        // V66.3: teclados de celular põem maiúscula na 1ª letra e espaço no fim; tenta também a senha sem espaços nas pontas.
+        const passVariants=p!==p.trim()?[p,p.trim()]:[p];
+        if(l.toLowerCase()===MASTER.login.toLowerCase()){for(const v of passVariants){if(await authMasterLogin(v)){state.session={role:'master'};save();render('home');return}}}
+        else{for(const v of passVariants){const r=await authPlayerLogin(l,v);if(r?.player){found=clone(r.player);found._syncUpdatedAt=Number(found._syncUpdatedAt)||Date.now();break}}}
       }else{
-        if(l===MASTER.login&&await masterPasswordOk(p)){state.session={role:'master'};save();render('home');return}
+        if(l.toLowerCase()===MASTER.login.toLowerCase()&&await masterPasswordOk(p)){state.session={role:'master'};save();render('home');return}
         found=state.players.find(x=>String(x.login||'').trim().toLowerCase()===l.toLowerCase()&&String(x.password||'')===p)||null;
       }
     }catch(err){toast(authErrorText(err));return}
@@ -1760,7 +1794,7 @@ function login(){lastRenderSig='';const brand=siteBrand();document.getElementByI
       state.players=state.players.filter(x=>playerSyncKey(x)!==playerSyncKey(found));
       state.players.push(found);normalize(found);
       state.session={role:'player',login:found.login,playerId:found.id,playerSnapshot:clone(found)};
-      storageSet(KEY,JSON.stringify(state));
+      storageSet(KEY,serializeState());
       save();render('home');return;
     }
     toast('Credenciais inválidas.');}}
@@ -1798,17 +1832,9 @@ function render(view='home',opts={}){
   const ae=document.activeElement;
   if(opts?.remote&&ae&&/^(TEXTAREA|INPUT|SELECT)$/.test(ae.tagName)&&rootEl?.contains?.(ae)){deferredRemoteRender=true;return}
   const y=window.scrollY,inner=same?captureInnerScroll(rootEl):[];
-  // V66.5: a Mesa do Mestre reconstrói a tela sempre que chega uma sincronização
-  // remota (ex.: um Player mexendo na própria ficha durante a sessão). Antes, isso
-  // limpava silenciosamente o combo "Adicionar Player/Monstro..." se o Mestre
-  // tivesse acabado de escolher alguém mas ainda não tivesse clicado em
-  // "+ Adicionar" -- o clique então não fazia nada, sem nenhum aviso. Agora a
-  // seleção pendente é preservada através da reconstrução.
-  const pendingSessionEntity=(opts?.remote&&same)?(document.getElementById('sessionEntitySelect')?.value||''):'';
   renderOpts=opts||{};renderSkipped=false;
   try{renderCore(view)}finally{renderOpts={}}
   if(renderSkipped)return;
-  if(pendingSessionEntity){const sel=document.getElementById('sessionEntitySelect');if(sel&&[...sel.options].some(o=>o.value===pendingSessionEntity))sel.value=pendingSessionEntity}
   if(same){jumpScroll(y);restoreInnerScroll(rootEl,inner);requestAnimationFrame(()=>{jumpScroll(y);restoreInnerScroll(rootEl,inner)})}
   else jumpScroll(0);
 }
@@ -1840,7 +1866,7 @@ function renderCore(view='home'){
   }
   let html;
   try{
-    html=view==='sheet'?(state.session.role==='master'?masterFicha():sheet()):view==='classes'?classesPage():view==='master'&&state.session.role==='master'?admin():view==='session'&&state.session.role==='master'?sessionPage():view==='immersive'&&state.session.role==='player'?immersivePage():view==='diary'&&state.session.role==='player'?diaryPage():view==='library'&&state.session.role==='player'?libraryPage():view==='nexus'?nexusPage():view==='tv'?tvPage():home();
+    html=view==='sheet'?(state.session.role==='master'?masterFicha():sheet()):view==='classes'?classesPage():view==='master'&&state.session.role==='master'?admin():view==='session'&&state.session.role==='master'?(ensureSessionPlayersForMaster(),sessionPage()):view==='immersive'&&state.session.role==='player'?immersivePage():view==='diary'&&state.session.role==='player'?diaryPage():view==='library'&&state.session.role==='player'?libraryPage():view==='nexus'?nexusPage():view==='tv'?tvPage():home();
   }catch(error){
     // V65.8: uma falha ao montar UMA tela não pode mais deixar a página travada
     // nem jogar o usuário para outra aba. Mostra um aviso na própria aba atual,
@@ -1883,41 +1909,7 @@ function sessionDiamondCard(p,{controls=false,big=false}={}){
   return `<div class="sess-card ${big?'big':''}"><div class="sess-diamond"><span class="sess-hand">${DET_SVG}</span><img src="${esc(safeImgSrc(p.photo,'/ritual.webp'))}" alt=""></div><div class="sess-info"><strong class="sess-name">${esc(p.name||'Player')}</strong><div class="sess-det"><b data-det-cur>${cur}</b>/<span data-det-max>${max}</span></div>${controls?'<div class="sess-det-ctl"><button type="button" class="det-btn" data-det-delta="-1" aria-label="Gastar 1 de determinação">−</button><button type="button" class="det-btn" data-det-delta="1" aria-label="Recuperar 1 de determinação">+</button></div>':''}</div></div>`;
 }
 
-function trainedSkillsList(p){return [...new Set(allSkills().filter(sk=>(effectiveSkill(p,sk)||0)>0))]}
-function trainedAttrsList(p){return allAttrs().filter(a=>(effectiveAttr(p,a)||0)>0)}
-// V66.3: painel "Cortina dos Players" da Mesa do Mestre — reaproveita o cartão
-// losango (sessionDiamondCard) e as barras (resourceBarMarkup) já criados pro
-// Modo Sessão do Player, agora um por Player, com cortina fechada/aberta.
-function curtainOpenSet(){try{return new Set(JSON.parse(sessionStorage.getItem('a_profecia_mesa_curtains')||'[]'))}catch{return new Set()}}
-function curtainOpenSave(set){try{sessionStorage.setItem('a_profecia_mesa_curtains',JSON.stringify([...set]))}catch{}}
-function mesaCurtainCard(p,open){
-  const hpMax=derivedMax(p,'Corpo')||1,sanMax=derivedMax(p,'Sanidade'),hp=clamp(p.hp??hpMax,0,hpMax);
-  const skills=trainedSkillsList(p),attrs=trainedAttrsList(p);
-  return `<div class="mesa-curtain-card${open?' open':''}" data-player-id="${esc(p.id)}">
-    <div class="mesa-curtain-head">
-      <button type="button" class="btn small mesa-curtain-toggle" data-curtain-toggle>${open?'▼ Fechar cortina':'▶ Abrir cortina'}</button>
-      <strong class="mesa-curtain-name">${esc(p.name||'Player')}</strong>
-      ${open?'':`<span class="mesa-curtain-hp-pill">Vida ${hp}/${hpMax}</span>`}
-    </div>
-    ${open?`<div class="mesa-curtain-body">
-      ${sessionDiamondCard(p,{controls:true})}
-      <div class="mesa-curtain-bars">
-        ${resourceBarMarkup('Vida',p.hp,hpMax,'health',true)}
-        ${resourceBarMarkup('Sanidade',p.sanity,sanMax,'sanity',true)}
-      </div>
-      <div class="mesa-curtain-trained">
-        <div><span class="section-kicker">ATRIBUTOS TREINADOS</span>${attrs.length?attrs.map(a=>`<div class="op-attr-row"><span class="op-attr-symbol">${uiAttrIcon(a)}</span><span>${esc(a)}</span><b>${effectiveAttr(p,a)}</b></div>`).join(''):'<div class="empty small">Nenhum atributo treinado.</div>'}</div>
-        <div><span class="section-kicker">PERÍCIAS TREINADAS</span>${skills.length?skills.map(sk=>`<div class="op-skill-row"><span>${uiSkillIcon(sk)} ${esc(sk)}</span><b>${effectiveSkill(p,sk)}</b></div>`).join(''):'<div class="empty small">Nenhuma perícia treinada.</div>'}</div>
-      </div>
-    </div>`:''}
-  </div>`;
-}
-function mesaCurtainSection(b){
-  if(!state.players.length)return '';
-  if(!b.active)return `<section class="card mesa-curtain-section"><div class="section-heading"><div><span class="section-kicker">CORTINA DOS PLAYERS</span><h2>Fechada até a sessão começar</h2></div></div><div class="mesa-curtain-grid">${state.players.map(p=>`<div class="mesa-curtain-card"><div class="mesa-curtain-head"><strong class="mesa-curtain-name">${esc(p.name||'Player')}</strong></div></div>`).join('')}</div><p class="small muted">Clique em "▶ Iniciar sessão" para poder abrir a cortina de cada Player.</p></section>`;
-  const openSet=curtainOpenSet();
-  return `<section class="card mesa-curtain-section"><div class="section-heading"><div><span class="section-kicker">CORTINA DOS PLAYERS</span><h2>Abra a cortina de quem estiver em cena</h2></div></div><div class="mesa-curtain-grid">${state.players.map(p=>mesaCurtainCard(p,openSet.has(String(p.id)))).join('')}</div></section>`;
-}
+// ---------- Condições: efeitos imediatos e por rodada ----------
 function applyConditionOnAdd(e,id){
   const ev=[];if(!e||!id)return ev;
   e.conditionTick=e.conditionTick&&typeof e.conditionTick==='object'?e.conditionTick:{};
@@ -2012,6 +2004,7 @@ function immersivePanel(p){
   if(immersiveTab==='spells')return p.initialSpell?spellMarkup(p):`<div class="empty">Escolha sua magia inicial na ficha completa.</div>`;
   return '';
 }
+async function announceSessionJoin(p){if(!p||state.session?.role!=='player')return;try{await broadcastLive('session-join',{sessionId:String(state.sessionBoard?.sessionId||''),playerId:String(p.id||''),login:String(p.login||state.session.login||''),name:String(p.name||p.login||'Player'),hp:Number(p.hp)||0,hpMax:Number(p.hpMax)||0})}catch(e){console.warn('Não foi possível anunciar entrada na sessão:',e)}}
 function immersivePage(){
   const p=player();if(!p)return shell('<div class="empty">Player não encontrado.</div>','home');
   syncDerivedResources(p);
@@ -2024,6 +2017,7 @@ function immersivePage(){
 }
 function bindImmersive(){
   const p=player();if(!p)return;
+  announceSessionJoin(p);
   document.querySelectorAll('[data-imm-tab]').forEach(b=>b.onclick=()=>{immersiveTab=b.dataset.immTab;render('immersive')});
   document.querySelector('[data-imm-exit]')?.addEventListener('click',()=>curtainTransition(()=>render('home')));
   document.querySelectorAll('[data-read-book]').forEach(b=>b.onclick=()=>openBookReader(Number(b.dataset.readBook)));
@@ -2055,7 +2049,7 @@ window.addEventListener('a-profecia-auth-expired',()=>{if(state.session?.role)fo
 // ---------- Sessão / senha do Mestre ----------
 function forceRelogin(msg){
   state.session=null;clearSessionCache();
-  try{storageSet(KEY,JSON.stringify(state))}catch{}
+  try{storageSet(KEY,serializeState())}catch{}
   render('home');
   if(msg)toast(msg);
 }
@@ -2072,6 +2066,8 @@ function openMasterPasswordModal(){
     catch(err){toast(authErrorText(err))}
   };
 }
+
+async function handleSessionJoinLive(payload){if(state.session?.role!=='master'||!payload?.playerId)return;const board=normalizeSessionBoard();const p=(state.players||[]).find(x=>String(x.id)===String(payload.playerId)||String(x.login||'').toLowerCase()===String(payload.login||'').toLowerCase());if(!p)return;const key=sessionParticipantKey(p,'player'),existing=board.participants.find(x=>x.kind==='player'&&String(x.entityId)===String(key));if(existing){existing.name=p.name||p.login;existing.hp=Number(p.hp)||0;existing.hpMax=Number(p.hpMax)||existing.hpMax;existing.active=true}else board.participants.push(sessionParticipantFromEntity(p,'player'));board.updatedAt=Date.now();save();await saveGlobalNow().catch(()=>{});if(currentView==='session')render('session',{remote:true});}
 
 async function boot(){
   if(remoteEnabled&&state.session?.role){
@@ -2098,7 +2094,7 @@ async function boot(){
           try{await pushGlobal(globalPayload());clearGlobalDirty(stamp)}finally{remoteApplying=false}
         }else{
           remoteApplying=true;
-          try{mergeGlobal(remote);storageSet(KEY,JSON.stringify(state));persistCriticalCache();persistSessionCache()}finally{remoteApplying=false}
+          try{mergeGlobal(remote);storageSet(KEY,serializeState());persistCriticalCache();persistSessionCache()}finally{remoteApplying=false}
         }
       }else if(bootIsMaster){
         await saveLocalRecovery('antes-do-primeiro-envio');
@@ -2106,6 +2102,7 @@ async function boot(){
         try{await pushGlobal(globalPayload())}finally{remoteApplying=false}
       }
       remoteHydrated=true;
+      if(bootIsMaster&&!loadFailed&&Array.isArray(remote?.items)&&remote.items.length>200)queueRemoteSave(); // V66.3: compacta o estado global no servidor
       await hydratePlayersDb();
       if(playerDbHydrated)await syncPlayersDbNow();
       let lastRemoteStamp=remoteRow?.updated_at||'';
@@ -2113,7 +2110,7 @@ async function boot(){
         const data=row?.data||row;if(!hasRemoteSharedData(data)||remoteApplying)return;
         remoteApplying=true;
         const result=mergeGlobal(data);
-        storageSet(KEY,JSON.stringify(state));persistCriticalCache();persistSessionCache();remoteApplying=false;
+        storageSet(KEY,serializeState());persistCriticalCache();persistSessionCache();remoteApplying=false;
         if(!result.changed)return;
         const d=result.domains;
         if(d.includes('backgrounds')){bgAppliedSignature='';await applyBackgrounds(true);}if(d.includes('siteBrand'))applySiteBrand();
@@ -2155,7 +2152,7 @@ async function boot(){
             if(fallback&&String(fallback.id)===activePlayerId){
               // Keep the last known ficha available instead of throwing the user back to login.
               state.players=state.players.filter(p=>String(p.id)!==activePlayerId);
-              storageSet(KEY,JSON.stringify(state));
+              storageSet(KEY,serializeState());
               toast('A ficha foi marcada como excluída pelo Mestre.');
             }
           }finally{playerDbApplying=false}
@@ -2188,7 +2185,7 @@ async function boot(){
           }
           if(after&&state.session?.role==='player'){
             state.session.playerSnapshot=clone(after);
-            storageSet(KEY,JSON.stringify(state));
+            storageSet(KEY,serializeState());
             // Never rebuild the Player sheet in response to Realtime. Rebuilding the DOM
             // would destroy values the player is currently typing into attributes/skills.
             if(currentView==='sheet'){
@@ -2201,7 +2198,7 @@ async function boot(){
         }finally{playerDbApplying=false}
         queuePlayerDbSave();
       })}
-      subscribeLive(msg=>{if(msg.event==='tv-scene')handleTvLive(msg.payload);if(msg.event==='session-start')handleSessionStartLive(msg.payload);nexusHandleLive(msg);});
+      subscribeLive(msg=>{if(msg.event==='tv-scene')handleTvLive(msg.payload);if(msg.event==='session-start')handleSessionStartLive(msg.payload);if(msg.event==='session-join')handleSessionJoinLive(msg.payload).catch(e=>console.warn('Falha ao registrar Player na sessão:',e));nexusHandleLive(msg);});
       // V41: polling leve. A versão anterior buscava o estado inteiro a cada 4s,
       // inclusive em celulares e em segundo plano, causando alto uso de memória/CPU.
       const isMobile=matchMedia('(max-width: 800px)').matches;
