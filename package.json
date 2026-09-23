@@ -1,17 +1,25 @@
 {
   "name": "a-profecia",
   "private": true,
-  "version": "66.5.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "check": "node scripts/check-syntax.mjs",
+    "release:check": "npm run check && npm run build"
   },
   "devDependencies": {
-    "vite": "^7.3.6"
+    "vite": "7.3.6"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.57.4"
+    "@supabase/supabase-js": "2.57.4"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

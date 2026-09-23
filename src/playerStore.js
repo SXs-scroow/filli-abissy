@@ -12,27 +12,28 @@ let fetchCount = 0;
 
 export async function fetchPlayers() {
   if (!supabase) return [];
-  if (++fetchCount % 20 === 0) rowCache = new Map(); // refresh completo de vez em quando, por segurança
-  const light = await supabase
-    .from(TABLE)
-    .select('id,login,updated_at,deleted_at')
-    .order('updated_at', { ascending: true });
-  if (light.error) throw light.error;
-  const list = light.data || [];
+  if (++fetchCount % 20 === 0) rowCache = new Map();
+
+  const { data, error } = await supabase.rpc('a_profecia_list_players', {
+    p_token: getAuthToken()
+  });
+  if (error) throw handleAuthError(error);
+
+  const rows = Array.isArray(data) ? data : [];
   const next = new Map();
-  const changed = [];
-  for (const r of list) {
-    const c = rowCache.get(r.id);
-    if (c && c.updated_at === r.updated_at && (c.deleted_at || null) === (r.deleted_at || null)) next.set(r.id, c);
-    else changed.push(r.id);
-  }
-  if (changed.length) {
-    const full = await supabase.from(TABLE).select('id,login,data,updated_at,deleted_at').in('id', changed);
-    if (full.error) throw full.error;
-    for (const r of full.data || []) next.set(r.id, r);
+  for (const row of rows) {
+    if (!row?.id) continue;
+    const normalized = {
+      id: String(row.id),
+      login: String(row.login || ''),
+      data: row.data && typeof row.data === 'object' ? row.data : {},
+      updated_at: row.updated_at || null,
+      deleted_at: row.deleted_at || null
+    };
+    next.set(normalized.id, normalized);
   }
   rowCache = next;
-  return list.map(r => next.get(r.id)).filter(Boolean);
+  return rows.map(row => next.get(String(row?.id || ''))).filter(Boolean);
 }
 
 function syncStamp(p, fallback = Date.now()) {
@@ -97,17 +98,35 @@ export async function upsertPlayerTombstones(tombstones, playerIndex = {}) {
 
 export function subscribePlayers(callback) {
   if (!supabase) return () => {};
+  let disposed = false;
+  let refreshTimer = null;
   const channel = supabase
-    .channel('a-profecia-players-sync-v2')
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: TABLE },
-      payload => callback(payload.new || payload.old || null)
-    )
+    .channel('a-profecia-players-events-v1')
+    .on('broadcast', { event: 'player-changed' }, payload => {
+      if (disposed) return;
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(async () => {
+        try {
+          const rows = await fetchPlayers();
+          const changedId = String(payload?.payload?.id || '');
+          const row = rows.find(item => String(item.id) === changedId);
+          callback(row || { id: changedId, deleted_at: 'deleted' });
+        } catch (error) {
+          if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
+            console.warn('Falha ao atualizar Players em tempo real:', error);
+          }
+        }
+      }, 80);
+    })
     .subscribe(status => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.warn('Realtime dos Players indisponível:', status);
       }
     });
-  return () => supabase.removeChannel(channel);
+  return () => {
+    disposed = true;
+    clearTimeout(refreshTimer);
+    supabase.removeChannel(channel);
+  };
 }
+

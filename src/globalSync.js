@@ -163,18 +163,36 @@ export function subscribeGlobal(callback) {
 
 let liveChannel = null;
 let liveReady = null;
+let liveSubscribers = new Map();
+
 async function ensureLiveChannel() {
   if (!supabase) return null;
-  if (liveChannel && liveReady) { await liveReady.catch(()=>{}); return liveChannel; }
-  liveChannel = supabase.channel('a-profecia-live-v1', { config: { broadcast: { self: false } } });
+  if (liveChannel && liveReady) {
+    await liveReady.catch(() => {});
+    return liveChannel;
+  }
+
+  const channel = supabase.channel('a-profecia-live-v2', {
+    config: { broadcast: { self: false } }
+  });
+  liveChannel = channel;
   liveReady = new Promise((resolve, reject) => {
-    liveChannel.subscribe(status => {
+    channel.subscribe(status => {
       if (status === 'SUBSCRIBED') resolve();
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') reject(new Error(status));
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') reject(new Error(status));
     });
   });
-  await liveReady;
-  return liveChannel;
+  try {
+    await liveReady;
+    return channel;
+  } catch (error) {
+    if (liveChannel === channel) {
+      liveChannel = null;
+      liveReady = null;
+    }
+    try { await supabase.removeChannel(channel); } catch {}
+    throw error;
+  }
 }
 
 export async function broadcastLive(event, payload = {}) {
@@ -184,10 +202,40 @@ export async function broadcastLive(event, payload = {}) {
 }
 
 export function subscribeLive(callback) {
-  if (!supabase) return () => {};
-  ensureLiveChannel().catch(() => {});
-  if (!liveChannel) return () => {};
-  const events = ['sound-trigger','secret-clue','session-start','tv-scene','nexus-join','nexus-offer','nexus-answer','nexus-ice','nexus-start','nexus-stop','session-join'];
-  events.forEach(event => liveChannel.on('broadcast', { event }, ({ payload }) => callback({ event, payload: payload || {} })));
-  return () => {};
+  if (!supabase || typeof callback !== 'function') return () => {};
+  const id = Symbol('live-subscriber');
+  const events = ['sound-trigger','secret-clue','session-start','tv-scene','nexus-join','nexus-offer','nexus-answer','nexus-ice','nexus-start','nexus-stop','session-join','session-join-ack'];
+  let disposed = false;
+  let retryTimer = null;
+
+  const attach = async () => {
+    try {
+      const channel = await ensureLiveChannel();
+      if (disposed || !channel) return;
+      liveSubscribers.set(id, callback);
+      for (const event of events) {
+        channel.on('broadcast', { event }, ({ payload }) => {
+          if (!disposed) callback({ event, payload: payload || {} });
+        });
+      }
+    } catch (error) {
+      if (!disposed) {
+        console.warn('Realtime ao vivo indisponível:', error);
+        retryTimer = setTimeout(attach, 2500);
+      }
+    }
+  };
+
+  attach();
+  return () => {
+    disposed = true;
+    clearTimeout(retryTimer);
+    liveSubscribers.delete(id);
+    if (liveSubscribers.size === 0 && liveChannel) {
+      const channel = liveChannel;
+      liveChannel = null;
+      liveReady = null;
+      supabase.removeChannel(channel).catch(() => {});
+    }
+  };
 }
