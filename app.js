@@ -300,7 +300,7 @@ function normalizeCombatSession(){
   return c;
 }
 function defaultTerrorMode(){return {active:false,title:'MODO TERROR',message:'',subtext:'',image:'',updatedAt:0}}
-function defaultTvScreen(){return {active:false,kind:'black',url:'',title:'',loop:false,commandAt:0,updatedAt:0}}
+function defaultTvScreen(){return {active:false,kind:'black',url:'',title:'',loop:false,upscale:false,commandAt:0,updatedAt:0}}
 function normalizeTvScreen(){state.tvScreen={...defaultTvScreen(),...(state.tvScreen||{})};}
 function normalizeTerrorMode(){state.terrorMode={...defaultTerrorMode(),...(state.terrorMode||{})}}
 
@@ -836,6 +836,9 @@ function toast(msg){const x=document.createElement('div');x.className='toast';x.
 // em Android/Chrome funciona normalmente. Por isso isso é só um "bônus" silencioso —
 // nunca deve travar nada nos aparelhos que não suportam.
 function vibratePhone(pattern){try{if(navigator.vibrate)navigator.vibrate(pattern)}catch{}}
+// V1.0.3: esta variável era usada mas nunca declarada -> ReferenceError (módulos ES são
+// estritos) toda vez que a vez passava a ser do Player, matando vibração/som/aviso.
+let lastKnownTurnParticipantId=null;
 // V65.11: alerta sonoro de "sua vez"/"perdeu vida" — pensado pra iPhone, que não
 // tem Vibration API. iOS só deixa tocar áudio "programaticamente" (sem o dedo
 // direto no botão) se ALGUM elemento de áudio já tiver sido tocado por um toque
@@ -1279,13 +1282,14 @@ function bindNav(){
   },true);
 }
 function playerMusicLibraryMarkup(p){const lib=Array.isArray(p.playerMusicLibrary)?p.playerMusicLibrary:[];return `<article class="sheet-card player-music-library"><div class="section-heading"><div><span class="section-kicker">BIBLIOTECA PESSOAL</span><h2>Suas trilhas salvas</h2></div><span class="corner-mark">${lib.length} música(s)</span></div><p class="muted small">Crie seu banco de músicas para usar durante a sessão.</p><div class="library-add-grid"><input id="libMusicTitle" placeholder="Ex.: Tema de combate" maxlength="80"><input id="libMusicUrl" placeholder="Link do Spotify ou URL"><button class="btn gold" id="addLibraryMusic">+ Adicionar</button></div><div class="library-list">${lib.length?lib.map((m,i)=>`<div class="library-item"><div><strong>${esc(m.title||'Sem nome')}</strong><small>${esc(m.url||'')}</small></div><div class="row"><button type="button" class="btn small gold" data-play-library="${i}">▶</button><button type="button" class="btn small" data-pause-library="${i}">Ⅱ</button><button type="button" class="btn small" data-stop-library="${i}">■</button><button type="button" class="btn small danger" data-remove-library="${i}">✕</button></div></div>`).join(''):'<div class="empty">Sem músicas na sua biblioteca.</div>'}</div></article>`}
-function playerThemesMarkup(p){const themes=Array.isArray(p.musicThemes)?p.musicThemes:[];return `<article class="sheet-card character-themes"><div class="section-heading"><div><span class="section-kicker">TRILHAS DO PERSONAGEM</span><h2>A música que acompanha sua história</h2></div></div><p class="muted small">Crie trilhas separadas, como Música de Morte, Tema de Combate ou Tema Pessoal. Você escolhe o título e o link.</p><div class="theme-add-grid"><input id="themeLabel" placeholder="Ex.: Música de morte"><input id="themeTitle" placeholder="Ex.: Old Doll"><input id="themeUrl" placeholder="Link do Spotify ou URL da música"><button class="btn gold" id="addTheme">Adicionar trilha</button></div><div class="theme-upload-row"><label class="btn small gold"> Enviar MP3 do celular<input id="themeFile" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.opus" hidden></label><small class="muted">Preencha o tipo e o nome acima (opcional) e escolha o arquivo (até 25 MB).</small></div><div class="character-theme-list">${themes.length?themes.map((t,i)=>`<div class="character-theme-card"><div><span class="theme-label">${esc(t.label||'TRILHA')}</span><h3>${esc(t.title||'Sem título')}</h3><small>${t.kind==='file'?'Arquivo enviado do aparelho':esc(t.url||'')}</small></div><div class="row">${themeIsAudio(t)?`<button type="button" class="btn small gold" data-play-theme="${i}">▶ Tocar</button><button type="button" class="btn small" data-pause-theme="${i}">Ⅱ Pausar</button><button type="button" class="btn small" data-stop-theme="${i}">■ Parar</button>`:''}<a class="btn small" href="${esc(safeHref(t.url))}" target="_blank" rel="noopener">Abrir</a><button class="btn small danger" data-remove-theme="${i}">Remover</button></div></div>`).join(''):'<div class="empty">Nenhuma trilha cadastrada para este personagem.</div>'}</div></article>`}
+function playerThemesMarkup(p){const themes=Array.isArray(p.musicThemes)?p.musicThemes:[];return `<article class="sheet-card character-themes"><div class="section-heading"><div><span class="section-kicker">TRILHAS DO PERSONAGEM</span><h2>A música que acompanha sua história</h2></div></div><p class="muted small">Crie trilhas separadas, como Música de Morte, Tema de Combate ou Tema Pessoal. Você escolhe o título e o link.</p><div class="theme-add-grid"><input id="themeLabel" placeholder="Ex.: Música de morte"><input id="themeTitle" placeholder="Ex.: Old Doll"><input id="themeUrl" placeholder="Link do Spotify ou URL da música"><button class="btn gold" id="addTheme">Adicionar trilha</button></div><div class="theme-upload-row"><label class="btn small gold">🎵 Enviar MP3 do celular<input id="themeFile" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.opus" hidden></label><small class="muted">Preencha o tipo e o nome acima (opcional) e escolha o arquivo (até 25 MB).</small></div><div class="character-theme-list">${themes.length?themes.map((t,i)=>`<div class="character-theme-card"><div><span class="theme-label">${esc(t.label||'TRILHA')}</span><h3>${esc(t.title||'Sem título')}</h3><small>${t.kind==='file'?'Arquivo enviado do aparelho':esc(t.url||'')}</small></div><div class="row">${themeIsAudio(t)?`<button type="button" class="btn small gold" data-play-theme="${i}">▶ Tocar</button><button type="button" class="btn small" data-pause-theme="${i}">Ⅱ Pausar</button><button type="button" class="btn small" data-stop-theme="${i}">■ Parar</button>`:''}<a class="btn small" href="${esc(safeHref(t.url))}" target="_blank" rel="noopener">Abrir</a><button class="btn small danger" data-remove-theme="${i}">Remover</button></div></div>`).join(''):'<div class="empty">Nenhuma trilha cadastrada para este personagem.</div>'}</div></article>`}
 function playerWallpaperMarkup(p){return `<article class="sheet-card character-wallpaper"><div class="section-heading"><div><span class="section-kicker">WALLPAPER PESSOAL</span><h2>Fundo do seu personagem</h2></div></div><p class="muted small">Escolha uma imagem para personalizar o início do seu próprio registro.</p><div class="wallpaper-preview" id="playerWallpaperPreview" style="${p.homeWallpaper?`background-image:linear-gradient(90deg,rgba(0,0,0,.5),rgba(0,0,0,.15)),url('${esc(p.homeWallpaper)}')`:''}"></div><label class="upload-label">Alterar wallpaper<input id="playerWallpaperInput" type="file" accept="image/png,image/jpeg,image/webp,.jfif" hidden></label>${p.homeWallpaper?'<button class="btn small danger" id="clearPlayerWallpaper">Remover wallpaper</button>':''}</article>`}
 function openBookReader(id){const it=item(id);if(!it)return;const pages=Array.isArray(it.bookPages)&&it.bookPages.length?it.bookPages:(it.bookContent?[String(it.bookContent)]:[]);let page=0;openModal(`<div class="modal" id="bookReader"><div class="modal-card book-reader"><button class="modal-close" id="closeBook">×</button><span class="badge">LIVRO</span><h2>${esc(it.name)}</h2><div class="book-reader-page" id="bookReaderPage">${pages.length?esc(pages[0]).replace(/\n/g,'<br>'):'Este livro ainda não possui conteúdo. O Mestre pode escrever as páginas na administração do item.'}</div><div class="book-reader-controls"><button class="btn small" id="bookPrev" ${pages.length<=1?'disabled':''}>← Anterior</button><span id="bookPageCount">${pages.length?`Página 1 de ${pages.length}`:'Sem páginas'}</span><button class="btn small" id="bookNext" ${pages.length<=1?'disabled':''}>Próxima →</button></div></div></div>`);const renderPage=()=>{const el=document.getElementById('bookReaderPage'),count=document.getElementById('bookPageCount');if(el)el.innerHTML=pages.length?esc(pages[page]).replace(/\n/g,'<br>'):'Este livro ainda não possui conteúdo.';if(count)count.textContent=pages.length?`Página ${page+1} de ${pages.length}`:'Sem páginas';document.getElementById('bookPrev')?.toggleAttribute('disabled',page<=0);document.getElementById('bookNext')?.toggleAttribute('disabled',page>=pages.length-1)};document.getElementById('closeBook').onclick=()=>document.getElementById('bookReader')?.remove();document.getElementById('bookPrev')?.addEventListener('click',()=>{if(page>0){page--;renderPage()}});document.getElementById('bookNext')?.addEventListener('click',()=>{if(page<pages.length-1){page++;renderPage()}})}
-function updateResourceBars(p,type){const max=type==='sanity'?derivedMax(p,'Sanidade'):derivedMax(p,'Corpo'),value=type==='sanity'?clamp(p.sanity??max,0,max):clamp(p.hp??max,0,max);document.querySelectorAll(`[data-resource-bar="${type}"]`).forEach(bar=>{const old=Number(bar.dataset.value||value),pct=Math.max(0,Math.min(100,(value/max)*100));bar.dataset.value=value;const fill=bar.querySelector('.horror-bar-fill');if(fill){if(value<old){bar.classList.remove('damage');void bar.offsetWidth;bar.classList.add('damage')}fill.style.width=`${pct}%`}const strong=bar.querySelector('.horror-resource-head strong');if(strong)strong.innerHTML=`${value}<small> / ${max}</small>`;const foot=bar.querySelector('.horror-resource-foot span');if(foot)foot.textContent=`${Math.round(pct)}%`;});}
+function updateResourceBars(p,type){const max=type==='sanity'?derivedMax(p,'Sanidade'):derivedMax(p,'Corpo'),value=type==='sanity'?clamp(p.sanity??max,0,max):clamp(p.hp??max,0,max);document.querySelectorAll(`[data-resource-bar="${type}"]`).forEach(bar=>{const old=Number(bar.dataset.value||value),pct=Math.max(0,Math.min(100,(value/max)*100));bar.dataset.value=value;const fill=bar.querySelector('.horror-bar-fill');if(fill){if(value<old){bar.classList.remove('damage');void bar.offsetWidth;bar.classList.add('damage')}fill.style.width=`${pct}%`}const strong=bar.querySelector('.horror-resource-head strong');if(strong)strong.innerHTML=`${value}<small> / ${max}</small>`;const foot=bar.querySelector('.horror-resource-foot span');if(foot)foot.textContent=`${Math.round(pct)}%`;const st=resourceState(value,max);bar.dataset.state=st;const stEl=bar.querySelector('.horror-resource-foot span:last-child');if(stEl)stEl.textContent=resourceStateLabel(type,st);});}
 
 function printSheetAsPdf(p){
-
+  // V65.10: gera o PDF pelo próprio navegador ("Salvar como PDF" na caixa de
+  // impressão) em vez de adicionar uma biblioteca nova ao projeto.
   const prevTitle=document.title;
   document.title=`Ficha - ${p?.name||'Personagem'}`;
   window.print();
@@ -1336,11 +1340,13 @@ function normalizeCombatParticipants(){
   const c=normalizeCombatSession();
   const old=new Map((c.participants||[]).map(x=>[String(x.key||combatParticipantKey(x.kind,x.entityId)),x]));
   const next=[];const seen=new Set();
+  // Players are always part of the new combat controller. No join/leave event is needed.
   for(const p of (state.players||[])){
     const key=combatParticipantKey('player',p.id||p.login);if(seen.has(key))continue;seen.add(key);
     const prev=old.get(key)||{};
     next.push({key,kind:'player',entityId:String(p.id||p.login||''),entityLogin:String(p.login||''),name:String(p.name||p.login||'Player'),initiative:Number(prev.initiative)||0,enabled:prev.enabled!==false});
   }
+  // Monsters/NPCs are only included when the Master explicitly adds them.
   for(const row of old.values()){
     if(row.kind!=='monster')continue;
     const m=combatEntityForParticipant(row);if(!m)continue;
@@ -1355,7 +1361,7 @@ function normalizeCombatParticipants(){
 function combatOrderedParticipants(c=normalizeCombatParticipants()){
   return [...(c.participants||[])].filter(x=>x.enabled!==false).sort((a,b)=>{
     const ai=Number(a.initiative)||0,bi=Number(b.initiative)||0;
-    if(ai!==bi)return bi-ai; 
+    if(ai!==bi)return bi-ai; // maior iniciativa primeiro
     return String(a.key).localeCompare(String(b.key));
   });
 }
@@ -1440,6 +1446,8 @@ function openCombatStatusEditor(playerId){
   document.getElementById('saveCombatStatus').onclick=async()=>{p.hp=clamp(document.getElementById('cHp').value,0,hpMax);p.sanity=clamp(document.getElementById('cSan').value,0,sanMax);p.determination=clamp(document.getElementById('cDet').value,0,det.max);save();await saveGlobalNow().catch(()=>{});close();toast('Status do Player atualizado.');render('home')};
 }
 function masterHomeControl(){
+  // O Centro de Controle do Mestre é a nova tela inicial da sessão.
+  // Mantemos um único ponto de entrada para evitar referências quebradas ao antigo 'Mesa'.
   return combatMasterHome();
 }
 
@@ -1486,7 +1494,10 @@ function classesPage(){
  const canChoose=!!p && (!isSlasher || (p.slasherReligion==='no' || (p.slasherReligion==='yes' && p.slasherBelief)));
  return shell(`<section class="classes-hero ${isSlasher?'slasher-classes-hero':''}"><div class="classes-hero-copy"><span class="badge">${isSlasher?'SLASHER':'CAMINHOS'}</span><h1>${isSlasher?'Profissões':'Classes'}</h1><p>${chosen?'Seu caminho já foi escolhido. O destino não pode ser alterado depois da confirmação.':isSlasher?'Escolha uma profissão. Conhecimento e experiência ajudam a sobreviver, mas nenhuma profissão torna alguém invencível.':'Escolha com cuidado. A classe pode ser escolhida apenas uma vez e os bônus serão gravados na ficha.'}</p><div class="destiny-phrase ${chosen?'show':''}" id="destinyPhrase">${chosen?'Seu destino está selado':'Seu destino aguarda'}</div></div></section>${intro}<div class="class-book-grid ${isSlasher?'slasher-profession-grid':''}">${visibleEntries.map(([n,c])=>`<article class="class-book-card ${c.slasher?'slasher-profession-card':''} ${chosen&&p.class===n?'chosen-class':''} ${chosen&&p.class!==n?'locked-class':''} ${!canChoose?'class-choice-disabled':''}" data-class-choice="${esc(n)}"><div class="class-card-ornament">${chosen&&p.class===n?'✦':'◇'}</div><div class="class-card-head"><h2>${esc(n)}</h2>${c.slasher?'<span class="badge">SLASHER</span>':hasMagicClass(n)?'<span class="badge">MAGIA / RITUAL</span>':''}</div><p>${esc(c.desc)}</p><div class="class-bonus-line"><strong>Bônus</strong><span>${esc(c.bonus)}</span></div><div class="ability-list">${c.abilities.map(a=>`<div class="ability"><b>${esc(a[0])}</b><div class="small muted">${esc(a[1])}</div></div>`).join('')}</div>${chosen&&p.class===n?'<div class="class-choice-seal">CLASSE ESCOLHIDA</div>':''}</article>`).join('')}</div>`,`classes`)
 }
-function resourceBarMarkup(label,current,max,type,editable=true){const safeMax=Math.max(1,Number(max)||1),value=clamp(current,0,safeMax),pct=Math.max(0,Math.min(100,(value/safeMax)*100));const cls=type==='sanity'?'sanity-bar':'blood-bar';return `<div class="horror-resource ${cls}" data-resource-bar="${type}" data-value="${value}"><div class="horror-resource-head"><span>${type==='sanity'?'SANIDADE':'VIDA'}</span><strong>${value}<small> / ${safeMax}</small></strong></div><div class="horror-bar-track"><div class="horror-bar-fill" style="width:${pct}%"><i class="drip drip-a"></i><i class="drip drip-b"></i><i class="drip drip-c"></i></div><div class="horror-bar-gloss"></div></div>${editable?`<div class="horror-resource-input"><input data-resource-input="${type}" type="number" min="0" max="${safeMax}" value="${value}" aria-label="${type}"></div>`:''}<div class="horror-resource-foot"><span>${Math.round(pct)}%</span><span>${value===0?(type==='sanity'?'MENTE VAZIA':'CAÍDO'):value<=safeMax*.2?'CRÍTICO':'ESTÁVEL'}</span></div></div>`}
+// V1.0.4: estado visual das barras (estável / crítico / vazio) — usado no HTML inicial e nas atualizações ao vivo.
+function resourceState(value,max){return value<=0?'empty':value<=max*.2?'critical':'stable'}
+function resourceStateLabel(type,st){return st==='empty'?(type==='sanity'?'MENTE VAZIA':'CAÍDO'):st==='critical'?'CRÍTICO':'ESTÁVEL'}
+function resourceBarMarkup(label,current,max,type,editable=true){const safeMax=Math.max(1,Number(max)||1),value=clamp(current,0,safeMax),pct=Math.max(0,Math.min(100,(value/safeMax)*100));const cls=type==='sanity'?'sanity-bar':'blood-bar';return `<div class="horror-resource ${cls}" data-resource-bar="${type}" data-value="${value}" data-state="${resourceState(value,safeMax)}"><div class="horror-resource-head"><span>${type==='sanity'?'SANIDADE':'VIDA'}</span><strong>${value}<small> / ${safeMax}</small></strong></div><div class="horror-bar-track"><div class="horror-bar-fill" style="width:${pct}%"><i class="drip drip-a"></i><i class="drip drip-b"></i><i class="drip drip-c"></i></div><div class="horror-bar-gloss"></div></div>${editable?`<div class="horror-resource-input"><input data-resource-input="${type}" type="number" min="0" max="${safeMax}" value="${value}" aria-label="${type}"></div>`:''}<div class="horror-resource-foot"><span>${Math.round(pct)}%</span><span>${resourceStateLabel(type,resourceState(value,safeMax))}</span></div></div>`}
 function hpFields(e,editable=true){const dis=editable?'':'disabled';const hpMax=derivedMax(e,'Corpo')||1;const sanityMax=derivedMax(e,'Sanidade');const hp=clamp(e.hp??hpMax,0,hpMax);const sanity=clamp(e.sanity??sanityMax,0,sanityMax);return `<div class="horror-resource-grid">${resourceBarMarkup('Vida',hp,hpMax,'health',editable)}${resourceBarMarkup('Sanidade',sanity,sanityMax,'sanity',editable)}</div><div class="input-grid resource-grid-compact">${combatBoxes(e,dis)}<input id="hp" type="hidden" value="${hp}"><input id="sanity" type="hidden" value="${sanity}"></div><p class="resource-rule">A barra acompanha a porcentagem exata do recurso. Ao perder Vida, a animação de sangue escorre para baixo antes de a nova porcentagem ficar estável.</p>`}
 
 function playerTurnAlertMarkup(p){
@@ -1522,6 +1533,9 @@ function sheetInternal(){const p=player();if(!p)return shell('<div class="empty"
  ${(p.rolls||[]).slice().reverse().slice(0,12).map(r=>`<div class="roll-entry" data-roll-id="${esc(r.id||'')}"><strong>${esc(rollDisplayText(r))}</strong><span>${esc(r.die||r.label)}</span><time>${esc(r.time)}</time></div>`).join('')||'<div class="empty">Nenhuma rolagem ainda.</div>'}
 </div>
 </article><article class="sheet-card"><div class="section-heading"><div><span class="section-kicker">ESTADOS</span><h2>Condições atuais</h2></div></div><div class="condition-legend">Condições aplicadas pelo Mestre aparecem aqui.</div>${conditionsMarkup(p)}</article>${spellMarkup(p)}<article class="sheet-card"><div class="section-heading"><div><span class="section-kicker">ALMA</span><h2>O que permanece</h2></div></div><div class="soul-layout"><div class="photo-wrap"><img class="photo soul-photo" id="soulPhoto" src="${esc(safeImgSrc(p.soulPhoto,'/runa-gold.png'))}" alt="Alma"><label class="upload-label">Imagem da alma<input id="soulPhotoInput" type="file" accept="image/png,image/jpeg,image/webp,.jfif" hidden></label></div><div class="text-fields"><div class="field"><label>Sua alma</label><input id="soul" value="${esc(p.soul)}"></div><div class="field"><label>Objetos queridos</label><textarea id="belovedObjects" rows="4">${esc(p.belovedObjects)}</textarea></div></div></div><div class="story-grid"><div class="field"><label>Personalidade</label><textarea id="personality" rows="5">${esc(p.personality)}</textarea></div><div class="field"><label>Destino</label><textarea id="destiny" rows="5">${esc(p.destiny)}</textarea></div></div>${p.class==='Ocultista'&&p.deityId&&allDeities().find(d=>d.id===p.deityId)?.image?`<div class="deity-soul-symbol"><img src="${esc(allDeities().find(d=>d.id===p.deityId).image)}" alt="Símbolo do Deus escolhido"></div>`:''}</article><article class="sheet-card"><div class="section-heading"><div><span class="section-kicker">DESCRIÇÃO & HISTÓRIA</span><h2>Sua história</h2></div></div><div class="story-grid"><div class="field"><label>Descrição</label><textarea id="description" rows="6" placeholder="Aparência, presença, voz e detalhes que definem este personagem.">${esc(p.description||'')}</textarea></div><div class="field"><label>História</label><textarea id="history" rows="6" placeholder="Escreva aqui a história, feitos, perdas e marcas que definem este personagem.">${esc(p.history||'')}</textarea></div></div><button class="btn primary" id="saveHistory">Salvar descrição e história</button></article><article class="sheet-card notes-card"><div class="section-heading"><div><span class="section-kicker">ANOTAÇÕES DO PLAYER</span><h2>Seu registro privado</h2></div></div><textarea id="playerNotes" rows="6" placeholder="Anotações que somente você verá...">${esc(p.playerNotes||'')}</textarea><p class="tiny muted">Estas anotações não aparecem para o Mestre.</p></article><article class="sheet-card"><div class="section-heading"><div><span class="section-kicker">MOCHILA</span><h2>${bagCapacity(p)} espaços • peso dinâmico</h2></div></div>${slots(p,true)}</article></section><aside class="sheet-side"><article class="sheet-card sticky-card"><div class="section-heading"><div><span class="section-kicker">CLASSE ATUAL</span><h2>${esc(p.class)}</h2></div></div><p class="muted">${esc(currentClass.desc)}</p><div class="class-bonus-summary"><span>BÔNUS</span><strong>${esc(currentClass.bonus)}</strong></div><div class="ability-list">${currentClass.abilities.map(a=>`<div class="ability"><b>${esc(a[0])}</b><div class="small muted">${esc(a[1])}</div></div>`).join('')}</div></article><article class="sheet-card sticky-card"><div class="section-heading"><div><span class="section-kicker">RESUMO</span><h2>Estado atual</h2></div></div><div class="active-conditions">${(p.conditions||[]).map(id=>{const c=conditionById(id);const img=state.uiIcons?.conditions?.[c?.id]||c?.image;return c?`<div class="active-condition">${img?`<img src="${esc(img)}" alt="">`:`<span>${esc(c.icon)}</span>`}<div><b>${esc(c.name)}</b><small>${esc(conditionEffectText(c.id,p))}</small></div></div>`:''}).join('')||'<div class="empty">Nenhuma condição ativa.</div>'}</div></article></aside></div>`,'sheet')}
+
+// V65.9: a ficha completa chamava slots() e addBag(), mas as duas funções tinham sumido do arquivo.
+// slots() lançava ReferenceError, o que jogava TODO Player na "ficha em modo de recuperação" (sem upload de retrato/wallpaper).
 function slots(p,editable=false){
   const cap=bagCapacity(p),backpack=Array.isArray(p?.backpack)?p.backpack:[];
   const cells=Array.from({length:cap},(_,i)=>{
@@ -1666,6 +1680,45 @@ function tvSceneById(id){return (Array.isArray(state.tvScenes)?state.tvScenes:[]
 // V65.11: se o navegador bloquear o play() com som (antes do toque inicial em
 // "Iniciar Tela da TV"), tenta de novo mudo — melhor mostrar a cena sem áudio
 // do que a tela ficar travada/preta.
+// V1.0.5: "4K" no Modo TV. Não existe servidor de vídeo aqui, então o realce é feito na própria TV:
+// cada quadro é ampliado na GPU para 3840px de largura com um filtro de nitidez (unsharp).
+// Isso deixa a imagem mais limpa numa TV 4K, mas NÃO inventa detalhe que o vídeo original não tem.
+// Se o WebGL ou o CORS do vídeo falharem, o canvas some e o vídeo normal continua tocando.
+function tvEnhanceVideo(v,stage){
+  try{
+    const cv=document.createElement('canvas');cv.className='tv-layer tv-enter tv-upscale-canvas';
+    const gl=cv.getContext('webgl',{alpha:false,antialias:false});
+    if(!gl)return null;
+    const mk=(type,src)=>{const sh=gl.createShader(type);gl.shaderSource(sh,src);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw new Error('shader');return sh};
+    const pr=gl.createProgram();
+    gl.attachShader(pr,mk(gl.VERTEX_SHADER,'attribute vec2 p;varying vec2 uv;void main(){uv=vec2(p.x*.5+.5,.5-p.y*.5);gl_Position=vec4(p,0.,1.);}'));
+    gl.attachShader(pr,mk(gl.FRAGMENT_SHADER,'precision mediump float;varying vec2 uv;uniform sampler2D t;uniform vec2 px;void main(){vec3 c=texture2D(t,uv).rgb;vec3 b=(texture2D(t,uv+vec2(px.x,0.)).rgb+texture2D(t,uv-vec2(px.x,0.)).rgb+texture2D(t,uv+vec2(0.,px.y)).rgb+texture2D(t,uv-vec2(0.,px.y)).rgb)*.25;gl_FragColor=vec4(clamp(c+(c-b)*.6,0.,1.),1.);}'));
+    gl.linkProgram(pr);if(!gl.getProgramParameter(pr,gl.LINK_STATUS))throw new Error('link');
+    gl.useProgram(pr);
+    gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+    const loc=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+    gl.bindTexture(gl.TEXTURE_2D,gl.createTexture());
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    const uPx=gl.getUniformLocation(pr,'px');
+    const next=()=>v.requestVideoFrameCallback?v.requestVideoFrameCallback(draw):requestAnimationFrame(draw);
+    const draw=()=>{
+      if(!cv.isConnected||!v.isConnected)return;
+      if(v.readyState>=2&&v.videoWidth){
+        if(v.videoWidth>=3840){cv.style.display='none'}
+        else{
+          const tw=3840,th=Math.round(3840*v.videoHeight/v.videoWidth);
+          if(cv.width!==tw||cv.height!==th){cv.width=tw;cv.height=th;gl.viewport(0,0,tw,th)}
+          try{gl.uniform2f(uPx,1/v.videoWidth,1/v.videoHeight);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,v);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);cv.dataset.ready='1'}
+          catch(e){console.warn('Realce 4K desativado:',e);cv.remove();v._tvCv=null;return}
+        }
+      }
+      next();
+    };
+    stage.appendChild(cv);v._tvCv=cv;next();
+    return cv;
+  }catch(e){console.warn('Realce 4K indisponível:',e);return null}
+}
 function playTvVideo(v){if(!v)return;v.play().catch(()=>{if(!v.muted){v.muted=true;v.play().catch(()=>{})}})}
 function tvCurrent(){normalizeTvScreen();return state.tvScreen;}
 function tvPage(){
@@ -1695,11 +1748,12 @@ function applyTvCommand(next,transition=true){
   };
   if(s.active&&s.kind==='video'&&s.url){
     const old=stage.querySelector('video');
-    const v=document.createElement('video');v.autoplay=true;v.playsInline=true;v.preload='auto';v.loop=!!s.loop;v.src=s.url;v.className='tv-layer tv-enter';
-    stage.appendChild(v);
-    const swap=()=>{if(!v.isConnected)return;v.classList.remove('tv-enter');v.classList.add('tv-visible');if(old&&old!==v){old.classList.add('tv-exit');setTimeout(()=>old.remove(),280)}finish();playTvVideo(v)};
+    const v=document.createElement('video');v.autoplay=true;v.playsInline=true;v.preload='auto';v.loop=!!s.loop;if(s.upscale)v.crossOrigin='anonymous';v.src=s.url;v.className='tv-layer tv-enter';
+    stage.appendChild(v);if(s.upscale)tvEnhanceVideo(v,stage);
+    const swap=()=>{if(!v.isConnected)return;v.classList.remove('tv-enter');v.classList.add('tv-visible');if(v._tvCv){v._tvCv.classList.remove('tv-enter');v._tvCv.classList.add('tv-visible')}if(old&&old!==v){old.classList.add('tv-exit');old._tvCv?.classList.add('tv-exit');setTimeout(()=>{old._tvCv?.remove();old.remove()},280)}finish();playTvVideo(v)};
     v.addEventListener('canplay',swap,{once:true});
-    v.addEventListener('error',()=>{if(!old)v.remove();finish()},{once:true});
+    let retried=false;const onErr=()=>{if(v._tvCv&&!retried){retried=true;v._tvCv.remove();v._tvCv=null;v.removeAttribute('crossorigin');v.src=s.url;v.addEventListener('error',onErr,{once:true});v.load();return}if(!old)v.remove();finish()};
+    v.addEventListener('error',onErr,{once:true});
     v.load();
     if(!old)screen.classList.add('tv-fading');
     return;
@@ -1726,13 +1780,14 @@ function tvAdmin(){
       <div class="field"><label>Vídeo local</label><input id="tvSceneFile" type="file" accept="video/*,.mp4,.webm,.mov,.m4v,.ogg"></div>
       <div class="field"><label>Ou URL direta</label><input id="tvSceneUrl" placeholder="https://.../cena.mp4"></div>
       <label class="checkline"><input id="tvSceneLoop" type="checkbox"> Repetir em loop</label>
+      <label class="checkline"><input id="tvSceneUpscale" type="checkbox"> Melhorar para 4K (ampliação + nitidez na TV)</label>
       <button class="btn primary" id="saveTvScene">+ Adicionar cinemática</button>
     </div>
     <div class="tv-quick-grid">
       <button class="btn danger" id="tvRed">🔴 Tela vermelha</button>
       <button class="btn" id="tvBlack">■ Tela preta</button>
     </div>
-    <div class="tv-library">${scenes.length?scenes.map(s=>`<article class="tv-scene-card"><div class="tv-scene-thumb">${s.kind==='video'?'▶':s.kind==='image'?'▧':'●'}</div><div><strong>${esc(s.name)}</strong><small>${s.loop?'Loop • ':''}Cinemática</small></div><div class="row"><button class="btn small primary" data-tv-play="${esc(s.id)}">Exibir</button><button class="btn small danger" data-tv-delete="${esc(s.id)}">Excluir</button></div></article>`).join(''):'<div class="empty">Nenhuma cinemática cadastrada ainda.</div>'}</div>
+    <div class="tv-library">${scenes.length?scenes.map(s=>`<article class="tv-scene-card"><div class="tv-scene-thumb">${s.kind==='video'?'▶':s.kind==='image'?'▧':'●'}</div><div><strong>${esc(s.name)}</strong><small>${s.upscale?'4K • ':''}${s.loop?'Loop • ':''}Cinemática</small></div><div class="row"><button class="btn small primary" data-tv-play="${esc(s.id)}">Exibir</button><button class="btn small" data-tv-4k="${esc(s.id)}">4K: ${s.upscale?'ligado':'desligado'}</button><button class="btn small danger" data-tv-delete="${esc(s.id)}">Excluir</button></div></article>`).join(''):'<div class="empty">Nenhuma cinemática cadastrada ainda.</div>'}</div>
   </div>`;
 }
 function bindTvAdmin(){
@@ -1742,7 +1797,7 @@ function bindTvAdmin(){
     catch{toast('Não foi possível copiar automaticamente. Selecione o link acima manualmente.')}
   });
   document.getElementById('saveTvScene')?.addEventListener('click',async()=>{
-    const btn=document.getElementById('saveTvScene'),file=document.getElementById('tvSceneFile')?.files?.[0],url=document.getElementById('tvSceneUrl')?.value.trim()||'',name=document.getElementById('tvSceneName')?.value.trim()||file?.name?.replace(/\.[^.]+$/,'')||'Cinemática',loop=!!document.getElementById('tvSceneLoop')?.checked;
+    const btn=document.getElementById('saveTvScene'),file=document.getElementById('tvSceneFile')?.files?.[0],url=document.getElementById('tvSceneUrl')?.value.trim()||'',name=document.getElementById('tvSceneName')?.value.trim()||file?.name?.replace(/\.[^.]+$/,'')||'Cinemática',loop=!!document.getElementById('tvSceneLoop')?.checked,upscale=!!document.getElementById('tvSceneUpscale')?.checked;
     if(!file&&!url){toast('Escolha um vídeo ou informe uma URL direta.');return}
     try{
       btn.disabled=true;btn.textContent='Enviando...';
@@ -1755,17 +1810,22 @@ function bindTvAdmin(){
         if(!remoteUrl)throw new Error('URL pública não disponível');
       }
       state.tvScenes=Array.isArray(state.tvScenes)?state.tvScenes:[];
-      state.tvScenes.push({id:`tv-${Date.now()}`,name,url:remoteUrl,kind:'video',loop,createdAt:Date.now()});
+      state.tvScenes.push({id:`tv-${Date.now()}`,name,url:remoteUrl,kind:'video',loop,upscale,createdAt:Date.now()});
       await saveGlobalNow();toast('Cinemática adicionada e sincronizada.');document.getElementById('adminContent').innerHTML=tvAdmin();bindTvAdmin();
     }catch(e){toast(`Não foi possível salvar a cinemática: ${e?.message||'erro'}`)}
     finally{btn.disabled=false;btn.textContent='+ Adicionar cinemática'}
   });
   document.querySelectorAll('[data-tv-play]').forEach(b=>b.onclick=async()=>{
     const scene=tvSceneById(b.dataset.tvPlay);if(!scene)return;
-    state.tvScreen={active:true,kind:scene.kind||'video',url:scene.url||'',title:scene.name||'',loop:!!scene.loop,commandAt:Date.now(),updatedAt:Date.now()};
+    state.tvScreen={active:true,kind:scene.kind||'video',url:scene.url||'',title:scene.name||'',loop:!!scene.loop,upscale:!!scene.upscale,commandAt:Date.now(),updatedAt:Date.now()};
     await saveGlobalNow().catch(()=>{});
     broadcastLive('tv-scene',{screen:state.tvScreen}).catch(()=>{});
     toast(`Exibindo: ${scene.name}`);
+  });
+  document.querySelectorAll('[data-tv-4k]').forEach(b=>b.onclick=async()=>{
+    const scene=tvSceneById(b.dataset.tv4k);if(!scene)return;
+    scene.upscale=!scene.upscale;await saveGlobalNow().catch(()=>{});
+    document.getElementById('adminContent').innerHTML=tvAdmin();bindTvAdmin();
   });
   document.getElementById('tvRed')?.addEventListener('click',async()=>{
     state.tvScreen={...defaultTvScreen(),active:true,kind:'red',title:'',commandAt:Date.now(),updatedAt:Date.now()};
@@ -2288,6 +2348,7 @@ async function boot(){
         try{await pushGlobal(globalPayload())}finally{remoteApplying=false}
       }
       let lastRemoteStamp=remoteRow?.updated_at||'';
+      try{const c0=combatCurrent(state.combatSession);if(lastKnownTurnParticipantId===null)lastKnownTurnParticipantId=c0?c0.key:''}catch{}
       const applyIncoming=async(row)=>{
         const data=row?.data||row;if(!hasRemoteSharedData(data)||remoteApplying)return;
         remoteApplying=true;

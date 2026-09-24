@@ -101,7 +101,7 @@ export function subscribePlayers(callback) {
   let disposed = false;
   let refreshTimer = null;
   const channel = supabase
-    .channel('a-profecia-players-events-v1')
+    .channel('a-profecia-players-events')
     .on('broadcast', { event: 'player-changed' }, payload => {
       if (disposed) return;
       clearTimeout(refreshTimer);
