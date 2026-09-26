@@ -12,7 +12,7 @@
      barra a maior parte dos ataques de injeção de código (XSS). Se algum recurso externo novo deixar de carregar,
      o console do navegador mostra "Refused to ... because it violates the Content Security Policy": basta liberar
      o domínio na diretiva correspondente. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://sdk.scdn.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; connect-src 'self' https: http: wss: ws:; frame-src https://open.spotify.com https://sdk.scdn.co; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://sdk.scdn.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https://*.supabase.co https://api.spotify.com https://accounts.spotify.com https://sdk.scdn.co wss://*.supabase.co; frame-src https://open.spotify.com https://sdk.scdn.co; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
 </head>
 <body>
 <div class="abyss-bg" aria-hidden="true"></div>
@@ -21,6 +21,6 @@
 <div id="soundboard-root"></div>
 <div id="personal-player"></div>
 <div id="toast-root" aria-live="polite"></div>
-<script type="module" src="/src/main.js"></script>
+<script type="module" src="/src/main.js?v=1100"></script>
 </body>
 </html>

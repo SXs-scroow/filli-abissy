@@ -24,12 +24,12 @@ export function publicUrl(path) {
 // Login, senhas (hash bcrypt) e sessões vivem no Supabase (funções a_profecia_*). O navegador só guarda um token aleatório.
 const TOKEN_KEY = 'a_profecia_auth_token_v1';
 export function getAuthToken() {
-  try { return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+  try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
 }
 export function setAuthToken(token) {
   try {
-    if (token) { sessionStorage.setItem(TOKEN_KEY, token); localStorage.setItem(TOKEN_KEY, token); }
-    else { sessionStorage.removeItem(TOKEN_KEY); localStorage.removeItem(TOKEN_KEY); }
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
   } catch {}
 }
 export function handleAuthError(error) {
@@ -94,12 +94,10 @@ export async function changeMasterPassword(oldPassword, newPassword) {
 
 export async function fetchGlobal() {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('data,updated_at')
-    .eq('id', ROW)
-    .maybeSingle();
-  if (error) throw error;
+  const { data, error } = await supabase.rpc('a_profecia_get_global', {
+    p_token: getAuthToken()
+  });
+  if (error) throw handleAuthError(error);
   return data || null;
 }
 
@@ -111,9 +109,13 @@ export async function backupGlobal(data, label = 'auto') {
 
 export async function listGlobalBackups(limit = 20) {
   if (!supabase) return [];
-  const { data, error } = await supabase.from(TABLE).select('id,data,updated_at').like('id','backup-%').order('updated_at',{ascending:false}).limit(limit);
-  if (error) throw error;
-  return data || [];
+  const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
+  const { data, error } = await supabase.rpc('a_profecia_list_global_backups', {
+    p_token: getAuthToken(),
+    p_limit: safeLimit
+  });
+  if (error) throw handleAuthError(error);
+  return Array.isArray(data) ? data : [];
 }
 
 export async function pushGlobal(data) {
@@ -136,28 +138,55 @@ export async function pushGlobal(data) {
 
 export async function uploadGlobalFile(path, file) {
   if (!supabase) throw new Error('Supabase não configurado');
-  const contentType = file.type || (path.toLowerCase().endsWith('.jfif') ? 'image/jpeg' : undefined);
-  const { error } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, file, { upsert: true, contentType, cacheControl: '31536000' });
-  if (error) throw error;
-  // Cache-buster: garante que todos os aparelhos peguem a imagem nova mesmo
-  // quando o arquivo substitui outro no mesmo caminho.
-  const base = publicUrl(path);
+  if (!getAuthToken()) throw new Error('SESSAO_INVALIDA');
+  if (!file || typeof file.size !== 'number') throw new Error('ARQUIVO_INVALIDO');
+  const safePath = String(path || '').replace(/\\/g, '/');
+  if (!safePath || safePath.startsWith('/') || safePath.includes('..') || safePath.length > 300) {
+    throw new Error('CAMINHO_INVALIDO');
+  }
+  const maxBytes = 200 * 1024 * 1024;
+  if (file.size <= 0 || file.size > maxBytes) throw new Error('ARQUIVO_GRANDE');
+  const contentType = file.type || 'application/octet-stream';
+  const { data, error } = await supabase.functions.invoke('upload-asset', {
+    body: file,
+    headers: {
+      Authorization: `Bearer ${getAuthToken()}`,
+      'x-asset-path': safePath,
+      'x-asset-content-type': contentType
+    }
+  });
+  if (error) throw handleAuthError(error);
+  const publicPath = data?.path || safePath;
+  const base = data?.url || publicUrl(publicPath);
   return base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : '';
 }
 
 export function subscribeGlobal(callback) {
-  if (!supabase) return () => {};
+  if (!supabase || typeof callback !== 'function') return () => {};
+  let disposed = false;
+  let timer = null;
   const channel = supabase
-    .channel('a-profecia-global-sync-v2')
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: TABLE, filter: `id=eq.${ROW}` },
-      payload => callback(payload.new || null)
-    )
+    .channel('a-profecia-global-events')
+    .on('broadcast', { event: 'global-changed' }, () => {
+      if (disposed) return;
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        try {
+          const row = await fetchGlobal();
+          if (!disposed && row) callback(row);
+        } catch (error) {
+          if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
+            console.warn('Falha ao atualizar o estado global:', error);
+          }
+        }
+      }, 80);
+    })
     .subscribe();
-  return () => supabase.removeChannel(channel);
+  return () => {
+    disposed = true;
+    clearTimeout(timer);
+    supabase.removeChannel(channel).catch(() => {});
+  };
 }
 
 
