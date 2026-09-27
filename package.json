@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "node scripts/check-syntax.mjs",
-    "release:check": "npm run check && npm run build"
+    "release:check": "npm run check && npm run stability:check && npm run build",
+    "stability:check": "node scripts/stability-audit.mjs"
   },
   "devDependencies": {
     "vite": "7.3.6"

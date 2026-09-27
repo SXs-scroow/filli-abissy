@@ -1,4 +1,5 @@
 import '../styles.css';
+import './maintenanceAgent.js';
 
 // Configuração opcional. Se VITE_SPOTIFY_CLIENT_ID estiver no .env,
 // o botão "Entrar com Spotify" usa esse Client ID automaticamente.
@@ -8,4 +9,4 @@ if (import.meta.env.VITE_SPOTIFY_CLIENT_ID) {
 
 // O sistema legado é importado como módulo para manter a lógica já testada
 // sem reescrever autenticação, Players, fichas e persistência do zero.
-import '../app.js?build=1300';
+import '../app.js?build=1500';

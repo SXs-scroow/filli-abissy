@@ -55,6 +55,9 @@ export function authErrorText(error) {
   if (/SENHA_FRACA/.test(m)) return 'Use uma senha com pelo menos 10 caracteres.';
   if (/SESSAO_INVALIDA/.test(m)) return 'Sua sessão expirou. Entre novamente.';
   if (/NAO_AUTORIZADO/.test(m)) return 'Você não tem permissão para essa ação.';
+  if (/PLAYER_EXCLUIDO/.test(m)) return 'Esta ficha já foi excluída e não pode ser restaurada automaticamente.';
+  if (/PLAYER_ID_INVALIDO/.test(m)) return 'Não foi possível identificar esta ficha.';
+  if (/EXCLUSAO_NAO_CONFIRMADA/.test(m)) return 'A exclusão não foi confirmada pelo servidor. Nenhum dado local foi removido permanentemente.';
   return 'Não foi possível conectar ao servidor. Tente novamente.';
 }
 export async function authMasterLogin(password) {

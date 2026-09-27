@@ -1,12 +1,16 @@
 import { remoteEnabled, fetchGlobal, pushGlobal, backupGlobal, listGlobalBackups, uploadGlobalFile, subscribeGlobal, subscribeLive, broadcastLive, authMasterLogin, authPlayerLogin, authRegisterPlayer, authLogout, authCheck, changeMasterPassword, authErrorText, getAuthToken } from './src/globalSync.js';
-import { playerStoreEnabled, fetchPlayers as fetchPlayerRows, upsertPlayers, upsertPlayerTombstones, subscribePlayers } from './src/playerStore.js';
-const APP_VERSION='V1.1.0 · GOTHIC UI · FICHA + MODO SESSÃO';
+import { playerStoreEnabled, fetchPlayers as fetchPlayerRows, upsertPlayers, upsertPlayerTombstones, deletePlayerServer, subscribePlayers } from './src/playerStore.js';
+const APP_VERSION='V1.1.0 · ESTABILIDADE V4 · FICHA + MODO SESSÃO';
 // ===== V66.1: declarações do Modo Sessão/segurança ficam AQUI, no topo. load() roda logo abaixo e chama normalize(),
 // que usa estas constantes; declaradas mais adiante elas ainda estariam "não inicializadas" (erro do console). =====
 let loadFailed=false;
 let saveTimer=0,saveDirty=false,saveFirstAt=0,lastRecoveryAt=0;
 let stabilityPlayerPollTimer=0;
 let stabilityOnlineHandlerBound=false;
+let sessionGuardianTimer=0;
+let sessionGuardianBusy=false;
+let sessionGuardianBound=false;
+const sessionGuardian={state:'checking',message:'Verificando o estado do site…',lastCheck:0,failures:0};
 let lastRenderSig='',renderOpts={},renderSkipped=false,deferredRemoteRender=false;
 const COMBAT_DEFAULT={atkMult:4,defMult:5,atkMin:0,defMin:0,atkCap:10,defCap:15};
 const FRACTURE_DAMAGE=3;
@@ -460,10 +464,49 @@ state=load();
 let lastPlayersSnapshot=clone(state.players||[]);
 function load(){try{const raw=storageGet(KEY)||storageGet('filii_abyssi_state_v10')||storageGet('filii_abyssi_state_v8');const saved=raw?JSON.parse(raw):null;if(!saved){const fresh=clone(DEFAULT);try{const cs=readStoredSession();if(cs?.role)fresh.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{}try{const cm=JSON.parse(storageGet(MEDIA_CACHE_KEY)||'null');mergeCriticalCacheIntoState(cm,fresh)}catch{}return fresh;}try{const tabS=tabSessionGet(),cs=tabS||(!saved.session?readStoredSession():null);if(cs?.role)saved.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{};try{const cachedMedia=storageGet(MEDIA_CACHE_KEY);if(cachedMedia)saved.__criticalMediaCache=JSON.parse(cachedMedia)}catch{};saved.siteBrand={name:'A Profecia',image:'runa-gold.png',...(saved.siteBrand||{})};saved.siteBrand.name=String(saved.siteBrand.name||'A Profecia').trim()||'A Profecia';saved.siteBrand.image=saved.siteBrand.image||'runa-gold.png';saved.characterRules={campaign:{...DEFAULT_RULES.campaign,...(saved.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(saved.characterRules?.slasher||{})}};saved.classBonuses={...clone(CLASS_BONUSES_DEFAULTS_V107),...(saved.classBonuses||{})};saved.items=migrateItems(saved.items);saved.players=Array.isArray(saved.players)?saved.players:[];saved.playerTombstones=saved.playerTombstones&&typeof saved.playerTombstones==='object'?saved.playerTombstones:{};saved.creatures=Array.isArray(saved.creatures)?saved.creatures:[];saved.sounds=Array.isArray(saved.sounds)?saved.sounds:[];saved.musicLibrary=Array.isArray(saved.musicLibrary)?saved.musicLibrary:[];if(saved.music?.url&&!saved.musicLibrary.some(x=>String(x.url)===String(saved.music.url)))saved.musicLibrary.unshift({id:saved.music.mediaId||`music-${Date.now()}`,title:saved.music.title||'Trilha da campanha',url:saved.music.url,kind:saved.music.kind||'url',createdAt:Number(saved.music.commandAt)||Date.now()});saved.spells=Array.isArray(saved.spells)&&saved.spells.length?saved.spells:INITIAL_SPELLS.map(clone);saved.uiIcons=saved.uiIcons||{attrs:{},skills:{}};saved.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(saved.uiIcons.attrs||{})};saved.uiIcons.skills={...DEFAULT_SKILL_ICONS,...(saved.uiIcons.skills||{})};saved.uiIcons.conditions={...(saved.uiIcons.conditions||{})};saved.backgrounds={...(saved.backgrounds||{})};saved.customContent={attrs:[],skills:[],conditions:[],deities:[],...(saved.customContent||{})};saved.combatSession={...defaultCombatSession(),...(saved.combatSession||{})};saved.combatSession.sessionId=String(saved.combatSession.sessionId||'')||cryptoRandomId('combat');saved.combatSession.round=Math.max(1,Number(saved.combatSession.round)||1);saved.combatSession.turn=Math.max(0,Number(saved.combatSession.turn)||0);saved.combatSession.participants=Array.isArray(saved.combatSession.participants)?saved.combatSession.participants:[];saved.combatSession.actedKeys=Array.isArray(saved.combatSession.actedKeys)?saved.combatSession.actedKeys.map(String):[];saved.combatSession.history=Array.isArray(saved.combatSession.history)?saved.combatSession.history:[];saved.terrorMode={...defaultTerrorMode(),...(saved.terrorMode||{})};saved.nexus={active:false,title:'Nexus Tabletop',url:'',...(saved.nexus||{})};saved.tvScreen={...defaultTvScreen(),...(saved.tvScreen||{})};saved.tvScenes=Array.isArray(saved.tvScenes)?saved.tvScenes:[];saved.soundboard={volume:.85,enabled:true,...(saved.soundboard||{})};saved.secretClues=Array.isArray(saved.secretClues)?saved.secretClues:[];if(typeof saved.music==='string')saved.music={type:'audio',url:saved.music,title:'Trilha da sessão'};saved.music=saved.music||{type:'',url:'',title:'',kind:'url',mediaId:''};saved.slasherIntroMusic=saved.slasherIntroMusic||{url:'',title:'',kind:'url'};if(typeof saved.music==='object'){saved.music.kind=saved.music.kind||'url';saved.music.mediaId=saved.music.mediaId||''}delete saved.sessionBoard;state=saved;saved.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.secretClues=Array.isArray(p.secretClues)?p.secretClues:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});mergeCriticalCacheIntoState(saved.__criticalMediaCache,saved);delete saved.__criticalMediaCache;saved.version=1.0;return saved}catch(e){console.error('[A Profecia] load() falhou; usando estado padrão:',e);loadFailed=true;try{const raw=storageGet(KEY);if(raw&&!storageGet(KEY+'_backup_loadfail'))storageSet(KEY+'_backup_loadfail',raw)}catch{}return clone(DEFAULT)}}
 let remoteSaveTimer=null,remoteHydrated=false,remoteApplying=false;
-let playerDbTimer=null,playerDbHydrated=false,playerDbApplying=false;
+let playerDbTimer=null,playerDbHydrated=false,playerDbApplying=false,playerDbHydrating=false,playerDbHydratePromise=null,playerDbLastSyncAt=0;
 let playerDbUnsubscribe=null;
 let playerDbSyncBusy=false;
 let playerDbSyncPromise=null;
+// V67: cache separado do roster CONFIRMADO pelo servidor. O cache geral do app
+// pode conter Players antigos; este cache só é atualizado depois de uma leitura
+// bem-sucedida do armazenamento dedicado de Players.
+const PLAYER_ROSTER_CACHE_KEY='a_profecia_server_roster_v1';
+let playerDbReadOnly=false;
+function saveConfirmedPlayerRoster(rows){
+  if(state.session?.role!=='master'||!Array.isArray(rows))return;
+  try{
+    const deleted={};
+    for(const r of rows){
+      if(r?.id&&r?.deleted_at){
+        const when=Date.parse(r.deleted_at)||Number(r?.data?._syncUpdatedAt)||Date.now();
+        deleted[String(r.id)]=when;
+      }
+    }
+    const active=rows.filter(r=>r&&r.id&&!r.deleted_at).map(r=>({id:String(r.id),login:String(r.login||''),data:clone(r.data||{}),updated_at:r.updated_at||null}));
+    storageSet(PLAYER_ROSTER_CACHE_KEY,JSON.stringify({version:2,savedAt:Date.now(),rows:active,deleted}));
+  }catch{}
+}
+function loadConfirmedPlayerRoster(){
+  try{
+    const raw=storageGet(PLAYER_ROSTER_CACHE_KEY);
+    const parsed=raw?JSON.parse(raw):null;
+    const rows=Array.isArray(parsed?.rows)?parsed.rows:[];
+    const deleted=parsed?.deleted&&typeof parsed.deleted==='object'?parsed.deleted:{};
+    return rows.filter(r=>{const id=String(r?.id||'');return id&&!deleted[id]});
+  }catch{return []}
+}
+function applyConfirmedPlayerRosterFallback(){
+  if(state.session?.role!=='master')return false;
+  const rows=loadConfirmedPlayerRoster();
+  if(!rows.length){state.players=[];lastPlayersSnapshot=[];return false}
+  playerDbApplying=true;
+  try{applyPlayerRows(rows,{initial:true});}
+  finally{playerDbApplying=false}
+  playerDbReadOnly=true;
+  storageSet(KEY,serializeState());
+  return true;
+}
 function globalPayload(){
   const {session,sounds,players,playerTombstones,...shared}=state;
   const payload={version:shared.version,siteBrand:shared.siteBrand,creatures:shared.creatures,items:slimItems(shared.items),spells:shared.spells,uiIcons:shared.uiIcons,backgrounds:shared.backgrounds,music:shared.music,musicLibrary:shared.musicLibrary||[],slasherIntroMusic:shared.slasherIntroMusic,characterRules:shared.characterRules,classBonuses:shared.classBonuses,customContent:shared.customContent,combatSession:shared.combatSession,terrorMode:shared.terrorMode,nexus:shared.nexus,tvScreen:shared.tvScreen,tvScenes:shared.tvScenes,sounds:shared.sounds,soundboard:shared.soundboard};
@@ -585,9 +628,11 @@ function mergeGlobal(remote){
 function hasRemoteSharedData(remote){
   return !!(remote&&typeof remote==='object'&&['siteBrand','players','playerTombstones','creatures','items','spells','uiIcons','backgrounds','music','musicLibrary','slasherIntroMusic','characterRules','classBonuses','customContent','combatSession','terrorMode','nexus','tvScreen','tvScenes','sounds','soundboard'].some(k=>remote[k]!==undefined));
 }
-function playerRowStamp(row){return Date.parse(row?.updated_at||'')||Number(row?.data?._syncUpdatedAt)||0}
-function playerRowDeletedStamp(row){return Date.parse(row?.deleted_at||'')||0}
+function playerRowStamp(row){return Math.max(Date.parse(row?.updated_at||'')||0,Number(row?.data?._syncUpdatedAt)||0)}
+function playerRowDeletedStamp(row){const raw=row?.deleted_at;if(raw===true||String(raw||'').trim().toLowerCase()==='deleted')return Date.now();return Date.parse(raw||'')||0}
 function applyPlayerRows(rows,{initial=false}={}){
+  const beforeState=JSON.stringify(state.players||[]);
+  const beforeTombstones=JSON.stringify(state.playerTombstones||{});
   const local=Array.isArray(state.players)?state.players:[];
   const byId=new Map(local.map(p=>[playerSyncKey(p),p]));
   const tomb={...(state.playerTombstones||{})};
@@ -618,6 +663,18 @@ function applyPlayerRows(rows,{initial=false}={}){
     for(const [key,p] of [...byId.entries()]){
       if(!remoteIds.has(key) && !p?._pendingCreate)byId.delete(key);
     }
+  }else if(state.session?.role==='player' && playerStoreEnabled && Array.isArray(rows)){
+    // A Player device never owns the roster. If the server does not return the
+    // cached row, the local copy must not be treated as a new record.
+    const activeId=String(state.session?.playerId||'').trim();
+    const remoteIds=new Set(rows.map(r=>String(r?.id||'').trim()).filter(Boolean));
+    for(const [key] of [...byId.entries()]){
+      if(!remoteIds.has(key))byId.delete(key);
+    }
+    if(activeId && !remoteIds.has(activeId)){
+      tomb[activeId]=Math.max(Number(tomb[activeId])||0,Date.now());
+      state.session.playerSnapshot=null;
+    }
   }
   for(const [key,t] of Object.entries(tomb)){
     const p=byId.get(key);if(p&&Number(t)>=(Number(p._syncUpdatedAt)||0)){byId.delete(key)}
@@ -626,12 +683,19 @@ function applyPlayerRows(rows,{initial=false}={}){
   state.players.forEach(normalize);
   state.playerTombstones=tomb;
   lastPlayersSnapshot=clone(state.players);
-  return {changed:true,empty:!rows?.length&&initial};
+  const changed=beforeState!==JSON.stringify(state.players||[]) || beforeTombstones!==JSON.stringify(state.playerTombstones||{});
+  return {changed,empty:!rows?.length&&initial};
 }
 async function hydratePlayersDb(){
   if(!playerStoreEnabled)return;
+  if(playerDbHydrating)return playerDbHydratePromise||false;
+  playerDbHydrating=true;
+  playerDbHydratePromise=(async()=>{
   try{
     const rows=await fetchPlayerRows();
+    playerDbReadOnly=false;
+    playerDbLastSyncAt=Date.now();
+    saveConfirmedPlayerRoster(rows);
     if(rows.length){
       playerDbApplying=true;
       applyPlayerRows(rows,{initial:true});
@@ -646,7 +710,7 @@ async function hydratePlayersDb(){
       const migrationKey='a_profecia_players_legacy_migrated_v2';
       const migrated=storageGet(migrationKey)==='1';
       const tomb=state.playerTombstones&&typeof state.playerTombstones==='object'?state.playerTombstones:{};
-      if(!migrated){
+      if(!migrated && state.session?.role==='master'){
         const list=(Array.isArray(state.players)?state.players:[]).filter(p=>{
           const k=playerSyncKey(p);return k&&!tomb[k]&&p?._pendingCreate===true;
         });
@@ -662,32 +726,61 @@ async function hydratePlayersDb(){
       // from the active roster and are never uploaded merely because the response
       // happened to be empty.
       const keep=new Map();
+      const isMaster=state.session?.role==='master';
       for(const p of (state.players||[])){
         const k=playerSyncKey(p);
-        if(k&&tomb[k])continue;
-        if(k&&p?._pendingCreate)keep.set(k,p);
+        if(!k||tomb[k])continue;
+        if(isMaster && p?._pendingCreate)keep.set(k,p);
       }
       state.players=[...keep.values()];
+      if(!isMaster){
+        const activeId=String(state.session?.playerId||'');
+        if(activeId)state.session.playerSnapshot=null;
+      }
       lastPlayersSnapshot=clone(state.players);
       storageSet(KEY,serializeState());
     }
     playerDbHydrated=true;
   }catch(e){
-    playerDbHydrated=false;
-    console.warn('Banco de Players indisponível; usando recuperação local.',e);
+    playerDbReadOnly=true;
+    // Nunca renderizar o roster geral antigo do localStorage no Mestre quando
+    // a leitura do banco dedicado falhar. Preferimos o último roster confirmado
+    // pelo servidor; se não existir, a lista fica vazia até a conexão voltar.
+    if(state.session?.role==='master')applyConfirmedPlayerRosterFallback();
+    playerDbHydrated=true;
+    console.warn('Banco de Players indisponível; usando somente o último roster confirmado pelo servidor.',e);
   }
+  finally{playerDbHydrating=false;playerDbHydratePromise=null}
+  })();
+  return playerDbHydratePromise;
 }
+function refreshMasterPlayersAdminView(){
+  if(state.session?.role!=='master'||currentView!=='master'||adminTabCurrent!=='players')return;
+  // Nunca destrua um modal/formulário que o Mestre esteja editando. A próxima
+  // navegação/abertura do painel encontrará o roster já reconciliado.
+  if(document.getElementById('entityModal'))return;
+  const box=document.getElementById('adminContent');
+  if(!box)return;
+  box.innerHTML=playersAdmin();
+  bindAdminContent();
+}
+
 async function syncPlayersDbNow(){
   if(!playerStoreEnabled||!playerDbHydrated||playerDbApplying)return false;
+  if(typeof navigator!=='undefined'&&navigator.onLine===false){playerDbReadOnly=true;return false;}
   if(playerDbSyncBusy)return playerDbSyncPromise||false;
   playerDbSyncBusy=true;
   playerDbSyncPromise=(async()=>{try{
+    const beforeRoster=JSON.stringify(state.players||[]);
     // Determine the authenticated role BEFORE reconciling the local roster.
     // This must be available to the missing-row rule below; declaring it later
     // creates a temporal-dead-zone ReferenceError and aborts the entire sync.
     const syncRole=state.session?.role;
     const syncActiveId=String(state.session?.playerId||'');
     const rows=await fetchPlayerRows();
+    playerDbReadOnly=false;
+    playerDbLastSyncAt=Date.now();
+    saveConfirmedPlayerRoster(rows);
     const remoteById=new Map(rows.map(r=>[String(r.id),r]));
     const localById=new Map((state.players||[]).map(p=>[playerSyncKey(p),p]));
 
@@ -726,6 +819,8 @@ async function syncPlayersDbNow(){
     const toUpsert=[];
     for(const p of [...localById.values()]){
       const k=playerSyncKey(p); if(!k)continue;
+      const localTomb=Number(state.playerTombstones?.[k])||0;
+      if(localTomb){ localById.delete(k); continue; }
       const remote=remoteById.get(k), localStamp=Number(p._syncUpdatedAt)||0, remoteStamp=playerRowStamp(remote);
       if(remote?.deleted_at){
         localById.delete(k);
@@ -733,17 +828,20 @@ async function syncPlayersDbNow(){
         state.playerTombstones[k]=Math.max(Number(state.playerTombstones[k])||0,remoteStamp||Date.now());
       }else if(!remote){
         const tomb=Number(state.playerTombstones?.[k])||0;
-        if(tomb){
-          localById.delete(k);
+        // A ausência numa leitura completa é suficiente para remover a cópia
+        // local, mas NÃO é suficiente para criar uma nova tombstone. Antes isso
+        // convertia qualquer resposta transitória/antiga do servidor em uma
+        // 'exclusão' local e podia gerar ciclos de sincronização. Só uma exclusão
+        // explícita do Mestre (ou deleted_at vindo do servidor) cria tombstones.
+        localById.delete(k);
+        if(tomb)continue;
+        if(syncRole==='player'){
           continue;
         }
         // Mestre: ausência no servidor significa que a ficha não faz parte do
-        // roster oficial. Só enviamos de volta uma ficha explicitamente criada
-        // neste aparelho e marcada como pendente.
-        if(syncRole==='master'&&!p._pendingCreate){
-          localById.delete(k);
-          continue;
-        }
+        // roster oficial. Só uma criação explicitamente pendente pode atravessar
+        // essa fronteira. Fichas antigas/copiadas nunca são recriadas.
+        if(syncRole==='master'&&!p._pendingCreate)continue;
         p._syncUpdatedAt=localStamp||Date.now();
         toUpsert.push(p);
       }else if(remote.data){
@@ -778,30 +876,46 @@ async function syncPlayersDbNow(){
       await upsertPlayers(writable);
       for(const p of writable)delete p._pendingCreate;
     }
-    const tombRows=[];
-    const index=Object.fromEntries((state.players||[]).map(p=>[playerSyncKey(p),p]));
-    for(const [k,t] of Object.entries(state.playerTombstones||{})){
-      const remote=remoteById.get(k), ts=Number(t)||0, rs=playerRowStamp(remote);
-      if(ts>rs)tombRows.push({id:k,login:index[k]?.login||remote?.login||k,data:index[k]||remote?.data||{},_syncUpdatedAt:ts});
+    // Local tombstones are explicit deletion intents from the Mestre. If an
+    // older browser version left one behind while the server still has the row
+    // active, converge the server to the deletion instead of letting the active
+    // row resurrect on the next F5. We intentionally do this regardless of the
+    // remote timestamp: the Player id is immutable/random and a later edit of an
+    // already-deleted id must never restore it.
+    if(state.session?.role==='master'){
+      const pendingDeletes={};
+      for(const [k,t] of Object.entries(state.playerTombstones||{})){
+        const key=String(k||'').trim();
+        if(key&&Number(t)>0)pendingDeletes[key]=Number(t);
+      }
+      if(Object.keys(pendingDeletes).length)await upsertPlayerTombstones(pendingDeletes);
     }
-    if(tombRows.length&&state.session?.role==='master')await upsertPlayerTombstones(Object.fromEntries(tombRows.map(x=>[x.id,x._syncUpdatedAt])),index);
     const before=JSON.stringify(state.players||[]);
     state.players=[...localById.values()];
     
     state.players.forEach(normalize);lastPlayersSnapshot=clone(state.players);
-    if(before!==JSON.stringify(state.players||[]))storageSet(KEY,serializeState());
+    const rosterChanged=before!==JSON.stringify(state.players||[]) || beforeRoster!==JSON.stringify(state.players||[]);
+    if(rosterChanged)storageSet(KEY,serializeState());
+    if(rosterChanged)refreshMasterPlayersAdminView();
     // Never log the player out merely because a transient sync response omitted a row.
     // A confirmed deletion is handled by the realtime/delete confirmation path.
-  }catch(e){console.warn('Falha ao sincronizar Players:',e);return false}
+  }catch(e){
+    playerDbReadOnly=true;
+    // Em falha de rede, não permitimos que o estado local antigo seja reenviado
+    // nem tratado como roster oficial. A próxima tentativa online reconcilia.
+    console.warn('Falha ao sincronizar Players; modo somente-leitura ativado:',e);
+    return false
+  }
   finally{playerDbSyncBusy=false;playerDbSyncPromise=null}})();
   return playerDbSyncPromise;
 }
 function queuePlayerDbSave(){
-  if(!playerStoreEnabled||!playerDbHydrated||playerDbApplying)return;
+  if(!playerStoreEnabled||!playerDbHydrated||playerDbApplying||playerDbReadOnly)return;
   clearTimeout(playerDbTimer);playerDbTimer=setTimeout(()=>syncPlayersDbNow().catch(()=>{}),700);
 }
 
-// V2 Stability Patch: Realtime é apenas um acelerador. A reconciliação periódica
+// V5 Stability Patch: server-authoritative Player deletion + safe reconciliation.
+// Realtime é apenas um acelerador. A reconciliação periódica
 // garante que Players novos, exclusões e alterações cheguem mesmo quando o
 // navegador perde o canal Realtime (comum em celulares/abas em segundo plano).
 async function reconcilePlayersStability(){
@@ -828,12 +942,23 @@ function startStabilityPatch(){
     try{document.documentElement.dataset.aProfeciaOffline='1'}catch{}
   };
   const onConnection=()=>{
-    try{document.documentElement.dataset.aProfeciaOffline=navigator.onLine?'0':'1'}catch{}
+    try{
+      document.documentElement.dataset.aProfeciaOffline=navigator.onLine?'0':'1';
+      const status=document.getElementById('playerSyncStatus');
+      if(status){const base=playerDbLastSyncAt?`Última sincronização: ${new Date(playerDbLastSyncAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:'Sincronização ainda não confirmada';status.textContent=base+(navigator.onLine===false?' • OFFLINE':'')}
+    }catch{}
   };
   window.addEventListener('online',onOnline);
   window.addEventListener('offline',onOffline);
   window.addEventListener('online',onConnection);
   window.addEventListener('offline',onConnection);
+  window.addEventListener('pageshow',()=>{
+    if(document.hidden)return;
+    setTimeout(()=>reconcilePlayersStability(),250);
+  });
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible')setTimeout(()=>reconcilePlayersStability(),350);
+  });
   onConnection();
   // 60s no desktop / 90s em mobile: suficiente para recuperar do Realtime
   // sem transformar o site em um polling pesado.
@@ -1413,8 +1538,54 @@ function spellMarkup(p){
   return playerSpellPanel(p);
 }
 
-function shell(content,active='home'){const brand=siteBrand();const master=state.session?.role==='master';const libraryActive=active==='library';const diaryActive=active==='diary';const nexusActive=active==='nexus';return `<div class="shell ${master?'shell-master':''}"><header class="topbar"><div class="topbar-inner"><div class="brand"><img src="${esc(brand.image)}" alt=""><span class="brand-name">${esc(brand.name)}</span></div><nav class="nav"><button data-nav="home" class="${active==='home'?'active':''}">${master?'Início':'Informações básicas'}</button><button data-nav="sheet" class="${active==='sheet'?'active':''}">Ficha</button><button data-nav="classes" class="${active==='classes'?'active':''}">Classes</button><button data-nav="nexus" class="${nexusActive?'active':''}">Nexus</button>${master?`<button data-nav="master" class="${active==='master'?'active':''}">Mestre</button>`:`<button data-nav="diary" class="${diaryActive?'active':''}">Diário</button><button data-nav="library" class="${libraryActive?'active':''}">Biblioteca</button>`}<button id="logout" type="button">Sair</button></nav></div></header><main class="main ${['sheet','classes','master','diary','library','nexus'].includes(active)?`main-${active}`:'main-home'}">${content}</main><div id="personal-player" aria-live="polite"></div></div>`}
-function bindMasterFicha(){const root=document.querySelector('.master-player-grid');if(!root)return;root.onclick=e=>{const view=e.target.closest('[data-view-player]');if(view){e.preventDefault();e.stopPropagation();const p=state.players.find(x=>x.id===view.dataset.playerId)||state.players[Number(view.dataset.viewPlayer)];if(p)openPlayerViewById(p.id);return}const del=e.target.closest('[data-del-p]');if(del){e.preventDefault();e.stopPropagation();const i=Number(del.dataset.delP);if(state.players[i]&&confirm('Excluir este Player?')){const p=state.players[i];state.playerTombstones=state.playerTombstones||{};const k=playerSyncKey(p);if(k)state.playerTombstones[k]=Date.now();state.players.splice(i,1);save();render('master')}}}}
+function guardianBadge(){const map={ok:['🟢','SITE OK'],attention:['🟡','ATENÇÃO'],offline:['🔴','OFFLINE'],checking:['🔵','VERIFICANDO'],session:['🟣','SESSÃO']};const [icon,label]=map[sessionGuardian.state]||map.checking;return `<button type="button" class="site-status-indicator status-${esc(sessionGuardian.state)}" id="siteStatusIndicator" title="${esc(sessionGuardian.message)}"><span>${icon}</span><b>${label}</b></button>`}
+function shell(content,active='home'){const brand=siteBrand();const master=state.session?.role==='master';const libraryActive=active==='library';const diaryActive=active==='diary';const nexusActive=active==='nexus';return `<div class="shell ${master?'shell-master':''}"><header class="topbar"><div class="topbar-inner"><div class="brand"><img src="${esc(brand.image)}" alt=""><span class="brand-name">${esc(brand.name)}</span></div><div class="topbar-status">${guardianBadge()}</div><nav class="nav"><button data-nav="home" class="${active==='home'?'active':''}">${master?'Início':'Informações básicas'}</button><button data-nav="sheet" class="${active==='sheet'?'active':''}">Ficha</button><button data-nav="classes" class="${active==='classes'?'active':''}">Classes</button><button data-nav="nexus" class="${nexusActive?'active':''}">Nexus</button>${master?`<button data-nav="master" class="${active==='master'?'active':''}">Mestre</button>`:`<button data-nav="diary" class="${diaryActive?'active':''}">Diário</button><button data-nav="library" class="${libraryActive?'active':''}">Biblioteca</button>`}<button id="logout" type="button">Sair</button></nav></div></header><main class="main ${['sheet','classes','master','diary','library','nexus'].includes(active)?`main-${active}`:'main-home'}">${content}</main><div id="personal-player" aria-live="polite"></div></div>`}
+async function deletePlayerConfirmed(player){
+  const id=playerSyncKey(player);
+  if(!id)throw new Error('PLAYER_ID_INVALIDO');
+  if(!playerStoreEnabled){
+    const when=Date.now();
+    state.playerTombstones=state.playerTombstones||{};
+    state.playerTombstones[id]=Math.max(Number(state.playerTombstones[id])||0,when);
+    return {id,found:true,already_deleted:false,deleted_at:new Date(when).toISOString()};
+  }
+  // Evita a janela em que uma sincronização antiga poderia tentar salvar a
+  // ficha exatamente enquanto ela está sendo excluída.
+  if(playerDbSyncBusy&&playerDbSyncPromise){
+    try{await playerDbSyncPromise}catch{}
+  }
+  const result=await deletePlayerServer(id);
+  // A RPC é transacional/idempotente. Uma segunda leitura confirma que o
+  // servidor realmente deixou a linha excluída antes de alterar a UI local.
+  try{
+    const rows=await fetchPlayerRows();
+    const serverRow=rows.find(r=>String(r.id)===String(id));
+    if(serverRow&&!serverRow.deleted_at)throw new Error('EXCLUSAO_NAO_CONFIRMADA');
+  }catch(error){
+    if(/EXCLUSAO_NAO_CONFIRMADA/.test(String(error?.message||'')))throw error;
+    // Se a exclusão RPC já confirmou, uma falha transitória na leitura de
+    // verificação não deve desfazer a exclusão nem reintroduzir o Player.
+    console.warn('Exclusão confirmada, mas a verificação de leitura falhou:',error);
+  }
+  // From this point onward the server has acknowledged the deletion. The local
+  // tombstone is therefore durable intent, not a cache hint, and will be replayed
+  // on future reconciliations until the server reports the row as deleted.
+  const deletedAt=Date.parse(result?.deleted_at||'')||Number(result?.sync_updated_at)||Date.now();
+  state.playerTombstones=state.playerTombstones||{};
+  state.playerTombstones[id]=Math.max(Number(state.playerTombstones[id])||0,deletedAt);
+  try{
+    const raw=storageGet(PLAYER_ROSTER_CACHE_KEY),cached=raw?JSON.parse(raw):null;
+    if(cached&&Array.isArray(cached.rows)){
+      cached.rows=cached.rows.filter(r=>String(r?.id||'')!==String(id));
+      cached.deleted={...(cached.deleted&&typeof cached.deleted==='object'?cached.deleted:{}),[id]:deletedAt};
+      cached.version=2;cached.savedAt=Date.now();
+      storageSet(PLAYER_ROSTER_CACHE_KEY,JSON.stringify(cached));
+    }
+  }catch{}
+  return result;
+}
+
+function bindMasterFicha(){const root=document.querySelector('.master-player-grid');if(!root)return;root.onclick=async e=>{const view=e.target.closest('[data-view-player]');if(view){e.preventDefault();e.stopPropagation();const p=state.players.find(x=>x.id===view.dataset.playerId)||state.players[Number(view.dataset.viewPlayer)];if(p)openPlayerViewById(p.id);return}const del=e.target.closest('[data-del-p]');if(del){e.preventDefault();e.stopPropagation();const i=Number(del.dataset.delP),p=state.players[i];if(!p||!confirm('Excluir este Player?'))return;del.disabled=true;const oldText=del.textContent;del.textContent='Excluindo...';try{await deletePlayerConfirmed(p);const k=playerSyncKey(p);state.players=state.players.filter(x=>playerSyncKey(x)!==k);lastPlayersSnapshot=clone(state.players);persistCriticalCache();persistSessionCache();storageSet(KEY,serializeState());toast('Player excluído e confirmado no servidor.');render('master')}catch(err){toast(authErrorText(err));del.disabled=false;del.textContent=oldText}}}}
 function openPlayerViewById(id){const index=state.players.findIndex(p=>p.id===id);if(index>=0)openPlayerView(index)}
 function openPlayerView(index){const p=state.players[index];if(!p)return;syncDerivedResources(p);const bonus=classBonusMap(p.class);openModal(`<div class="modal" id="playerViewModal"><div class="modal-card player-view-card"><button class="modal-close" id="closePlayerView">×</button><span class="badge">FICHA DO PLAYER</span><h2>${esc(p.name)}</h2><p class="muted">${esc(p.class||'Classe não escolhida')} • ${esc(p.status||'Ativo')}</p><div class="player-view-grid"><div><h3>Recursos</h3>${resourceBarMarkup('Vida',p.hp,derivedMax(p,'Corpo'),'health',false)}${resourceBarMarkup('Sanidade',p.sanity,derivedMax(p,'Sanidade'),'sanity',false)}</div><div><h3>Atributos</h3>${allAttrs().map(a=>`<div class="view-line"><span>${uiAttrIcon(a)} ${esc(a)}</span><b>${p.attrs?.[a]||0}${bonus[a]?` + ${bonus[a]}`:''}</b></div>`).join('')}</div><div><h3>Perícias</h3>${allSkills().map(sk=>`<div class="view-line"><span>${uiSkillIcon(sk)} ${esc(sk)}</span><b>${p.skills?.[sk]||0}${bonus[sk]?` + ${bonus[sk]}`:''}</b></div>`).join('')}</div><div><h3>História</h3><p>${esc(p.history||'—')}</p><h3>Anotações do Mestre</h3><textarea id="masterNotesView" rows="6">${esc(p.masterNotes||'')}</textarea><button class="btn primary small" id="saveMasterNotesView">Salvar anotação</button><h3>Descrição</h3><p>${esc(p.description||'—')}</p></div></div></div></div>`);document.getElementById('closePlayerView').onclick=()=>document.getElementById('playerViewModal')?.remove();document.getElementById('saveMasterNotesView').onclick=()=>{p.masterNotes=document.getElementById('masterNotesView').value;save();toast('Anotação do Mestre salva.')}}
 let navDelegationBound=false;
@@ -2047,7 +2218,15 @@ function bindSiteBrand(){const preview=document.getElementById('siteBrandPreview
 function recoveryAdmin(){return `<div class="card"><div class="row space"><div><span class="section-kicker">SEGURANÇA</span><h2>Recuperação de dados</h2><p class="small muted">Esta versão cria cópias locais automáticas antes de sincronizar com o Supabase e impede que um estado remoto claramente menor substitua silenciosamente o estado local.</p></div></div><div class="row"><button class="btn primary" id="restoreLatestLocal">Restaurar último backup local</button><button class="btn" id="makeRecoveryNow">Criar backup agora</button><button class="btn" id="restoreRemoteBackup">Ver backups do Supabase</button></div><div id="recoveryList" class="recovery-list"></div><p class="tiny muted">Importante: backups automáticos desta proteção começam a existir a partir desta versão. Eles não conseguem recriar um arquivo que já tenha sido apagado do Supabase antes desta atualização.</p></div>`}
 async function bindRecovery(){document.getElementById('makeRecoveryNow')?.addEventListener('click',async()=>{await saveLocalRecovery('backup-manual');toast('Backup local criado.');});document.getElementById('restoreLatestLocal')?.addEventListener('click',async()=>{if(!confirm('Restaurar o último backup local? O estado atual será salvo antes da restauração.'))return;try{await restoreLocalRecovery()}catch(e){toast(e?.message||'Não foi possível restaurar.')}});document.getElementById('restoreRemoteBackup')?.addEventListener('click',async()=>{const box=document.getElementById('recoveryList');if(!box)return;box.innerHTML='<div class="empty">Carregando backups...</div>';try{const rows=await listGlobalBackups(20);box.innerHTML=rows.length?rows.map((r,i)=>`<div class="recovery-row"><div><strong>Backup ${i+1}</strong><small>${new Date(r.updated_at).toLocaleString('pt-BR')}</small></div><button class="btn small" data-remote-recovery="${esc(r.id)}">Restaurar</button></div>`).join(''):'<div class="empty">Nenhum backup remoto disponível ainda.</div>';box.querySelectorAll('[data-remote-recovery]').forEach(b=>b.onclick=async()=>{const rows2=await listGlobalBackups(20),r=rows2.find(x=>x.id===b.dataset.remoteRecovery);if(!r?.data)return;if(!confirm('Restaurar este backup remoto? O estado atual será salvo antes.'))return;try{await saveLocalRecovery('antes-da-restauracao-remota');const d=clone(r.data);delete d.__backup;remoteApplying=true;mergeGlobal(d);await pushGlobal(globalPayload());remoteApplying=false;storageSet(KEY,serializeState());render('master');toast('Backup remoto restaurado.')}catch(e){remoteApplying=false;toast(e?.message||'Falha ao restaurar backup remoto.')}})}catch(e){box.innerHTML='<div class="empty">Não foi possível consultar os backups.</div>'}})}
 function admin(){return shell(`<section class="hero master-hero"><div><span class="badge">MESTRE</span><h1>Câmara do Mestre</h1><p>Gerenciamento completo de Players, Monstros, classes, itens e trilha.</p></div><span class="app-version-corner">${APP_VERSION}</span></section><div class="panel-tabs"><button class="active" data-tab="players">Players</button><button data-tab="monsters">Monstros</button><button data-tab="classes">Classes</button><button data-tab="items">Banco de Itens</button><button data-tab="music">Trilha global</button><button data-tab="sounds">Soundboard</button><button data-tab="secrets">Pistas secretas</button><button data-tab="symbols">Símbolos</button><button data-tab="spells">Magias</button><button data-tab="content">Conteúdo</button><button data-tab="backgrounds">Fundos</button><button data-tab="branding">Identidade</button><button data-tab="tv">Tela da TV</button><button data-tab="recovery">RECUPERAÇÃO</button></div><div id="adminContent">${playersAdmin()}</div>`,'master')}
-function playersAdmin(){return `<div class="card players-admin-card"><div class="row space"><div><h2>Players</h2><p class="small muted">Criar, editar, excluir e controlar fichas.</p></div><div class="row"><button class="btn" id="openCharacterRules">⚙ Limites de criação</button><button class="btn" id="changeMasterPw">🔑 Senha do Mestre</button><button class="btn primary" id="newPlayer">+ Criar Player</button></div></div><div class="table-wrap" style="margin-top:12px"><table class="table"><thead><tr><th>Nome</th><th>Login</th><th>Tipo</th><th>Classe</th><th>Vida</th><th>Ataque</th><th>Defesa</th><th>Mochila</th><th>Ações</th></tr></thead><tbody>${state.players.map((p,i)=>`<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.login)}</td><td>${p.campaignType==='slasher'?'Slasher':'Campanha'}</td><td>${esc(p.class)}</td><td>${p.hp}/${p.hpMax}</td><td>${derivedCombat(p).atk}</td><td>${derivedCombat(p).def}</td><td>${bagWeight(p)}/${MAX_BAG}</td><td><button class="btn small" data-edit-p="${i}">Editar</button> <button class="btn small" data-bag-p="${i}">Mochila</button> <button class="btn small" data-round-p="${i}">+ Rodada</button> <button class="btn small danger" data-del-p="${i}">Excluir</button></td></tr>`).join('')}</tbody></table></div></div>`}
+window.__aProfeciaMaintenanceContext=()=>({guardian:{state:sessionGuardian.state,message:sessionGuardian.message,lastCheck:sessionGuardian.lastCheck},session:{role:state.session?.role||'',playerId:state.session?.playerId||'',login:state.session?.login||''},players:{count:Array.isArray(state.players)?state.players.filter(p=>!p.deletedAt&&!p._deleted&&!p.deleted_at).length:0,readOnly:!!playerDbReadOnly,lastSyncAt:playerDbLastSyncAt||0},remoteEnabled:!!remoteEnabled});
+window.__aProfeciaMaintenanceRecover=async()=>{try{await runSessionGuardian('maintenance');return true}catch(e){console.warn('Falha na recuperação segura:',e);return false}};
+function updateSessionGuardian(stateName,message){sessionGuardian.state=stateName;sessionGuardian.message=message;sessionGuardian.lastCheck=Date.now();const el=document.getElementById('siteStatusIndicator');if(el){const map={ok:['🟢','SITE OK'],attention:['🟡','ATENÇÃO'],offline:['🔴','OFFLINE'],checking:['🔵','VERIFICANDO'],session:['🟣','SESSÃO']};const [icon,label]=map[stateName]||map.checking;el.className=`site-status-indicator status-${stateName}`;el.title=message;el.innerHTML=`<span>${icon}</span><b>${label}</b>`;el.setAttribute('aria-label',message)}}
+function guardianSummary(){const last=playerDbLastSyncAt?`Última sincronização: ${new Date(playerDbLastSyncAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:'Ainda não confirmada nesta abertura';return `Guardião da Sessão\n${sessionGuardian.message}\n${last}`;}
+async function runSessionGuardian(reason='timer'){if(sessionGuardianBusy)return;sessionGuardianBusy=true;updateSessionGuardian('checking','Verificando conexão, sessão e sincronização…');try{if(navigator.onLine===false){sessionGuardian.failures++;updateSessionGuardian('offline','Sem conexão de rede. Dados locais preservados; aguardando reconexão.');return}const token=getAuthToken();if(remoteEnabled&&!token){updateSessionGuardian('session','Nenhuma sessão autenticada nesta aba.');return}if(remoteEnabled&&token){try{const who=await authCheck();if(!who){updateSessionGuardian('session','A sessão não foi confirmada pelo servidor.');return}}catch(e){const msg=String(e?.message||e||'');if(/SESSAO_INVALIDA|NAO_AUTORIZADO/.test(msg)){updateSessionGuardian('session','O servidor rejeitou a sessão. É necessário entrar novamente.');return}sessionGuardian.failures++;updateSessionGuardian('attention','Servidor temporariamente indisponível; tentando novamente sem alterar seus dados.');return}}if(playerStoreEnabled&&state.session?.role){try{if(!playerDbHydrated)await hydratePlayersDb();if(playerDbHydrated&&!playerDbSyncBusy)await syncPlayersDbNow();if(playerDbReadOnly){sessionGuardian.failures++;updateSessionGuardian('attention','Sincronização dos Players pausada após uma falha; o Guardião tentará recuperar automaticamente.');setTimeout(()=>{reconcilePlayersStability().catch(()=>{})},2500);return}}catch(e){sessionGuardian.failures++;updateSessionGuardian('attention','Falha temporária na sincronização; os dados locais foram preservados.');return}}sessionGuardian.failures=0;updateSessionGuardian('ok','Conexão, sessão e sincronização estão respondendo normalmente.')}finally{sessionGuardianBusy=false}}
+function bindSessionGuardian(){if(sessionGuardianBound)return;sessionGuardianBound=true;const check=()=>{clearTimeout(sessionGuardianTimer);sessionGuardianTimer=setTimeout(()=>runSessionGuardian('event'),350)};window.addEventListener('online',check);window.addEventListener('offline',()=>updateSessionGuardian('offline','Sem conexão de rede. Dados locais preservados; aguardando reconexão.'));document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')check()});document.addEventListener('click',e=>{const b=e.target.closest?.('#siteStatusIndicator');if(!b)return;toast(guardianSummary())});sessionGuardianTimer=setTimeout(()=>runSessionGuardian('boot'),1200);setInterval(()=>runSessionGuardian('timer'),45000)}
+function sessionDiagnosticsMarkup(){const online=navigator.onLine!==false;const sessionOk=!!state.session?.role;const syncOk=!!playerDbLastSyncAt&&playerDbHydrated&&!playerDbReadOnly;return `<section class="card session-diagnostics" id="sessionDiagnostics" style="margin-bottom:12px"><div class="row space"><div><span class="section-kicker">DIAGNÓSTICO DA SESSÃO</span><h3 style="margin:4px 0">Status do sistema</h3><p class="small muted">Use esta verificação antes e durante a sessão para confirmar conexão, sessão e sincronização.</p></div><button class="btn" id="runSessionDiagnostics">↻ Verificar agora</button></div><div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px"><span class="badge" id="diagOnline">${online?'🟢 ONLINE':'🔴 OFFLINE'}</span><span class="badge" id="diagSession">${sessionOk?'🟢 SESSÃO VÁLIDA':'🔴 SEM SESSÃO'}</span><span class="badge" id="diagSupabase">${playerStoreEnabled?'🟢 SUPABASE ATIVO':'🔴 SUPABASE INDISPONÍVEL'}</span><span class="badge" id="diagPlayers">${state.players.length} PLAYERS CARREGADOS</span><span class="badge" id="diagSync">${syncOk?'🟢 SINCRONIZAÇÃO CONFIRMADA':'🟡 SINCRONIZAÇÃO A CONFIRMAR'}</span></div><p class="tiny muted" id="diagDetails" style="margin:9px 0 0">${playerDbLastSyncAt?`Última sincronização: ${new Date(playerDbLastSyncAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:'Ainda não houve confirmação de sincronização nesta abertura.'}</p></section>`}
+function bindSessionDiagnostics(){const b=document.getElementById('runSessionDiagnostics');if(!b)return;b.onclick=async()=>{const old=b.textContent;b.disabled=true;b.textContent='Verificando...';try{const online=navigator.onLine!==false;let sessionValid=!!state.session?.role;if(remoteEnabled&&getAuthToken()){const checked=await authCheck();sessionValid=!!checked;if(!checked)toast('A sessão precisa ser autenticada novamente.')}if(playerStoreEnabled&&sessionValid&&online){await hydratePlayersDb();if(playerDbHydrated)await syncPlayersDbNow()}const set=(id,t)=>{const e=document.getElementById(id);if(e)e.textContent=t};set('diagOnline',online?'🟢 ONLINE':'🔴 OFFLINE');set('diagSession',sessionValid?'🟢 SESSÃO VÁLIDA':'🔴 SEM SESSÃO');set('diagSupabase',playerStoreEnabled?'🟢 SUPABASE ATIVO':'🔴 SUPABASE INDISPONÍVEL');set('diagPlayers',`${state.players.length} PLAYERS CARREGADOS`);set('diagSync',playerDbLastSyncAt?'🟢 SINCRONIZAÇÃO CONFIRMADA':'🟡 SINCRONIZAÇÃO A CONFIRMAR');const d=document.getElementById('diagDetails');if(d)d.textContent=playerDbLastSyncAt?`Última sincronização: ${new Date(playerDbLastSyncAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:'Ainda não houve confirmação de sincronização.';toast('Diagnóstico concluído.')}catch(e){toast(authErrorText(e));}finally{b.disabled=false;b.textContent=old}}}
+function playersAdmin(){const syncLabel=playerDbLastSyncAt?`Última sincronização: ${new Date(playerDbLastSyncAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:'Última sincronização ainda não confirmada';return `<div class="card players-admin-card">${sessionDiagnosticsMarkup()}<div class="row space"><div><h2>Players</h2><p class="small muted">Criar, editar, excluir e controlar fichas.</p><p class="tiny muted" id="playerSyncStatus">${esc(syncLabel)}${navigator.onLine===false?' • OFFLINE':''}</p></div><div class="row"><button class="btn" id="syncPlayersNow">↻ Sincronizar agora</button><button class="btn" id="openCharacterRules">⚙ Limites de criação</button><button class="btn" id="changeMasterPw">🔑 Senha do Mestre</button><button class="btn primary" id="newPlayer">+ Criar Player</button></div></div><div class="table-wrap" style="margin-top:12px"><table class="table"><thead><tr><th>Nome</th><th>Login</th><th>Tipo</th><th>Classe</th><th>Vida</th><th>Ataque</th><th>Defesa</th><th>Mochila</th><th>Ações</th></tr></thead><tbody>${state.players.map((p,i)=>`<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.login)}</td><td>${p.campaignType==='slasher'?'Slasher':'Campanha'}</td><td>${esc(p.class)}</td><td>${p.hp}/${p.hpMax}</td><td>${derivedCombat(p).atk}</td><td>${derivedCombat(p).def}</td><td>${bagWeight(p)}/${MAX_BAG}</td><td><button class="btn small" data-edit-p="${i}">Editar</button> <button class="btn small" data-bag-p="${i}">Mochila</button> <button class="btn small" data-round-p="${i}">+ Rodada</button> <button class="btn small danger" data-del-p="${i}">Excluir</button></td></tr>`).join('')}</tbody></table></div></div>`}
 
 function bagAdminModal(index){const p=state.players[index],used=bagWeight(p);return `<div class="modal" id="bagModal"><div class="modal-card"><button class="modal-close" id="closeBag">×</button><h2>Mochila de ${esc(p.name)}</h2><p class="small ${used>MAX_BAG?'danger-text':'muted'}">${used}/${bagCapacity(p)} espaços usados. O peso é por unidade e varia de 1 a 3.</p><div class="searchbar"><div class="field"><label>ID ou nome do item</label><input id="bagSearch" placeholder="Ex.: 300 ou Chave"></div><div class="field"><label>Quantidade</label><input id="bagQty" type="number" min="1" value="1"></div><button class="btn primary" id="bagAddAdmin">Adicionar</button></div><div class="slot-grid" style="margin-top:14px">${Array.from({length:bagCapacity(p)},(_,i)=>{const b=p.backpack[i],it=b&&item(b.id);return `<div class="slot ${it?'filled':''}">${it?`<button data-bag-remove-admin="${i}">×</button><div class="slot-icon">${itemIcon(it)}</div><div class="slot-name">${esc(it.name)}</div>${isWeaponItem(it)?`<div class="slot-damage">⚔️ Dano: ${esc(it.damage||weaponDamageFallback(it))}</div>`:''}${String(it.category||'').toLowerCase().includes('livro')||it.bookContent?`<button class="book-read-btn" data-read-book="${it.id}">Ler</button>`:''}<div class="slot-id">ID ${String(it.id).padStart(3,'0')} • Peso ${inferWeight(it)}</div><div class="slot-qty">Qtd. ${b.qty} • ${inferWeight(it)*b.qty} espaço${inferWeight(it)*b.qty===1?'':'s'}</div>`:'<div class="slot-icon" style="opacity:.15">◇</div><div class="small muted">Espaço vazio</div>'}</div>`}).join('')}</div></div></div>`}
 function bindBagAdmin(index){const close=()=>document.getElementById('bagModal')?.remove();document.getElementById('closeBag').onclick=close;document.getElementById('bagAddAdmin').onclick=()=>{const p=state.players[index],q=document.getElementById('bagSearch').value.trim().toLowerCase(),it=state.items.find(x=>String(x.id)===q||x.name.toLowerCase().includes(q));if(!it){toast('Item não encontrado.');return}const qty=Math.max(1,Number(document.getElementById('bagQty').value)||1),weight=inferWeight(it),used=bagWeight(p),ex=p.backpack.find(x=>x.id===it.id),current=ex?.qty||0,maxByWeight=Math.floor((bagCapacity(p)-(used-weight*current))/weight),add=Math.min(it.maxQty-current,qty,maxByWeight);if(add<=0){toast('Não há espaço suficiente.');return}if(ex)ex.qty=current+add;else p.backpack.push({id:it.id,qty:add});save();close();toast('Item adicionado à mochila.');openModal(bagAdminModal(index));bindBagAdmin(index)};document.querySelectorAll('[data-bag-remove-admin]').forEach(b=>b.onclick=()=>{state.players[index].backpack.splice(Number(b.dataset.bagRemoveAdmin),1);save();close();openModal(bagAdminModal(index));bindBagAdmin(index)})}
@@ -2094,7 +2273,7 @@ function contentAdmin(){const c=state.customContent||{attrs:[],skills:[],conditi
 function bindContentAdmin(){const c=state.customContent||{attrs:[],skills:[],conditions:[],deities:[]};const saveSlasherMusic=document.getElementById('saveSlasherMusic');if(saveSlasherMusic)saveSlasherMusic.onclick=async()=>{const title=document.getElementById('slasherMusicTitle')?.value.trim()||'';const file=document.getElementById('slasherMusicFile')?.files?.[0];const url=document.getElementById('slasherMusicUrl')?.value.trim()||'';if(!file&&!url){toast('Informe uma URL ou escolha um arquivo de áudio.');return}try{saveSlasherMusic.disabled=true;let remoteUrl=url;if(file){const ext=(file.name.split('.').pop()||'mp3').toLowerCase().replace(/[^a-z0-9]/g,'')||'mp3';if(!file.type.startsWith('audio/')&&!['mp3','wav','ogg','oga','m4a','aac','flac','opus','webm'].includes(ext)){toast('Arquivo de áudio inválido.');return}if(file.size>50*1024*1024){toast('O arquivo deve ter até 50 MB.');return}if(!remoteEnabled){toast('Configure o Supabase global para enviar arquivos.');return}remoteUrl=await uploadGlobalFile(`slasher-music/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`,file);if(!remoteUrl)throw new Error('URL pública não disponível')}state.slasherIntroMusic={url:remoteUrl,title:title||file?.name?.replace(/\.[^.]+$/,'')||'Trilha do Slasher',kind:'url'};await saveGlobalNow();toast('Trilha da introdução Slasher salva.');document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()}catch(e){console.error(e);toast('Não foi possível salvar a trilha.')}finally{saveSlasherMusic.disabled=false}};document.getElementById('clearSlasherMusic')?.addEventListener('click',async()=>{state.slasherIntroMusic={url:'',title:'',kind:'url'};await saveGlobalNow();document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()});const add=(key,val)=>{c[key]=c[key]||[];c[key].push(val);state.customContent=c;save();document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()};document.getElementById('addAttr')?.addEventListener('click',()=>{const n=document.getElementById('newAttrName').value.trim();if(n)add('attrs',{id:'a-'+Date.now(),name:n})});document.getElementById('addSkill')?.addEventListener('click',()=>{const n=document.getElementById('newSkillName').value.trim();if(n)add('skills',{id:'s-'+Date.now(),name:n})});document.getElementById('addCond')?.addEventListener('click',()=>{const n=document.getElementById('newCondName').value.trim(),effect=document.getElementById('newCondEffect').value.trim();if(n)add('conditions',{id:'c-'+Date.now(),name:n,effect,icon:'◇'})});document.getElementById('addDeity')?.addEventListener('click',async()=>{const n=document.getElementById('newDeityName').value.trim(),f=document.getElementById('newDeityImage')?.files?.[0];if(!n){toast('Informe o nome do Deus.');return}try{const id='d-'+Date.now()+'-'+Math.random().toString(36).slice(2,7);const image=f?await imageFileToRemoteURL(f,`deities/${id}.webp`,700,.82):'';await add('deities',{id,name:n,image});await saveGlobalNow();toast('Deus e imagem salvos no banco.')}catch(e){console.error(e);toast('Não foi possível salvar a imagem do Deus.')}});document.getElementById('addSpell')?.addEventListener('click',async()=>{const n=document.getElementById('newSpellName').value.trim(),school=document.getElementById('newSpellSchool').value.trim(),cost=document.getElementById('newSpellCost').value.trim(),description=document.getElementById('newSpellDesc').value.trim(),f=document.getElementById('newSpellImage')?.files?.[0];if(!n){toast('Informe o nome da magia.');return}const btn=document.getElementById('addSpell');try{if(btn){btn.disabled=true;btn.textContent='Enviando imagem...'}const id='spell-'+Date.now()+'-'+Math.random().toString(36).slice(2,7);const image=f?await imageFileToRemoteURL(f,`spells/${id}.webp`,900,.82):'';state.spells=[...getSpells(),{id,name:n,school,cost,description,image}];await saveGlobalNow();toast('Magia e imagem salvas no banco.');document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()}catch(e){console.error(e);toast('Não foi possível salvar a magia.')}finally{if(btn){btn.disabled=false;btn.textContent='Adicionar magia'}}});document.querySelectorAll('[data-del-spell]').forEach(b=>b.onclick=()=>{state.spells=getSpells().filter(x=>x.id!==b.dataset.delSpell);save();document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()});document.querySelectorAll('[data-del-custom]').forEach(b=>b.onclick=()=>{const [k,i]=b.dataset.delCustom.split(':');c[k].splice(Number(i),1);state.customContent=c;save();document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()})}
 function bindAdmin(){document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-tab]').forEach(x=>x.classList.remove('active'));b.classList.add('active');const t=b.dataset.tab;adminTabCurrent=t;const content=t==='players'?playersAdmin():t==='monsters'?monstersAdmin():t==='classes'?classesAdmin():t==='items'?itemsAdmin():t==='sounds'?soundsAdmin():t==='secrets'?secretCluesAdmin():t==='symbols'?symbolsAdmin():t==='spells'?spellsAdmin():t==='content'?contentAdmin():t==='backgrounds'?backgroundsAdmin():t==='branding'?siteBrandAdmin():t==='tv'?tvAdmin():t==='recovery'?recoveryAdmin():musicAdmin();document.getElementById('adminContent').innerHTML=content;bindAdminContent()});bindAdminContent()}
 function bindClassBonuses(){const btn=document.getElementById('saveClassBonuses');if(!btn)return;btn.onclick=async()=>{const next=clone(CLASS_BONUSES_DEFAULTS_V107);document.querySelectorAll('[data-class-bonus]').forEach(x=>{const n=x.dataset.classBonus,k=x.dataset.bonusKey;next[n]=next[n]||{};next[n][k]=clamp(x.value,0,20)});state.classBonuses=next;save();await saveGlobalNow().catch(()=>{});toast('Bônus das profissões Slasher atualizados. As fichas já usam os novos totais.');document.getElementById('adminContent').innerHTML=classesAdmin();bindAdminContent()}}
-function bindAdminContent(){if(document.querySelector('.card')&&document.getElementById('restoreLatestLocal'))bindRecovery();if(document.querySelector('.bonus-editor'))bindClassBonuses();if(document.querySelector('.tv-admin'))bindTvAdmin();if(document.querySelector('#saveSiteBrand'))bindSiteBrand();if(document.querySelector('.content-admin'))bindContentAdmin();document.getElementById('sendSecretClue')?.addEventListener('click',sendSecretClue);const playerGrid=document.querySelector('.master-player-grid');if(playerGrid&&!playerGrid.dataset.boundFicha){playerGrid.dataset.boundFicha='1';playerGrid.addEventListener('click',e=>{const view=e.target.closest('[data-view-player]');if(view){e.preventDefault();e.stopPropagation();const id=view.dataset.playerId;const p=state.players.find(x=>String(x.id)===String(id))||state.players[Number(view.dataset.viewPlayer)];if(p)openPlayerViewById(p.id);return}})}const rr=document.getElementById('openCharacterRules');if(rr)rr.onclick=()=>{document.getElementById('adminContent').innerHTML=rulesAdmin();bindRulesAdmin()};const np=document.getElementById('newPlayer');if(np)np.onclick=()=>openEntity('player',null);document.querySelectorAll('[data-edit-p]').forEach(b=>b.onclick=()=>openEntity('player',Number(b.dataset.editP)));document.querySelectorAll('[data-bag-p]').forEach(b=>b.onclick=()=>{const i=Number(b.dataset.bagP);openModal(bagAdminModal(i));bindBagAdmin(i)});document.querySelectorAll('[data-round-p]').forEach(b=>b.onclick=()=>{const p=state.players[Number(b.dataset.roundP)];if(!p)return;const events=applyConditionRound(p);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-p]').forEach(b=>b.onclick=()=>{const i=Number(b.dataset.delP);if(confirm('Excluir este Player?')){const p=state.players[i];if(p){state.playerTombstones=state.playerTombstones||{};const k=playerSyncKey(p);if(k)state.playerTombstones[k]=Math.max(Number(state.playerTombstones[k])||0,Date.now())}state.players.splice(i,1);save();render('master')}});const nm=document.getElementById('newMonster');if(nm)nm.onclick=()=>openEntity('monster',null);const ms=document.getElementById('monsterSearch');if(ms)ms.oninput=renderMonsters;document.querySelectorAll('[data-edit-m]').forEach(b=>b.onclick=()=>openEntity('monster',Number(b.dataset.editM)));document.querySelectorAll('[data-monster-damage]').forEach(b=>b.onclick=async()=>{const m=state.creatures[Number(b.dataset.monsterDamage)],delta=Number(b.dataset.delta)||0;if(!m)return;m.hp=clamp((m.hp??m.hpMax)+delta,0,m.hpMax);save();renderMonsters();await saveGlobalNow().catch(()=>{});toast(`${delta<0?'Dano':'Cura'} aplicado em ${m.name}.`)});document.querySelectorAll('[data-round-m]').forEach(b=>b.onclick=()=>{const m=state.creatures[Number(b.dataset.roundM)];if(!m)return;const events=applyConditionRound(m);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-m]').forEach(b=>b.onclick=async()=>{if(confirm('Excluir este Monstro?')){state.creatures.splice(Number(b.dataset.delM),1);await saveGlobalNow().catch(()=>{});render('master')}});if(document.getElementById('monsterResults'))renderMonsters();const ni=document.getElementById('newItem');if(ni)ni.onclick=()=>{openModal(itemModal());bindItemModal(null)};let itemSearchTimer=0;['itemSearch','itemCat','itemRar'].forEach(id=>{const x=document.getElementById(id);if(!x)return;x.oninput=()=>{clearTimeout(itemSearchTimer);itemSearchTimer=setTimeout(renderItems,id==='itemSearch'?120:0)}});const ci=document.getElementById('clearItems');if(ci)ci.onclick=()=>{document.getElementById('itemSearch').value='';document.getElementById('itemCat').value='';document.getElementById('itemRar').value='';renderItems()};const itemResults=document.getElementById('itemResults');if(itemResults&&!itemResults.dataset.bound){itemResults.dataset.bound='1';itemResults.addEventListener('click',e=>{const edit=e.target.closest('[data-edit-item]');if(edit){const id=Number(edit.dataset.editItem);openModal(itemModal(id));bindItemModal(id);return}const del=e.target.closest('[data-del-item]');if(del){const id=Number(del.dataset.delItem);if(confirm('Excluir este item?')){state.items=state.items.filter(i=>i.id!==id);save();renderItems();toast('Item excluído.')}}})}const sm=document.getElementById('saveMusic');if(sm)sm.onclick=async()=>{
+function bindAdminContent(){bindSessionDiagnostics();if(document.querySelector('.card')&&document.getElementById('restoreLatestLocal'))bindRecovery();if(document.querySelector('.bonus-editor'))bindClassBonuses();if(document.querySelector('.tv-admin'))bindTvAdmin();if(document.querySelector('#saveSiteBrand'))bindSiteBrand();if(document.querySelector('.content-admin'))bindContentAdmin();document.getElementById('sendSecretClue')?.addEventListener('click',sendSecretClue);const playerGrid=document.querySelector('.master-player-grid');if(playerGrid&&!playerGrid.dataset.boundFicha){playerGrid.dataset.boundFicha='1';playerGrid.addEventListener('click',e=>{const view=e.target.closest('[data-view-player]');if(view){e.preventDefault();e.stopPropagation();const id=view.dataset.playerId;const p=state.players.find(x=>String(x.id)===String(id))||state.players[Number(view.dataset.viewPlayer)];if(p)openPlayerViewById(p.id);return}})}const rr=document.getElementById('openCharacterRules');if(rr)rr.onclick=()=>{document.getElementById('adminContent').innerHTML=rulesAdmin();bindRulesAdmin()};const syncNow=document.getElementById('syncPlayersNow');if(syncNow)syncNow.onclick=async()=>{const oldText=syncNow.textContent;syncNow.disabled=true;syncNow.textContent='Sincronizando...';try{await hydratePlayersDb();if(playerDbHydrated)await syncPlayersDbNow();toast('Players sincronizados com o servidor.');if(currentView==='master'&&adminTabCurrent==='players'&&!document.getElementById('entityModal')){document.getElementById('adminContent').innerHTML=playersAdmin();bindAdminContent()}}catch(err){toast(authErrorText(err))}finally{syncNow.disabled=false;syncNow.textContent=oldText}};const np=document.getElementById('newPlayer');if(np)np.onclick=()=>openEntity('player',null);document.querySelectorAll('[data-edit-p]').forEach(b=>b.onclick=()=>openEntity('player',Number(b.dataset.editP)));document.querySelectorAll('[data-bag-p]').forEach(b=>b.onclick=()=>{const i=Number(b.dataset.bagP);openModal(bagAdminModal(i));bindBagAdmin(i)});document.querySelectorAll('[data-round-p]').forEach(b=>b.onclick=()=>{const p=state.players[Number(b.dataset.roundP)];if(!p)return;const events=applyConditionRound(p);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-p]').forEach(b=>b.onclick=async()=>{const i=Number(b.dataset.delP),p=state.players[i];if(!p||!confirm('Excluir este Player?'))return;b.disabled=true;const oldText=b.textContent;b.textContent='Excluindo...';try{await deletePlayerConfirmed(p);const k=playerSyncKey(p);state.players=state.players.filter(x=>playerSyncKey(x)!==k);lastPlayersSnapshot=clone(state.players);persistCriticalCache();persistSessionCache();storageSet(KEY,serializeState());toast('Player excluído e confirmado no servidor.');render('master')}catch(err){toast(authErrorText(err));b.disabled=false;b.textContent=oldText}});const nm=document.getElementById('newMonster');if(nm)nm.onclick=()=>openEntity('monster',null);const ms=document.getElementById('monsterSearch');if(ms)ms.oninput=renderMonsters;document.querySelectorAll('[data-edit-m]').forEach(b=>b.onclick=()=>openEntity('monster',Number(b.dataset.editM)));document.querySelectorAll('[data-monster-damage]').forEach(b=>b.onclick=async()=>{const m=state.creatures[Number(b.dataset.monsterDamage)],delta=Number(b.dataset.delta)||0;if(!m)return;m.hp=clamp((m.hp??m.hpMax)+delta,0,m.hpMax);save();renderMonsters();await saveGlobalNow().catch(()=>{});toast(`${delta<0?'Dano':'Cura'} aplicado em ${m.name}.`)});document.querySelectorAll('[data-round-m]').forEach(b=>b.onclick=()=>{const m=state.creatures[Number(b.dataset.roundM)];if(!m)return;const events=applyConditionRound(m);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-m]').forEach(b=>b.onclick=async()=>{if(confirm('Excluir este Monstro?')){state.creatures.splice(Number(b.dataset.delM),1);await saveGlobalNow().catch(()=>{});render('master')}});if(document.getElementById('monsterResults'))renderMonsters();const ni=document.getElementById('newItem');if(ni)ni.onclick=()=>{openModal(itemModal());bindItemModal(null)};let itemSearchTimer=0;['itemSearch','itemCat','itemRar'].forEach(id=>{const x=document.getElementById(id);if(!x)return;x.oninput=()=>{clearTimeout(itemSearchTimer);itemSearchTimer=setTimeout(renderItems,id==='itemSearch'?120:0)}});const ci=document.getElementById('clearItems');if(ci)ci.onclick=()=>{document.getElementById('itemSearch').value='';document.getElementById('itemCat').value='';document.getElementById('itemRar').value='';renderItems()};const itemResults=document.getElementById('itemResults');if(itemResults&&!itemResults.dataset.bound){itemResults.dataset.bound='1';itemResults.addEventListener('click',e=>{const edit=e.target.closest('[data-edit-item]');if(edit){const id=Number(edit.dataset.editItem);openModal(itemModal(id));bindItemModal(id);return}const del=e.target.closest('[data-del-item]');if(del){const id=Number(del.dataset.delItem);if(confirm('Excluir este item?')){state.items=state.items.filter(i=>i.id!==id);save();renderItems();toast('Item excluído.')}}})}const sm=document.getElementById('saveMusic');if(sm)sm.onclick=async()=>{
   const title=document.getElementById('musicTitle')?.value.trim()||'';
   const file=document.getElementById('musicFile')?.files?.[0];
   const url=document.getElementById('musicUrl')?.value.trim()||'';
@@ -2641,7 +2820,7 @@ async function boot(){
         try{
           const beforeActive=player();
           const beforeRolls=Array.isArray(beforeActive?.rolls)?clone(beforeActive.rolls):[];
-          applyPlayerRows([row]);
+          const applyResult=applyPlayerRows([row]);
           const after=player();
           if(after&&beforeActive&&String(after.id)===String(beforeActive.id)){
             after.rolls=mergeRollHistory(after.rolls||[], beforeRolls);
@@ -2675,7 +2854,7 @@ async function boot(){
             }else if(currentView&&affectsActive)render(currentView,{remote:true});
           }else if(currentView&&state.session?.role==='master'&&!(currentView==='master'&&adminTabCurrent!=='players'))render(currentView,{remote:true});
         }finally{playerDbApplying=false}
-        queuePlayerDbSave();
+        if(applyResult?.changed)queuePlayerDbSave();
       })}
       subscribeLive(msg=>{if(msg.event==='tv-scene')handleTvLive(msg.payload);if(msg.event==='combat-start')combatStartLive(msg.payload);nexusHandleLive(msg);});
       // V41: polling leve. A versão anterior buscava o estado inteiro a cada 4s,
@@ -2702,6 +2881,7 @@ async function boot(){
     // V65.8: retoma a aba em que o usuário estava nesta mesma aba do navegador
     // em vez de sempre forçar "Início/Informações básicas" a cada reload.
     const savedView=viewCacheGet();
+    bindSessionGuardian();
     render(savedView||'home');
     syncGlobalMusic();syncSoundboard();applyBackgrounds();
   }

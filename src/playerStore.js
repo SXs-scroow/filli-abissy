@@ -57,6 +57,22 @@ async function rpcUpsert(row) {
   return data;
 }
 
+export async function deletePlayerServer(playerId) {
+  if (!supabase) throw new Error('Supabase não configurado');
+  const token = getAuthToken();
+  if (!token) { const e = new Error('SESSAO_INVALIDA'); handleAuthError(e); throw e; }
+  const id = String(playerId || '').trim();
+  if (!id) throw new Error('PLAYER_ID_INVALIDO');
+
+  const { data, error } = await supabase.rpc('a_profecia_player_delete', {
+    p_token: token,
+    p_id: id
+  });
+  if (error) throw handleAuthError(error);
+  rowCache.delete(id);
+  return data || { id, found: false };
+}
+
 export async function upsertPlayers(players) {
   if (!supabase || !Array.isArray(players) || !players.length) return [];
   const rows = players.map(p => ({
@@ -69,30 +85,27 @@ export async function upsertPlayers(players) {
   if (!rows.length) return [];
 
   const saved = [];
-  for (const row of rows) saved.push(await rpcUpsert(row));
-  // Senha nova (definida pelo Mestre) já foi para o servidor como hash: não fica guardada em texto no aparelho.
-  for (const p of players) { try { delete p.newPassword; } catch {} }
+  for (let i=0;i<rows.length;i++) {
+    saved.push(await rpcUpsert(rows[i]));
+    // Senha nova (definida pelo Mestre) já foi para o servidor como hash:
+    // remova o texto assim que cada gravação for confirmada.
+    try { delete players[i].newPassword; } catch {}
+  }
   return saved;
 }
 
 export async function upsertPlayerTombstones(tombstones, playerIndex = {}) {
   if (!supabase || !tombstones || typeof tombstones !== 'object') return [];
-  const rows = Object.entries(tombstones).map(([id, deletedAt]) => {
-    const old = playerIndex[id] || {};
-    const when = Number(deletedAt) || Date.now();
-    const { password, newPassword, ...safeOld } = old;
-    return {
-      id,
-      login: String(old.login || '').trim() || id,
-      data: { ...safeOld, _syncUpdatedAt: when },
-      updated_at: new Date(when).toISOString(),
-      deleted_at: new Date(when).toISOString()
-    };
-  });
-  if (!rows.length) return [];
-
   const saved = [];
-  for (const row of rows) saved.push(await rpcUpsert(row));
+  // Deletion is a terminal server operation. Never use the normal save RPC to
+  // recreate a deleted row with a deleted_at timestamp: a late save from another
+  // device could otherwise race with it. The dedicated RPC is idempotent and
+  // serializes the deletion on the database row.
+  for (const [id, deletedAt] of Object.entries(tombstones)) {
+    const key = String(id || '').trim();
+    if (!key) continue;
+    saved.push(await deletePlayerServer(key));
+  }
   return saved;
 }
 
@@ -100,17 +113,28 @@ export function subscribePlayers(callback) {
   if (!supabase) return () => {};
   let disposed = false;
   let refreshTimer = null;
+  const pendingIds = new Set();
   const channel = supabase
     .channel('a-profecia-players-events')
     .on('broadcast', { event: 'player-changed' }, payload => {
       if (disposed) return;
+      const changedId = String(payload?.payload?.id || '').trim();
+      if (!changedId) return;
+      pendingIds.add(changedId);
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(async () => {
+        if (disposed) return;
+        const ids = [...pendingIds];
+        pendingIds.clear();
         try {
+          // Uma única leitura por rajada de eventos. Todos os IDs recebidos
+          // durante os 80ms são aplicados, evitando perder exclusões/criações
+          // quando vários Players mudam quase ao mesmo tempo.
           const rows = await fetchPlayers();
-          const changedId = String(payload?.payload?.id || '');
-          const row = rows.find(item => String(item.id) === changedId);
-          callback(row || { id: changedId, deleted_at: 'deleted' });
+          const byId = new Map(rows.map(item => [String(item.id), item]));
+          for (const id of ids) {
+            callback(byId.get(id) || { id, deleted_at: 'deleted' });
+          }
         } catch (error) {
           if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
             console.warn('Falha ao atualizar Players em tempo real:', error);
