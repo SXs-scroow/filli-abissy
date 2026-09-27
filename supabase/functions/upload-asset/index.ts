@@ -40,7 +40,7 @@ function allowedPath(path: string, role: string, playerId: string | null) {
     return false;
   }
   if (role === "master") {
-    return /^(branding|backgrounds|slasher-music|music|sounds|tv)\//.test(path);
+    return /^(branding|backgrounds|slasher-music|music|sounds|tv|spells|conditions|deities|symbols)\//.test(path);
   }
   if (role === "player" && playerId) {
     return path.startsWith(`players/${playerId}/`);

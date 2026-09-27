@@ -5,6 +5,8 @@ const APP_VERSION='V1.1.0 · GOTHIC UI · FICHA + MODO SESSÃO';
 // que usa estas constantes; declaradas mais adiante elas ainda estariam "não inicializadas" (erro do console). =====
 let loadFailed=false;
 let saveTimer=0,saveDirty=false,saveFirstAt=0,lastRecoveryAt=0;
+let stabilityPlayerPollTimer=0;
+let stabilityOnlineHandlerBound=false;
 let lastRenderSig='',renderOpts={},renderSkipped=false,deferredRemoteRender=false;
 const COMBAT_DEFAULT={atkMult:4,defMult:5,atkMin:0,defMin:0,atkCap:10,defCap:15};
 const FRACTURE_DAMAGE=3;
@@ -467,7 +469,7 @@ function globalPayload(){
   const payload={version:shared.version,siteBrand:shared.siteBrand,creatures:shared.creatures,items:slimItems(shared.items),spells:shared.spells,uiIcons:shared.uiIcons,backgrounds:shared.backgrounds,music:shared.music,musicLibrary:shared.musicLibrary||[],slasherIntroMusic:shared.slasherIntroMusic,characterRules:shared.characterRules,classBonuses:shared.classBonuses,customContent:shared.customContent,combatSession:shared.combatSession,terrorMode:shared.terrorMode,nexus:shared.nexus,tvScreen:shared.tvScreen,tvScenes:shared.tvScenes,sounds:shared.sounds,soundboard:shared.soundboard};
   // Fallback temporário: se o banco de Players ainda não foi criado ou ficou
   // indisponível, mantém o formato antigo para que o site continue funcionando.
-  if(!playerStoreEnabled||!playerDbHydrated){payload.players=players;payload.playerTombstones=playerTombstones||{}}
+  if(!playerStoreEnabled){payload.players=players;payload.playerTombstones=playerTombstones||{}}
   return payload;
 }
 
@@ -483,9 +485,10 @@ function markLocalPlayerChanges(){
   const now=Date.now();
   for(const [key,p] of current){
     if(!key)continue;
+    const tomb=Number(state.playerTombstones[key])||0;
+    if(tomb)continue;
     const old=previous.get(key);
     if(!old||!sameGlobalValue({...old,_syncUpdatedAt:0},{...p,_syncUpdatedAt:0})) p._syncUpdatedAt=Math.max(Number(p._syncUpdatedAt)||0,now);
-    delete state.playerTombstones[key];
   }
   for(const [key,old] of previous){
     if(key&&!current.has(key)) state.playerTombstones[key]=Math.max(Number(state.playerTombstones[key])||0,Number(old?._syncUpdatedAt)||now);
@@ -497,14 +500,21 @@ function mergePlayersRemote(remotePlayers,remoteTombstones){
   const remote=Array.isArray(remotePlayers)?remotePlayers:[];
   const merged=new Map();
   for(const p of local){const k=playerSyncKey(p);if(k)merged.set(k,clone(p));}
-  for(const p of remote){const k=playerSyncKey(p);if(!k)continue;const l=merged.get(k);if(!l){merged.set(k,clone(p));continue}const lt=Number(l._syncUpdatedAt)||0,rt=Number(p._syncUpdatedAt)||0;if(rt>=lt)merged.set(k,clone(p));}
-  const tomb={...(state.playerTombstones||{})};
-  for(const [k,v] of Object.entries(remoteTombstones||{})) tomb[k]=Math.max(Number(tomb[k])||0,Number(v)||0);
-  for(const [k,t] of Object.entries(tomb)){
-    const p=merged.get(k);if(p&&(Number(t)||0)>=(Number(p._syncUpdatedAt)||0))merged.delete(k);
+  for(const p of remote){
+    const k=playerSyncKey(p);if(!k)continue;
+    if(p?.deleted_at){merged.delete(k);continue}
+    const l=merged.get(k);
+    if(!l){merged.set(k,clone(p));continue}
+    const lt=Number(l._syncUpdatedAt)||0,rt=Number(p._syncUpdatedAt)||0;
+    if(rt>=lt)merged.set(k,clone(p));
   }
-  const before=JSON.stringify(state.players||[]);state.players=[...merged.values()];state.playerTombstones=tomb;
-  
+  const tomb={...(state.playerTombstones||{})};
+  for(const [k,v] of Object.entries(remoteTombstones||{}))
+    tomb[k]=Math.max(Number(tomb[k])||0,Number(v)||0);
+  for(const k of Object.keys(tomb)) merged.delete(k);
+  const before=JSON.stringify(state.players||[]);
+  state.players=[...merged.values()];
+  state.playerTombstones=tomb;
   state.players.forEach(normalize);
   lastPlayersSnapshot=clone(state.players);
   return before!==JSON.stringify(state.players);
@@ -585,8 +595,10 @@ function applyPlayerRows(rows,{initial=false}={}){
     const key=String(row?.id||'').trim(); if(!key)continue;
     const stamp=playerRowStamp(row), deleted=playerRowDeletedStamp(row);
     const localPlayer=byId.get(key), localStamp=Number(localPlayer?._syncUpdatedAt)||0;
-    if(deleted&&deleted>=Math.max(stamp,localStamp)){
-      byId.delete(key); tomb[key]=Math.max(Number(tomb[key])||0,deleted); continue;
+    if(deleted){
+      byId.delete(key);
+      tomb[key]=Math.max(Number(tomb[key])||0,deleted);
+      continue;
     }
     if(row?.data&&typeof row.data==='object'&&(!localPlayer||stamp>localStamp)){
       const p=clone(row.data);
@@ -597,12 +609,20 @@ function applyPlayerRows(rows,{initial=false}={}){
       p._syncUpdatedAt=Math.max(Number(p._syncUpdatedAt)||0,stamp);byId.set(key,p);delete tomb[key];
     }
   }
-  state.players=[...byId.values()];
+  // Quando o Mestre usa o armazenamento dedicado, o roster remoto é autoritativo.
+  // Uma ficha local ausente do servidor só permanece se foi criada explicitamente
+  // neste aparelho e ainda está marcada como _pendingCreate. Isso impede que um
+  // cache antigo do celular ressuscite fichas que já não existem no banco.
+  if(state.session?.role==='master' && playerStoreEnabled && Array.isArray(rows)){
+    const remoteIds=new Set(rows.map(r=>String(r?.id||'').trim()).filter(Boolean));
+    for(const [key,p] of [...byId.entries()]){
+      if(!remoteIds.has(key) && !p?._pendingCreate)byId.delete(key);
+    }
+  }
   for(const [key,t] of Object.entries(tomb)){
     const p=byId.get(key);if(p&&Number(t)>=(Number(p._syncUpdatedAt)||0)){byId.delete(key)}
   }
   state.players=[...byId.values()];
-  
   state.players.forEach(normalize);
   state.playerTombstones=tomb;
   lastPlayersSnapshot=clone(state.players);
@@ -613,14 +633,43 @@ async function hydratePlayersDb(){
   try{
     const rows=await fetchPlayerRows();
     if(rows.length){
-      playerDbApplying=true;applyPlayerRows(rows,{initial:true});playerDbApplying=false;
+      playerDbApplying=true;
+      applyPlayerRows(rows,{initial:true});
+      playerDbApplying=false;
       persistCriticalCache();persistSessionCache();storageSet(KEY,serializeState());
     }else{
-      // Migração inicial: usa o estado local/global existente apenas uma vez.
-      const list=Array.isArray(state.players)?state.players:[];
-      list.forEach(p=>{if(!p._syncUpdatedAt)p._syncUpdatedAt=Date.now()});
-      await upsertPlayers(list);
-      playerDbApplying=true;lastPlayersSnapshot=clone(state.players);playerDbApplying=false;
+      // Um roster remoto vazio é uma resposta válida: NÃO podemos tratá-lo como
+      // um convite para reenviar o cache antigo do aparelho, pois isso ressuscita
+      // Players que o Mestre excluiu. A migração do formato legado fica explícita
+      // e só pode acontecer uma única vez, antes de o armazenamento dedicado ter
+      // sido inicializado neste navegador.
+      const migrationKey='a_profecia_players_legacy_migrated_v2';
+      const migrated=storageGet(migrationKey)==='1';
+      const tomb=state.playerTombstones&&typeof state.playerTombstones==='object'?state.playerTombstones:{};
+      if(!migrated){
+        const list=(Array.isArray(state.players)?state.players:[]).filter(p=>{
+          const k=playerSyncKey(p);return k&&!tomb[k]&&p?._pendingCreate===true;
+        });
+        // Only explicitly pending local creations may cross an empty remote roster.
+        if(list.length){
+          list.forEach(p=>{if(!p._syncUpdatedAt)p._syncUpdatedAt=Date.now()});
+          await upsertPlayers(list);
+          list.forEach(p=>{delete p._pendingCreate});
+        }
+        storageSet(migrationKey,'1');
+      }
+      // The server remains authoritative. Any other local-only Players are removed
+      // from the active roster and are never uploaded merely because the response
+      // happened to be empty.
+      const keep=new Map();
+      for(const p of (state.players||[])){
+        const k=playerSyncKey(p);
+        if(k&&tomb[k])continue;
+        if(k&&p?._pendingCreate)keep.set(k,p);
+      }
+      state.players=[...keep.values()];
+      lastPlayersSnapshot=clone(state.players);
+      storageSet(KEY,serializeState());
     }
     playerDbHydrated=true;
   }catch(e){
@@ -633,20 +682,68 @@ async function syncPlayersDbNow(){
   if(playerDbSyncBusy)return playerDbSyncPromise||false;
   playerDbSyncBusy=true;
   playerDbSyncPromise=(async()=>{try{
+    // Determine the authenticated role BEFORE reconciling the local roster.
+    // This must be available to the missing-row rule below; declaring it later
+    // creates a temporal-dead-zone ReferenceError and aborts the entire sync.
+    const syncRole=state.session?.role;
+    const syncActiveId=String(state.session?.playerId||'');
     const rows=await fetchPlayerRows();
     const remoteById=new Map(rows.map(r=>[String(r.id),r]));
     const localById=new Map((state.players||[]).map(p=>[playerSyncKey(p),p]));
+
+    // V66.7: o servidor é a fonte de verdade para descobrir Players novos.
+    // Antes, esta rotina só percorria o estado local; por isso um Mestre que já
+    // estava com a página aberta podia nunca incorporar uma ficha criada em
+    // outro aparelho (Realtime pode falhar/ser bloqueado no celular).
+    // Adicionamos aqui os registros remotos que ainda não existem localmente,
+    // respeitando tombstones e sem substituir uma ficha local mais recente.
+    for(const row of rows){
+      const k=String(row?.id||'').trim(); if(!k)continue;
+      const remoteStamp=playerRowStamp(row);
+      if(row?.deleted_at){
+        state.playerTombstones=state.playerTombstones||{};
+        state.playerTombstones[k]=Math.max(Number(state.playerTombstones[k])||0,playerRowDeletedStamp(row)||remoteStamp||Date.now());
+        localById.delete(k);
+        continue;
+      }
+      const existing=localById.get(k);
+      const tomb=Number(state.playerTombstones?.[k])||0;
+      if(tomb && tomb>=remoteStamp) { localById.delete(k); continue; }
+      if(!existing && row?.data&&typeof row.data==='object'){
+        const incoming=clone(row.data);
+        incoming._syncUpdatedAt=Math.max(Number(incoming._syncUpdatedAt)||0,remoteStamp);
+        normalize(incoming);
+        localById.set(k,incoming);
+      }else if(existing && row?.data&&typeof row.data==='object' && remoteStamp>(Number(existing._syncUpdatedAt)||0)){
+        const incoming=clone(row.data);
+        incoming._syncUpdatedAt=Math.max(Number(incoming._syncUpdatedAt)||0,remoteStamp);
+        for(const key of ['photo','soulPhoto','homeWallpaper'])if(!imageValue(incoming[key])&&imageValue(existing[key]))incoming[key]=existing[key];
+        incoming.rolls=mergeRollHistory(incoming.rolls||[],existing.rolls||[]);
+        normalize(incoming);
+        localById.set(k,incoming);
+      }
+    }
     const toUpsert=[];
     for(const p of [...localById.values()]){
       const k=playerSyncKey(p); if(!k)continue;
       const remote=remoteById.get(k), localStamp=Number(p._syncUpdatedAt)||0, remoteStamp=playerRowStamp(remote);
-      if(remote?.deleted_at && remoteStamp>localStamp){
-        // A server deletion wins only when it is demonstrably newer than this local copy.
+      if(remote?.deleted_at){
         localById.delete(k);
         state.playerTombstones=state.playerTombstones||{};
-        state.playerTombstones[k]=Math.max(Number(state.playerTombstones[k])||0,remoteStamp);
+        state.playerTombstones[k]=Math.max(Number(state.playerTombstones[k])||0,remoteStamp||Date.now());
       }else if(!remote){
-        // A missing row is NOT a deletion. Recreate it from the local copy.
+        const tomb=Number(state.playerTombstones?.[k])||0;
+        if(tomb){
+          localById.delete(k);
+          continue;
+        }
+        // Mestre: ausência no servidor significa que a ficha não faz parte do
+        // roster oficial. Só enviamos de volta uma ficha explicitamente criada
+        // neste aparelho e marcada como pendente.
+        if(syncRole==='master'&&!p._pendingCreate){
+          localById.delete(k);
+          continue;
+        }
         p._syncUpdatedAt=localStamp||Date.now();
         toUpsert.push(p);
       }else if(remote.data){
@@ -675,10 +772,12 @@ async function syncPlayersDbNow(){
     }
     // V65.9: um Player só grava a PRÓPRIA ficha. Antes, cada aparelho reenviava cópias (possivelmente velhas) das
     // fichas de todos os outros Players; o Mestre continua podendo gravar todas.
-    const syncRole=state.session?.role,syncActiveId=String(state.session?.playerId||'');
     const canWriteRow=k=>syncRole==='master'||(syncRole==='player'&&!!syncActiveId&&String(k)===syncActiveId);
     const writable=toUpsert.filter(x=>canWriteRow(playerSyncKey(x)));
-    if(writable.length)await upsertPlayers(writable);
+    if(writable.length){
+      await upsertPlayers(writable);
+      for(const p of writable)delete p._pendingCreate;
+    }
     const tombRows=[];
     const index=Object.fromEntries((state.players||[]).map(p=>[playerSyncKey(p),p]));
     for(const [k,t] of Object.entries(state.playerTombstones||{})){
@@ -700,6 +799,48 @@ async function syncPlayersDbNow(){
 function queuePlayerDbSave(){
   if(!playerStoreEnabled||!playerDbHydrated||playerDbApplying)return;
   clearTimeout(playerDbTimer);playerDbTimer=setTimeout(()=>syncPlayersDbNow().catch(()=>{}),700);
+}
+
+// V2 Stability Patch: Realtime é apenas um acelerador. A reconciliação periódica
+// garante que Players novos, exclusões e alterações cheguem mesmo quando o
+// navegador perde o canal Realtime (comum em celulares/abas em segundo plano).
+async function reconcilePlayersStability(){
+  if(!playerStoreEnabled||!playerDbHydrated||playerDbApplying||document.hidden)return;
+  try{
+    await syncPlayersDbNow();
+  }catch(error){
+    if(!/SESSAO_INVALIDA/.test(String(error?.message||''))) console.warn('Reconciliação de Players falhou:',error);
+  }
+}
+function startStabilityPatch(){
+  if(stabilityOnlineHandlerBound)return;
+  stabilityOnlineHandlerBound=true;
+  const onOnline=()=>{
+    // Pequeno atraso para deixar a conexão estabilizar antes da primeira leitura.
+    setTimeout(()=>{
+      if(remoteEnabled&&state.session?.role==='master'&&!remoteApplying){
+        saveGlobalNow().catch(()=>{});
+      }
+      reconcilePlayersStability();
+    },900);
+  };
+  const onOffline=()=>{
+    try{document.documentElement.dataset.aProfeciaOffline='1'}catch{}
+  };
+  const onConnection=()=>{
+    try{document.documentElement.dataset.aProfeciaOffline=navigator.onLine?'0':'1'}catch{}
+  };
+  window.addEventListener('online',onOnline);
+  window.addEventListener('offline',onOffline);
+  window.addEventListener('online',onConnection);
+  window.addEventListener('offline',onConnection);
+  onConnection();
+  // 60s no desktop / 90s em mobile: suficiente para recuperar do Realtime
+  // sem transformar o site em um polling pesado.
+  const mobile=matchMedia('(max-width: 800px)').matches;
+  const delay=mobile?90000:60000;
+  clearInterval(stabilityPlayerPollTimer);
+  stabilityPlayerPollTimer=setInterval(reconcilePlayersStability,delay);
 }
 function queueRemoteSave(){
   // V65.9: apenas o Mestre escreve o estado global. Antes, qualquer aba sem sessão de Player (inclusive quem
@@ -1953,7 +2094,7 @@ function contentAdmin(){const c=state.customContent||{attrs:[],skills:[],conditi
 function bindContentAdmin(){const c=state.customContent||{attrs:[],skills:[],conditions:[],deities:[]};const saveSlasherMusic=document.getElementById('saveSlasherMusic');if(saveSlasherMusic)saveSlasherMusic.onclick=async()=>{const title=document.getElementById('slasherMusicTitle')?.value.trim()||'';const file=document.getElementById('slasherMusicFile')?.files?.[0];const url=document.getElementById('slasherMusicUrl')?.value.trim()||'';if(!file&&!url){toast('Informe uma URL ou escolha um arquivo de áudio.');return}try{saveSlasherMusic.disabled=true;let remoteUrl=url;if(file){const ext=(file.name.split('.').pop()||'mp3').toLowerCase().replace(/[^a-z0-9]/g,'')||'mp3';if(!file.type.startsWith('audio/')&&!['mp3','wav','ogg','oga','m4a','aac','flac','opus','webm'].includes(ext)){toast('Arquivo de áudio inválido.');return}if(file.size>50*1024*1024){toast('O arquivo deve ter até 50 MB.');return}if(!remoteEnabled){toast('Configure o Supabase global para enviar arquivos.');return}remoteUrl=await uploadGlobalFile(`slasher-music/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`,file);if(!remoteUrl)throw new Error('URL pública não disponível')}state.slasherIntroMusic={url:remoteUrl,title:title||file?.name?.replace(/\.[^.]+$/,'')||'Trilha do Slasher',kind:'url'};await saveGlobalNow();toast('Trilha da introdução Slasher salva.');document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()}catch(e){console.error(e);toast('Não foi possível salvar a trilha.')}finally{saveSlasherMusic.disabled=false}};document.getElementById('clearSlasherMusic')?.addEventListener('click',async()=>{state.slasherIntroMusic={url:'',title:'',kind:'url'};await saveGlobalNow();document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()});const add=(key,val)=>{c[key]=c[key]||[];c[key].push(val);state.customContent=c;save();document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()};document.getElementById('addAttr')?.addEventListener('click',()=>{const n=document.getElementById('newAttrName').value.trim();if(n)add('attrs',{id:'a-'+Date.now(),name:n})});document.getElementById('addSkill')?.addEventListener('click',()=>{const n=document.getElementById('newSkillName').value.trim();if(n)add('skills',{id:'s-'+Date.now(),name:n})});document.getElementById('addCond')?.addEventListener('click',()=>{const n=document.getElementById('newCondName').value.trim(),effect=document.getElementById('newCondEffect').value.trim();if(n)add('conditions',{id:'c-'+Date.now(),name:n,effect,icon:'◇'})});document.getElementById('addDeity')?.addEventListener('click',async()=>{const n=document.getElementById('newDeityName').value.trim(),f=document.getElementById('newDeityImage')?.files?.[0];if(!n){toast('Informe o nome do Deus.');return}try{const id='d-'+Date.now()+'-'+Math.random().toString(36).slice(2,7);const image=f?await imageFileToRemoteURL(f,`deities/${id}.webp`,700,.82):'';await add('deities',{id,name:n,image});await saveGlobalNow();toast('Deus e imagem salvos no banco.')}catch(e){console.error(e);toast('Não foi possível salvar a imagem do Deus.')}});document.getElementById('addSpell')?.addEventListener('click',async()=>{const n=document.getElementById('newSpellName').value.trim(),school=document.getElementById('newSpellSchool').value.trim(),cost=document.getElementById('newSpellCost').value.trim(),description=document.getElementById('newSpellDesc').value.trim(),f=document.getElementById('newSpellImage')?.files?.[0];if(!n){toast('Informe o nome da magia.');return}const btn=document.getElementById('addSpell');try{if(btn){btn.disabled=true;btn.textContent='Enviando imagem...'}const id='spell-'+Date.now()+'-'+Math.random().toString(36).slice(2,7);const image=f?await imageFileToRemoteURL(f,`spells/${id}.webp`,900,.82):'';state.spells=[...getSpells(),{id,name:n,school,cost,description,image}];await saveGlobalNow();toast('Magia e imagem salvas no banco.');document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()}catch(e){console.error(e);toast('Não foi possível salvar a magia.')}finally{if(btn){btn.disabled=false;btn.textContent='Adicionar magia'}}});document.querySelectorAll('[data-del-spell]').forEach(b=>b.onclick=()=>{state.spells=getSpells().filter(x=>x.id!==b.dataset.delSpell);save();document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()});document.querySelectorAll('[data-del-custom]').forEach(b=>b.onclick=()=>{const [k,i]=b.dataset.delCustom.split(':');c[k].splice(Number(i),1);state.customContent=c;save();document.getElementById('adminContent').innerHTML=contentAdmin();bindContentAdmin()})}
 function bindAdmin(){document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-tab]').forEach(x=>x.classList.remove('active'));b.classList.add('active');const t=b.dataset.tab;adminTabCurrent=t;const content=t==='players'?playersAdmin():t==='monsters'?monstersAdmin():t==='classes'?classesAdmin():t==='items'?itemsAdmin():t==='sounds'?soundsAdmin():t==='secrets'?secretCluesAdmin():t==='symbols'?symbolsAdmin():t==='spells'?spellsAdmin():t==='content'?contentAdmin():t==='backgrounds'?backgroundsAdmin():t==='branding'?siteBrandAdmin():t==='tv'?tvAdmin():t==='recovery'?recoveryAdmin():musicAdmin();document.getElementById('adminContent').innerHTML=content;bindAdminContent()});bindAdminContent()}
 function bindClassBonuses(){const btn=document.getElementById('saveClassBonuses');if(!btn)return;btn.onclick=async()=>{const next=clone(CLASS_BONUSES_DEFAULTS_V107);document.querySelectorAll('[data-class-bonus]').forEach(x=>{const n=x.dataset.classBonus,k=x.dataset.bonusKey;next[n]=next[n]||{};next[n][k]=clamp(x.value,0,20)});state.classBonuses=next;save();await saveGlobalNow().catch(()=>{});toast('Bônus das profissões Slasher atualizados. As fichas já usam os novos totais.');document.getElementById('adminContent').innerHTML=classesAdmin();bindAdminContent()}}
-function bindAdminContent(){if(document.querySelector('.card')&&document.getElementById('restoreLatestLocal'))bindRecovery();if(document.querySelector('.bonus-editor'))bindClassBonuses();if(document.querySelector('.tv-admin'))bindTvAdmin();if(document.querySelector('#saveSiteBrand'))bindSiteBrand();if(document.querySelector('.content-admin'))bindContentAdmin();document.getElementById('sendSecretClue')?.addEventListener('click',sendSecretClue);const playerGrid=document.querySelector('.master-player-grid');if(playerGrid&&!playerGrid.dataset.boundFicha){playerGrid.dataset.boundFicha='1';playerGrid.addEventListener('click',e=>{const view=e.target.closest('[data-view-player]');if(view){e.preventDefault();e.stopPropagation();const id=view.dataset.playerId;const p=state.players.find(x=>String(x.id)===String(id))||state.players[Number(view.dataset.viewPlayer)];if(p)openPlayerViewById(p.id);return}})}const rr=document.getElementById('openCharacterRules');if(rr)rr.onclick=()=>{document.getElementById('adminContent').innerHTML=rulesAdmin();bindRulesAdmin()};const np=document.getElementById('newPlayer');if(np)np.onclick=()=>openEntity('player',null);document.querySelectorAll('[data-edit-p]').forEach(b=>b.onclick=()=>openEntity('player',Number(b.dataset.editP)));document.querySelectorAll('[data-bag-p]').forEach(b=>b.onclick=()=>{const i=Number(b.dataset.bagP);openModal(bagAdminModal(i));bindBagAdmin(i)});document.querySelectorAll('[data-round-p]').forEach(b=>b.onclick=()=>{const p=state.players[Number(b.dataset.roundP)];if(!p)return;const events=applyConditionRound(p);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-p]').forEach(b=>b.onclick=()=>{const i=Number(b.dataset.delP);if(confirm('Excluir este Player?')){state.players.splice(i,1);save();render('master')}});const nm=document.getElementById('newMonster');if(nm)nm.onclick=()=>openEntity('monster',null);const ms=document.getElementById('monsterSearch');if(ms)ms.oninput=renderMonsters;document.querySelectorAll('[data-edit-m]').forEach(b=>b.onclick=()=>openEntity('monster',Number(b.dataset.editM)));document.querySelectorAll('[data-monster-damage]').forEach(b=>b.onclick=async()=>{const m=state.creatures[Number(b.dataset.monsterDamage)],delta=Number(b.dataset.delta)||0;if(!m)return;m.hp=clamp((m.hp??m.hpMax)+delta,0,m.hpMax);save();renderMonsters();await saveGlobalNow().catch(()=>{});toast(`${delta<0?'Dano':'Cura'} aplicado em ${m.name}.`)});document.querySelectorAll('[data-round-m]').forEach(b=>b.onclick=()=>{const m=state.creatures[Number(b.dataset.roundM)];if(!m)return;const events=applyConditionRound(m);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-m]').forEach(b=>b.onclick=async()=>{if(confirm('Excluir este Monstro?')){state.creatures.splice(Number(b.dataset.delM),1);await saveGlobalNow().catch(()=>{});render('master')}});if(document.getElementById('monsterResults'))renderMonsters();const ni=document.getElementById('newItem');if(ni)ni.onclick=()=>{openModal(itemModal());bindItemModal(null)};let itemSearchTimer=0;['itemSearch','itemCat','itemRar'].forEach(id=>{const x=document.getElementById(id);if(!x)return;x.oninput=()=>{clearTimeout(itemSearchTimer);itemSearchTimer=setTimeout(renderItems,id==='itemSearch'?120:0)}});const ci=document.getElementById('clearItems');if(ci)ci.onclick=()=>{document.getElementById('itemSearch').value='';document.getElementById('itemCat').value='';document.getElementById('itemRar').value='';renderItems()};const itemResults=document.getElementById('itemResults');if(itemResults&&!itemResults.dataset.bound){itemResults.dataset.bound='1';itemResults.addEventListener('click',e=>{const edit=e.target.closest('[data-edit-item]');if(edit){const id=Number(edit.dataset.editItem);openModal(itemModal(id));bindItemModal(id);return}const del=e.target.closest('[data-del-item]');if(del){const id=Number(del.dataset.delItem);if(confirm('Excluir este item?')){state.items=state.items.filter(i=>i.id!==id);save();renderItems();toast('Item excluído.')}}})}const sm=document.getElementById('saveMusic');if(sm)sm.onclick=async()=>{
+function bindAdminContent(){if(document.querySelector('.card')&&document.getElementById('restoreLatestLocal'))bindRecovery();if(document.querySelector('.bonus-editor'))bindClassBonuses();if(document.querySelector('.tv-admin'))bindTvAdmin();if(document.querySelector('#saveSiteBrand'))bindSiteBrand();if(document.querySelector('.content-admin'))bindContentAdmin();document.getElementById('sendSecretClue')?.addEventListener('click',sendSecretClue);const playerGrid=document.querySelector('.master-player-grid');if(playerGrid&&!playerGrid.dataset.boundFicha){playerGrid.dataset.boundFicha='1';playerGrid.addEventListener('click',e=>{const view=e.target.closest('[data-view-player]');if(view){e.preventDefault();e.stopPropagation();const id=view.dataset.playerId;const p=state.players.find(x=>String(x.id)===String(id))||state.players[Number(view.dataset.viewPlayer)];if(p)openPlayerViewById(p.id);return}})}const rr=document.getElementById('openCharacterRules');if(rr)rr.onclick=()=>{document.getElementById('adminContent').innerHTML=rulesAdmin();bindRulesAdmin()};const np=document.getElementById('newPlayer');if(np)np.onclick=()=>openEntity('player',null);document.querySelectorAll('[data-edit-p]').forEach(b=>b.onclick=()=>openEntity('player',Number(b.dataset.editP)));document.querySelectorAll('[data-bag-p]').forEach(b=>b.onclick=()=>{const i=Number(b.dataset.bagP);openModal(bagAdminModal(i));bindBagAdmin(i)});document.querySelectorAll('[data-round-p]').forEach(b=>b.onclick=()=>{const p=state.players[Number(b.dataset.roundP)];if(!p)return;const events=applyConditionRound(p);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-p]').forEach(b=>b.onclick=()=>{const i=Number(b.dataset.delP);if(confirm('Excluir este Player?')){const p=state.players[i];if(p){state.playerTombstones=state.playerTombstones||{};const k=playerSyncKey(p);if(k)state.playerTombstones[k]=Math.max(Number(state.playerTombstones[k])||0,Date.now())}state.players.splice(i,1);save();render('master')}});const nm=document.getElementById('newMonster');if(nm)nm.onclick=()=>openEntity('monster',null);const ms=document.getElementById('monsterSearch');if(ms)ms.oninput=renderMonsters;document.querySelectorAll('[data-edit-m]').forEach(b=>b.onclick=()=>openEntity('monster',Number(b.dataset.editM)));document.querySelectorAll('[data-monster-damage]').forEach(b=>b.onclick=async()=>{const m=state.creatures[Number(b.dataset.monsterDamage)],delta=Number(b.dataset.delta)||0;if(!m)return;m.hp=clamp((m.hp??m.hpMax)+delta,0,m.hpMax);save();renderMonsters();await saveGlobalNow().catch(()=>{});toast(`${delta<0?'Dano':'Cura'} aplicado em ${m.name}.`)});document.querySelectorAll('[data-round-m]').forEach(b=>b.onclick=()=>{const m=state.creatures[Number(b.dataset.roundM)];if(!m)return;const events=applyConditionRound(m);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-m]').forEach(b=>b.onclick=async()=>{if(confirm('Excluir este Monstro?')){state.creatures.splice(Number(b.dataset.delM),1);await saveGlobalNow().catch(()=>{});render('master')}});if(document.getElementById('monsterResults'))renderMonsters();const ni=document.getElementById('newItem');if(ni)ni.onclick=()=>{openModal(itemModal());bindItemModal(null)};let itemSearchTimer=0;['itemSearch','itemCat','itemRar'].forEach(id=>{const x=document.getElementById(id);if(!x)return;x.oninput=()=>{clearTimeout(itemSearchTimer);itemSearchTimer=setTimeout(renderItems,id==='itemSearch'?120:0)}});const ci=document.getElementById('clearItems');if(ci)ci.onclick=()=>{document.getElementById('itemSearch').value='';document.getElementById('itemCat').value='';document.getElementById('itemRar').value='';renderItems()};const itemResults=document.getElementById('itemResults');if(itemResults&&!itemResults.dataset.bound){itemResults.dataset.bound='1';itemResults.addEventListener('click',e=>{const edit=e.target.closest('[data-edit-item]');if(edit){const id=Number(edit.dataset.editItem);openModal(itemModal(id));bindItemModal(id);return}const del=e.target.closest('[data-del-item]');if(del){const id=Number(del.dataset.delItem);if(confirm('Excluir este item?')){state.items=state.items.filter(i=>i.id!==id);save();renderItems();toast('Item excluído.')}}})}const sm=document.getElementById('saveMusic');if(sm)sm.onclick=async()=>{
   const title=document.getElementById('musicTitle')?.value.trim()||'';
   const file=document.getElementById('musicFile')?.files?.[0];
   const url=document.getElementById('musicUrl')?.value.trim()||'';
@@ -2031,7 +2172,7 @@ function bindEntity(type,index){const close=()=>document.getElementById('entityM
 // case-insensitive, senão dois Players podem ficar com o "mesmo" login em
 // letras diferentes — a partir daí o Supabase passa a rejeitar toda
 // gravação desse Player, e a ficha dele para de sincronizar (parece "sumir").
-if(e.login.toLowerCase()==='sxscroow'||state.players.some((p,i)=>i!==index&&String(p.login||'').trim().toLowerCase()===e.login.toLowerCase())){toast('Esse login já existe.');return}}e.attrLimits=e.attrLimits||blankLimits();e.attrs=e.attrs||blankAttrs();document.querySelectorAll('.eMin').forEach(x=>e.attrLimits[x.dataset.attr].min=Number(x.value)||0);document.querySelectorAll('.eMax').forEach(x=>e.attrLimits[x.dataset.attr].max=Number(x.value)||10);document.querySelectorAll('.eAttr').forEach(x=>{const l=e.attrLimits[x.dataset.attr];e.attrs[x.dataset.attr]=clamp(x.value,0,MAX_ATTR)});e.skills=e.skills||blankSkills();document.querySelectorAll('.eSkill').forEach(x=>e.skills[x.dataset.skill]=clamp(x.value,0,MAX_SKILL));if(isP){const err=validateAllocation(e);if(err){toast(err);return}const r=characterRules(e.campaignType);if(e.campaignType==='slasher'&&Number(r.hpMax)>MAX_HP){e.hpMax=Math.min(Number(r.hpMax),9999);e.hp=clamp(e.hp,0,e.hpMax)}}const _ce=[];for(const id of nextConditions){if(!previousConditions.has(id))_ce.push(...applyConditionOnAdd(e,id))}if(previousConditions.has('fractured')&&!nextConditions.includes('fractured')&&e.weakenedByFracture){e.conditions=(e.conditions||[]).filter(x=>x!=='weakened');delete e.weakenedByFracture;if(e.conditionTurns)delete e.conditionTurns.weakened}if(isP)syncDerivedResources(e);normalize(e);if(index===null)list.push(e);save();close();toast(_ce.length?`${e.name||'Alvo'}: ${_ce.join(' • ')}`:`${isP?'Player':'Monstro'} salvo.`);render('master')}}
+if(e.login.toLowerCase()==='sxscroow'||state.players.some((p,i)=>i!==index&&String(p.login||'').trim().toLowerCase()===e.login.toLowerCase())){toast('Esse login já existe.');return}}e.attrLimits=e.attrLimits||blankLimits();e.attrs=e.attrs||blankAttrs();document.querySelectorAll('.eMin').forEach(x=>e.attrLimits[x.dataset.attr].min=Number(x.value)||0);document.querySelectorAll('.eMax').forEach(x=>e.attrLimits[x.dataset.attr].max=Number(x.value)||10);document.querySelectorAll('.eAttr').forEach(x=>{const l=e.attrLimits[x.dataset.attr];e.attrs[x.dataset.attr]=clamp(x.value,0,MAX_ATTR)});e.skills=e.skills||blankSkills();document.querySelectorAll('.eSkill').forEach(x=>e.skills[x.dataset.skill]=clamp(x.value,0,MAX_SKILL));if(isP){const err=validateAllocation(e);if(err){toast(err);return}const r=characterRules(e.campaignType);if(e.campaignType==='slasher'&&Number(r.hpMax)>MAX_HP){e.hpMax=Math.min(Number(r.hpMax),9999);e.hp=clamp(e.hp,0,e.hpMax)}}const _ce=[];for(const id of nextConditions){if(!previousConditions.has(id))_ce.push(...applyConditionOnAdd(e,id))}if(previousConditions.has('fractured')&&!nextConditions.includes('fractured')&&e.weakenedByFracture){e.conditions=(e.conditions||[]).filter(x=>x!=='weakened');delete e.weakenedByFracture;if(e.conditionTurns)delete e.conditionTurns.weakened}if(isP)syncDerivedResources(e);normalize(e);if(index===null){if(playerStoreEnabled)e._pendingCreate=true;list.push(e)}else if(isP)delete e._pendingCreate;save();close();toast(_ce.length?`${e.name||'Alvo'}: ${_ce.join(' • ')}`:`${isP?'Player':'Monstro'} salvo.`);render('master')}}
 function bindItemModal(id){
  const close=()=>document.getElementById('itemModal')?.remove();
  document.getElementById('closeItem').onclick=close;document.getElementById('cancelItem').onclick=close;
@@ -2434,6 +2575,7 @@ async function boot(){
       if(bootIsMaster&&!loadFailed&&Array.isArray(remote?.items)&&remote.items.length>200)queueRemoteSave(); // V66.3: compacta o estado global no servidor
       await hydratePlayersDb();
       if(playerDbHydrated)await syncPlayersDbNow();
+      startStabilityPatch();
       normalizeCombatSession();
       // A versão antiga tinha apenas sessionBoard. A nova versão começa com um controlador limpo.
       // O Mestre publica esse novo estado uma vez para que todos os Players recebam a mesma base.
@@ -2555,6 +2697,7 @@ async function boot(){
     }
   }catch(e){console.warn('Modo global indisponível; usando dados locais.',e);remoteApplying=false;remoteHydrated=true;}
   if(playerStoreEnabled&&!playerDbHydrated){await hydratePlayersDb();if(playerDbHydrated)await syncPlayersDbNow();}
+  startStabilityPatch();
   try{await handleSpotifyCallback();if(spotifyLogged())await ensureSpotifyPlayer();}finally{
     // V65.8: retoma a aba em que o usuário estava nesta mesma aba do navegador
     // em vez de sempre forçar "Início/Informações básicas" a cada reload.
