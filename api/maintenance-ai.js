@@ -1,18 +1,33 @@
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from '../src/supabaseConfig.js';
 
-const MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
+const DEFAULT_OPENAI_MODEL = 'gpt-5-mini';
+const DEFAULT_GATEWAY_MODEL = 'openai/gpt-5-mini';
+const DEFAULT_OPENAI_BASE = 'https://api.openai.com';
+const DEFAULT_GATEWAY_BASE = 'https://ai-gateway.vercel.sh';
 const MAX_MESSAGES = 12;
 const MAX_CONTENT = 12000;
+
+function json(res, status, payload) {
+  return res.status(status).json(payload);
+}
 
 async function requireMaster(req) {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
   if (!token) return { ok: false, status: 401, error: 'SESSAO_INVALIDA' };
+
   const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/a_profecia_whoami`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', apikey: SUPABASE_PUBLISHABLE_KEY, authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}` },
+    headers: {
+      'content-type': 'application/json',
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      // The RPC receives the app session token as p_token. The publishable key
+      // remains the Supabase API credential for this public RPC call.
+      authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`
+    },
     body: JSON.stringify({ p_token: token })
   });
+
   if (!response.ok) return { ok: false, status: 401, error: 'SESSAO_INVALIDA' };
   const who = await response.json().catch(() => null);
   const role = Array.isArray(who) ? who[0]?.role : who?.role;
@@ -28,19 +43,53 @@ function cleanMessages(messages) {
   })).filter((m) => m.content.trim());
 }
 
+function aiConfig() {
+  // Prefer a direct OpenAI key when present. If the project was configured
+  // with Vercel AI Gateway instead, support its native environment variable.
+  const directKey = String(process.env.OPENAI_API_KEY || '').trim();
+  if (directKey) {
+    return {
+      key: directKey,
+      base: String(process.env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE).replace(/\/$/, ''),
+      model: String(process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL).trim()
+    };
+  }
+
+  const gatewayKey = String(process.env.AI_GATEWAY_API_KEY || '').trim();
+  if (gatewayKey) {
+    return {
+      key: gatewayKey,
+      base: String(process.env.AI_GATEWAY_BASE_URL || DEFAULT_GATEWAY_BASE).replace(/\/$/, ''),
+      model: String(process.env.AI_GATEWAY_MODEL || DEFAULT_GATEWAY_MODEL).trim()
+    };
+  }
+
+  return null;
+}
+
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
+  if (req.method !== 'POST') return json(res, 405, { error: 'METHOD_NOT_ALLOWED' });
+
   const auth = await requireMaster(req);
-  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+  if (!auth.ok) return json(res, auth.status, { error: auth.error });
 
-  const openaiKey = process.env.OPENAI_API_KEY;
-  const openaiBase = (process.env.OPENAI_BASE_URL || 'https://api.openai.com').replace(/\/$/, '');
-  if (!openaiKey) return res.status(503).json({ error: 'OPENAI_API_KEY_AUSENTE', message: 'A IA está configurada no código, mas a OPENAI_API_KEY ainda não foi configurada no Vercel.' });
+  const config = aiConfig();
+  if (!config) {
+    return json(res, 503, {
+      error: 'AI_API_KEY_AUSENTE',
+      message: 'A IA não encontrou OPENAI_API_KEY nem AI_GATEWAY_API_KEY nas variáveis de ambiente deste deploy.'
+    });
+  }
 
-  const body = req.body || {};
+  const body = req.body && typeof req.body === 'object'
+    ? req.body
+    : (() => {
+        try { return JSON.parse(String(req.body || '{}')); } catch { return {}; }
+      })();
+
   const messages = cleanMessages(body?.messages);
   const diagnostics = String(body?.diagnostics || '').slice(0, 18000);
-  if (!messages.length) return res.status(400).json({ error: 'MENSAGEM_VAZIA' });
+  if (!messages.length) return json(res, 400, { error: 'MENSAGEM_VAZIA' });
 
   const system = `Você é a IA de manutenção do site A Profecia / Filii-Abyssi.
 Sua função é ajudar o Mestre a diagnosticar erros reais do site e propor correções seguras.
@@ -57,18 +106,37 @@ Diagnóstico atual fornecido pelo site:
 ${diagnostics || 'Nenhum diagnóstico adicional foi fornecido.'}`;
 
   try {
-    const response = await fetch(`${openaiBase}/v1/chat/completions`, {
+    const response = await fetch(`${config.base}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${openaiKey}` },
-      body: JSON.stringify({ model: MODEL, messages: [{ role: 'system', content: system }, ...messages], temperature: 0.2, max_tokens: 1200 })
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${config.key}`
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [{ role: 'system', content: system }, ...messages],
+        temperature: 0.2,
+        max_completion_tokens: 1200
+      })
     });
+
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) return res.status(502).json({ error: 'AI_GATEWAY_ERRO', message: data?.error?.message || 'A API da OpenAI recusou a solicitação.' });
+    if (!response.ok) {
+      console.error('maintenance-ai provider error', response.status, data?.error || data);
+      return json(res, 502, {
+        error: 'AI_GATEWAY_ERRO',
+        message: data?.error?.message || 'O provedor de IA recusou a solicitação.'
+      });
+    }
+
     const text = data?.choices?.[0]?.message?.content?.trim();
-    if (!text) return res.status(502).json({ error: 'AI_RESPOSTA_VAZIA' });
-    return res.status(200).json({ ok: true, model: data.model || MODEL, message: text });
+    if (!text) return json(res, 502, { error: 'AI_RESPOSTA_VAZIA' });
+    return json(res, 200, { ok: true, model: data.model || config.model, message: text });
   } catch (error) {
     console.error('maintenance-ai function error', error);
-    return res.status(502).json({ error: 'AI_INDISPONIVEL', message: 'Não foi possível alcançar a API de IA agora.' });
+    return json(res, 502, {
+      error: 'AI_INDISPONIVEL',
+      message: 'Não foi possível alcançar o provedor de IA agora.'
+    });
   }
 }
