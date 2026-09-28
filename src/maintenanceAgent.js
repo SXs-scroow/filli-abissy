@@ -11,6 +11,10 @@ let modalOpen=false;
 let bound=false;
 const aiMessages=[];
 let aiBusy=false;
+let aiPanelOpen=false;
+let aiDraft='';
+let aiPending='';
+let aiError='';
 const now=()=>new Date().toISOString();
 function addEvent(type,message,extra={}){
   events.push({time:now(),type,message:String(message||''),...extra});
@@ -93,18 +97,27 @@ function renderModal(){
     </div>
     <div class="maintenance-section"><h3>Diagnóstico</h3>${issues.map(i=>`<div class="maintenance-issue ${i.level}"><b>${esc(i.title)}</b><small>${esc(i.action)}</small></div>`).join('')}</div>
     <div class="maintenance-actions"><button class="btn primary" data-maint-recover>↻ Recuperação segura</button><button class="btn" data-maint-ai>✦ Consultar IA</button><button class="btn" data-maint-proposal>Gerar proposta</button><button class="btn" data-maint-export>Exportar relatório</button></div>
-    <section class="maintenance-ai" data-maint-ai-panel hidden>
+    <section class="maintenance-ai" data-maint-ai-panel ${aiPanelOpen?'':'hidden'}>
       <div class="maintenance-ai-head"><div><b>IA de Manutenção</b><small>Diagnostica e propõe correções; não altera o site automaticamente.</small></div></div>
-      <div class="maintenance-ai-log" data-maint-ai-log>${aiMessages.length?aiMessages.map(m=>`<div class="maintenance-ai-msg ${m.role}"><b>${m.role==='assistant'?'IA':'Você'}</b><div>${esc(m.content)}</div></div>`).join(''):'<div class="maintenance-ai-empty">Pergunte sobre um erro ou peça uma análise do diagnóstico atual.</div>'}</div>
-      <div class="maintenance-ai-form"><textarea data-maint-ai-input rows=3 placeholder="Ex.: analise os erros atuais e diga qual correção é mais segura"></textarea><button class="btn primary" data-maint-ai-send ${aiBusy?'disabled':''}>${aiBusy?'Analisando…':'Enviar'}</button></div>
+      <div class="maintenance-ai-log" data-maint-ai-log>${aiMessages.map(m=>`<div class="maintenance-ai-msg ${m.role}"><b>${m.role==='assistant'?'IA':'Você'}</b><div>${esc(m.content)}</div></div>`).join('')}${aiPending?`<div class="maintenance-ai-msg user"><b>Você</b><div>${esc(aiPending)}</div></div><div class="maintenance-ai-msg assistant"><b>IA</b><div>Analisando…</div></div>`:''}${aiError?`<div class="maintenance-ai-msg assistant"><b>Erro</b><div>${esc(aiError)}</div></div>`:''}${(!aiMessages.length&&!aiPending&&!aiError)?'<div class="maintenance-ai-empty">Pergunte sobre um erro ou peça uma análise do diagnóstico atual.</div>':''}</div>
+      <div class="maintenance-ai-form"><textarea data-maint-ai-input rows=3 placeholder="Ex.: analise os erros atuais e diga qual correção é mais segura">${esc(aiDraft)}</textarea><button class="btn primary" data-maint-ai-send ${aiBusy?'disabled':''}>${aiBusy?'Analisando…':'Enviar'}</button></div>
     </section>
     <details class="maintenance-log"><summary>Eventos registrados (${events.length})</summary><pre>${esc(events.map(e=>`[${e.time}] ${e.type}: ${e.message}`).join('\n')||'Nenhum evento.')}</pre></details>
     <footer>Agente ${AGENT_VERSION} • Sem SQL • Sem exclusão • Sem deploy automático</footer>
   </section>`;
   root.querySelectorAll('[data-maint-close]').forEach(x=>x.onclick=close);
   root.querySelector('[data-maint-recover]')?.addEventListener('click',async()=>{await safeRecovery();renderModal()});
-  root.querySelector('[data-maint-ai]')?.addEventListener('click',()=>{const panel=root.querySelector('[data-maint-ai-panel]');if(panel){panel.hidden=!panel.hidden;if(!panel.hidden)root.querySelector('[data-maint-ai-input]')?.focus()}});
-  root.querySelector('[data-maint-ai-send]')?.addEventListener('click',async()=>{const input=root.querySelector('[data-maint-ai-input]');const value=String(input?.value||'').trim();if(!value||aiBusy)return;aiBusy=true;renderModal();try{await askAI(value)}catch(e){addEvent('error',e?.message||e);alert(`IA: ${e?.message||e}`)}finally{aiBusy=false;renderModal();const panel=root.querySelector('[data-maint-ai-panel]');if(panel)panel.hidden=false}});
+  root.querySelector('[data-maint-ai]')?.addEventListener('click',()=>{const panel=root.querySelector('[data-maint-ai-panel]');if(panel){panel.hidden=!panel.hidden;aiPanelOpen=!panel.hidden;if(!panel.hidden)root.querySelector('[data-maint-ai-input]')?.focus()}});
+  const aiInput=root.querySelector('[data-maint-ai-input]');
+  aiInput?.addEventListener('input',()=>{aiDraft=aiInput.value});
+  const aiLog=root.querySelector('[data-maint-ai-log]');if(aiLog)aiLog.scrollTop=aiLog.scrollHeight;
+  root.querySelector('[data-maint-ai-send]')?.addEventListener('click',async()=>{
+    const value=String(aiInput?.value||'').trim();if(!value||aiBusy)return;
+    aiBusy=true;aiPanelOpen=true;aiPending=value;aiDraft='';aiError='';renderModal();
+    try{await askAI(value)}
+    catch(e){addEvent('error',e?.message||e);aiError=String(e?.message||e);aiDraft=value}
+    finally{aiBusy=false;aiPending='';aiPanelOpen=true;renderModal();root.querySelector('[data-maint-ai-input]')?.focus()}
+  });
   root.querySelector('[data-maint-proposal]')?.addEventListener('click',()=>download(proposal(),`a-profecia-proposta-manutencao-${Date.now()}.md`));
   root.querySelector('[data-maint-export]')?.addEventListener('click',()=>download(JSON.stringify({status:s,issues,events,proposal:proposal()},null,2),`a-profecia-diagnostico-${Date.now()}.json`,'application/json'));
 }
@@ -115,7 +128,7 @@ function ensure(){
   let b=document.getElementById('maintenance-agent-button');
   if(!b){b=document.createElement('button');b.id='maintenance-agent-button';b.className='maintenance-agent-button';b.type='button';b.innerHTML='🛠️ <span>Manutenção</span>';b.title='Abrir Agente de Manutenção';b.onclick=open;document.body.appendChild(b)}
   const isMaster=!!context().session?.role&&context().session.role==='master';b.hidden=!isMaster;
-  if(modalOpen)renderModal();
+  if(modalOpen&&!aiPanelOpen&&!aiBusy)renderModal();
 }
 function bind(){if(bound)return;bound=true;window.addEventListener('error',e=>addEvent('error',e.message||'Erro JavaScript',{source:e.filename||'',line:e.lineno||0}));window.addEventListener('unhandledrejection',e=>addEvent('rejection',e.reason?.message||String(e.reason||'Promise rejeitada')));window.addEventListener('online',()=>addEvent('network','Conexão restabelecida'));window.addEventListener('offline',()=>addEvent('network','Conexão perdida'));setInterval(ensure,2000);ensure()}
 window.__aProfeciaMaintenance={version:AGENT_VERSION,open,close,status,proposal,events,ensure};
