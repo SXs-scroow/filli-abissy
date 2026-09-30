@@ -1,0 +1,8 @@
+node_modules
+dist
+.vercel
+.env
+.env.*
+.chaos-build
+*.log
+.DS_Store

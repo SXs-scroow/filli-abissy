@@ -36,6 +36,26 @@ export async function fetchPlayers() {
   return rows.map(row => next.get(String(row?.id || ''))).filter(Boolean);
 }
 
+
+export async function fetchPlayersByIds(ids) {
+  if (!supabase || !Array.isArray(ids) || !ids.length) return [];
+  const clean = [...new Set(ids.map(id => String(id || '').trim()).filter(Boolean))].slice(0, 50);
+  if (!clean.length) return [];
+  const { data, error } = await supabase.rpc('a_profecia_get_players_by_ids', {
+    p_token: getAuthToken(),
+    p_ids: clean
+  });
+  if (error) throw handleAuthError(error);
+  const rows = Array.isArray(data) ? data : [];
+  return rows.map(row => ({
+    id: String(row.id),
+    login: String(row.login || ''),
+    data: row.data && typeof row.data === 'object' ? row.data : {},
+    updated_at: row.updated_at || null,
+    deleted_at: row.deleted_at || null
+  }));
+}
+
 function syncStamp(p, fallback = Date.now()) {
   const n = Number(p?._syncUpdatedAt);
   return Number.isFinite(n) && n > 0 ? n : fallback;
@@ -44,18 +64,26 @@ function syncStamp(p, fallback = Date.now()) {
 async function rpcUpsert(row) {
   if (!supabase) return null;
   if (!getAuthToken()) { const e = new Error('SESSAO_INVALIDA'); handleAuthError(e); throw e; }
-  const { data, error } = await supabase.rpc(RPC, {
+  const data = { ...(row.data || {}) };
+  // Authentication secrets are managed only by the dedicated password RPC.
+  // Never send plaintext password fields through the normal Player sync path.
+  delete data.password;
+  delete data.newPassword;
+  // Segredo exclusivo do Mestre: nunca entra no JSON da ficha do Player.
+  delete data.secretLovedEffect;
+  const { data: saved, error } = await supabase.rpc(RPC, {
     p_token: getAuthToken(),
     p_id: row.id,
     p_login: row.login,
-    p_data: row.data || {},
-    p_sync_updated_at: syncStamp(row.data),
+    p_data: data,
+    p_sync_updated_at: syncStamp(data),
     p_deleted_at: row.deleted_at || null
   });
   if (error) throw handleAuthError(error);
   rowCache.delete(row.id);
-  return data;
+  return saved;
 }
+
 
 export async function deletePlayerServer(playerId) {
   if (!supabase) throw new Error('Supabase não configurado');
@@ -113,34 +141,48 @@ export function subscribePlayers(callback) {
   if (!supabase) return () => {};
   let disposed = false;
   let refreshTimer = null;
-  const pendingIds = new Set();
+  // O evento já informa o ID alterado. Nunca recarregue o roster inteiro só para
+  // atualizar uma ficha: isso criava picos de rede/CPU e fazia a interface oscilar.
+  const pendingOps = new Map();
   const channel = supabase
     .channel('a-profecia-players-events')
     .on('broadcast', { event: 'player-changed' }, payload => {
       if (disposed) return;
       const changedId = String(payload?.payload?.id || '').trim();
       if (!changedId) return;
-      pendingIds.add(changedId);
+      pendingOps.set(changedId, String(payload?.payload?.op || '').toLowerCase());
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(async () => {
         if (disposed) return;
-        const ids = [...pendingIds];
-        pendingIds.clear();
+        const ids = [...pendingOps.keys()];
+        const ops = new Map(pendingOps);
+        pendingOps.clear();
         try {
-          // Uma única leitura por rajada de eventos. Todos os IDs recebidos
-          // durante os 80ms são aplicados, evitando perder exclusões/criações
-          // quando vários Players mudam quase ao mesmo tempo.
-          const rows = await fetchPlayers();
+          const rows = await fetchPlayersByIds(ids);
           const byId = new Map(rows.map(item => [String(item.id), item]));
+          const missing = ids.filter(id => !byId.has(id) && ops.get(id) === 'delete');
+          // Um evento DELETE pode chegar antes de a leitura enxergar a mesma
+          // mudança. Só confirmamos uma exclusão após uma segunda leitura curta;
+          // isso evita transformar uma defasagem transitória do banco/realtime
+          // em uma exclusão falsa.
+          if (missing.length) {
+            await new Promise(resolve => setTimeout(resolve, 220));
+            try {
+              const confirmRows = await fetchPlayersByIds(missing);
+              for (const row of confirmRows) byId.set(String(row.id), row);
+            } catch {}
+          }
           for (const id of ids) {
-            callback(byId.get(id) || { id, deleted_at: 'deleted' });
+            const found = byId.get(id);
+            if (found) callback(found);
+            else if (ops.get(id) === 'delete') callback({ id, deleted_at: 'deleted' });
           }
         } catch (error) {
           if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
             console.warn('Falha ao atualizar Players em tempo real:', error);
           }
         }
-      }, 80);
+      }, 120);
     })
     .subscribe(status => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {

@@ -11,7 +11,7 @@ A função procura, nesta ordem, a primeira que existir. A variável `filiabissy
 |---|---|---|---|
 | `OPENAI_API_KEY` | OpenAI | `gpt-5-mini` | `OPENAI_MODEL`, `OPENAI_BASE_URL` |
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway | `openai/gpt-5-mini` | `AI_GATEWAY_MODEL` |
-| `ANTHROPIC_API_KEY` | Claude (Anthropic) | `claude-sonnet-5` | `ANTHROPIC_MODEL` |
+| `ANTHROPIC_API_KEY` | Claude (Anthropic) | `claude-sonnet-5-5` | `ANTHROPIC_MODEL` |
 
 Marque os ambientes em que a variável vale (Production/Preview) e **faça um novo deploy** depois de criar ou alterar.
 

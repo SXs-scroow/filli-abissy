@@ -5,7 +5,7 @@ const DEFAULT_GATEWAY_MODEL = 'openai/gpt-5-mini';
 const DEFAULT_OPENAI_BASE = 'https://api.openai.com';
 const DEFAULT_GATEWAY_BASE = 'https://ai-gateway.vercel.sh';
 const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com';
-const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5';
+const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
 // Modelos de raciocínio (gpt-5*) gastam parte do limite pensando; 1200 deixava a resposta vazia.
 const MAX_OUTPUT_TOKENS = 4000;
 const MAX_MESSAGES = 12;

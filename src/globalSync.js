@@ -77,6 +77,19 @@ export async function authRegisterPlayer(login, password, player) {
   if (r?.token) setAuthToken(r.token);
   return r;
 }
+export async function getPlayerMasterSecret(playerId) {
+  return await rpc('a_profecia_player_master_secret_get', { p_token: getAuthToken(), p_player_id: String(playerId || '') });
+}
+export async function savePlayerMasterSecret(playerId, secretLovedEffect) {
+  return await rpc('a_profecia_player_master_secret_save', { p_token: getAuthToken(), p_player_id: String(playerId || ''), p_secret_loved_effect: String(secretLovedEffect || '') });
+}
+export async function changePlayerPassword(playerId, newPassword) {
+  return await rpc('a_profecia_player_set_password', {
+    p_token: getAuthToken(),
+    p_player_id: String(playerId || ''),
+    p_new_password: String(newPassword || '')
+  });
+}
 export async function authLogout() {
   const token = getAuthToken();
   setAuthToken('');

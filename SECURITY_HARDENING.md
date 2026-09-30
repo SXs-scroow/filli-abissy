@@ -28,5 +28,5 @@ O build Vite não foi executado neste ambiente porque as dependências npm não 
 
 1. Substitua os arquivos do projeto pelos desta versão.
 2. Mantenha as variáveis públicas `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY`.
-3. Não adicione `SUPABASE_SERVICE_ROLE_KEY` ou qualquer chave secreta ao Netlify/site frontend.
-4. Faça o deploy normalmente no Netlify.
+3. Não adicione `SUPABASE_SERVICE_ROLE_KEY` ou qualquer chave secreta ao Vercel/site frontend.
+4. Faça o deploy normalmente no Vercel.
