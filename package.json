@@ -8,11 +8,14 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "node scripts/check-syntax.mjs",
-    "release:check": "npm run check && npm run stability:check && npm run test:sync && npm run test:maintenance-ai && npm run test:chaos && npm run build",
+    "release:check": "npm run check && npm run check:scope && npm run stability:check && npm run test:sync && npm run audit:xss && npm run test:unit && npm run test:maintenance-ai && npm run test:chaos && npm run build",
     "stability:check": "node scripts/stability-audit.mjs",
     "test:chaos": "node --test scripts/chaos/network-chaos.test.mjs",
     "test:maintenance-ai": "node scripts/test-maintenance-ai.mjs",
-    "test:sync": "node scripts/player-sync-regression.mjs"
+    "test:sync": "node scripts/player-sync-regression.mjs",
+    "test:unit": "node --test scripts/unit/*.test.mjs",
+    "audit:xss": "node scripts/xss-audit.mjs --check",
+    "check:scope": "node scripts/scope-check.mjs"
   },
   "devDependencies": {
     "vite": "7.3.6"
@@ -22,8 +25,5 @@
   },
   "engines": {
     "node": "22.x"
-  },
-  "allowScripts": {
-    "esbuild@0.28.2": true
   }
 }

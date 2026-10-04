@@ -11,6 +11,18 @@ export const supabase = remoteEnabled
   ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
 
+
+// Health da sincronização: apenas estado operacional, sem conteúdo de fichas.
+const SYNC_HEALTH_KEY='a_profecia_sync_health_v1';
+let syncHealthState={state:'idle',message:'Aguardando sincronização',lastSuccessAt:0,lastErrorAt:0,pending:false,attempts:0};
+function readSyncHealth(){try{const x=JSON.parse(localStorage.getItem(SYNC_HEALTH_KEY)||'null');if(x&&typeof x==='object')syncHealthState={...syncHealthState,...x}}catch{}return {...syncHealthState}}
+function writeSyncHealth(patch){syncHealthState={...readSyncHealth(),...patch};try{localStorage.setItem(SYNC_HEALTH_KEY,JSON.stringify(syncHealthState))}catch{};try{window.dispatchEvent(new CustomEvent('a-profecia-sync-status',{detail:{...syncHealthState}}))}catch{};return {...syncHealthState}}
+export function syncHealth(){return readSyncHealth()}
+export function syncMarkOffline(message='Offline — alterações ficam salvas neste dispositivo'){return writeSyncHealth({state:'offline',message,pending:true})}
+export function syncMarkSyncing(message='Sincronizando…'){return writeSyncHealth({state:'syncing',message,pending:true})}
+export function syncMarkSuccess(message='Sincronizado'){return writeSyncHealth({state:'synced',message,pending:false,lastSuccessAt:Date.now(),attempts:0})}
+export function syncMarkError(message='Sincronização pendente',attempts=0){return writeSyncHealth({state:'error',message,pending:true,lastErrorAt:Date.now(),attempts:Number(attempts)||0})}
+
 const TABLE = 'a_profecia_global';
 const ROW = 'main';
 const BUCKET = 'a-profecia-assets';
@@ -136,12 +148,15 @@ export async function listGlobalBackups(limit = 20) {
 
 export async function pushGlobal(data) {
   if (!supabase) throw new Error('Supabase não está configurado.');
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) { syncMarkOffline(); throw new Error('OFFLINE'); }
   if (!getAuthToken()) { const e = new Error('SESSAO_INVALIDA'); handleAuthError(e); throw e; }
+  syncMarkSyncing();
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       // V66: só o Mestre autenticado grava; o servidor devolve apenas o carimbo (antes devolvia o estado inteiro de volta).
       const result = await rpc('a_profecia_push_global', { p_token: getAuthToken(), p_data: data });
+      syncMarkSuccess();
       return { updated_at: result?.updated_at, verified: true };
     } catch (error) {
       lastError = error;
@@ -149,6 +164,7 @@ export async function pushGlobal(data) {
       if (attempt < 3) await new Promise(r => setTimeout(r, 250 * attempt));
     }
   }
+  syncMarkError('Sincronização global pendente', 3);
   throw lastError || new Error('Falha ao salvar o estado global.');
 }
 
@@ -179,32 +195,35 @@ export async function uploadGlobalFile(path, file) {
 
 export function subscribeGlobal(callback) {
   if (!supabase || typeof callback !== 'function') return () => {};
-  let disposed = false;
-  let timer = null;
-  const channel = supabase
-    .channel('a-profecia-global-events')
-    .on('broadcast', { event: 'global-changed' }, () => {
-      if (disposed) return;
-      clearTimeout(timer);
-      timer = setTimeout(async () => {
-        try {
-          const row = await fetchGlobal();
-          if (!disposed && row) callback(row);
-        } catch (error) {
-          if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
-            console.warn('Falha ao atualizar o estado global:', error);
-          }
+  let disposed = false, timer = null, reconnectTimer = null, channel = null;
+  const attach = () => {
+    if (disposed) return;
+    channel = supabase.channel(`a-profecia-global-events-${Date.now()}`)
+      .on('broadcast', { event: 'global-changed' }, () => {
+        if (disposed) return;
+        clearTimeout(timer);
+        timer = setTimeout(async () => {
+          try { const row = await fetchGlobal(); if (!disposed && row) callback(row); }
+          catch (error) { if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) console.warn('Falha ao atualizar o estado global:', error); }
+        }, 100);
+      })
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') { clearTimeout(reconnectTimer); return; }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          if (disposed) return;
+          try { supabase.removeChannel(channel); } catch {}
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(attach, 1200);
         }
-      }, 80);
-    })
-    .subscribe();
+      });
+  };
+  attach();
   return () => {
     disposed = true;
-    clearTimeout(timer);
-    supabase.removeChannel(channel).catch(() => {});
+    clearTimeout(timer); clearTimeout(reconnectTimer);
+    if (channel) supabase.removeChannel(channel).catch(() => {});
   };
 }
-
 
 let liveChannel = null;
 let liveReady = null;

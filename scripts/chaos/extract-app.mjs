@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-function extractFunction(src, name) {
+export function extractFunction(src, name) {
   const re = new RegExp(`(?:^|\\n)((?:async )?function ${name}\\s*\\()`);
   const m = re.exec(src);
   if (!m) throw new Error(`Função ${name} não encontrada em app.js`);
@@ -27,7 +27,7 @@ function extractFunction(src, name) {
   throw new Error(`Não consegui delimitar ${name}`);
 }
 
-const NEEDED = ['imageValue', 'clone', 'sameGlobalValue', 'playerSyncKey', 'mergeRollHistory',
+const NEEDED = ['imageValue', 'clone', 'sameGlobalValue', 'playerSyncKey', 'mergeRollHistory', 'mergeSecretClues',
   'playerRowStamp', 'playerRowDeletedStamp', 'saveConfirmedPlayerRoster',
   'fetchPlayerRowsConfirmed', 'applyPlayerRows', 'syncPlayersDbNow', 'hydratePlayersDb'];
 
@@ -57,7 +57,7 @@ export function buildAppSandbox(appPath, store) {
     let lastPlayersSnapshot=[];
     ${fns}
     globalThis.__api={
-      sync:(m)=>syncPlayersDbNow(m), hydrate:()=>hydratePlayersDb(),
+      sync:(m,o)=>syncPlayersDbNow(m,o), hydrate:()=>hydratePlayersDb(),
       peek:()=>({readOnly:playerDbReadOnly,hydrated:playerDbHydrated,busy:playerDbSyncBusy}),
       markHydrated:()=>{playerDbHydrated=true}
     };

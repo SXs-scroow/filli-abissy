@@ -1661,6 +1661,7 @@ body::before{
 
 .main{animation:viewFadeIn .32s ease both}
 .screen{animation:screenFadeIn .35s ease both}
+#root.no-enter-anim .main,#root.no-enter-anim .screen{animation:none}
 .modal{animation:modalBackdropIn .2s ease both}
 .modal-card{animation:modalCardIn .28s cubic-bezier(.2,.8,.3,1) both}
 .toast{animation:toastIn .25s ease both}
