@@ -45,7 +45,9 @@ export function setAuthToken(token) {
   } catch {}
 }
 export function handleAuthError(error) {
-  if (/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
+  const raw = String(error?.message || error || '');
+  const normalized = raw.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,'_').toUpperCase();
+  if (/SESSAO_INVALIDA|SESSAO_INVALIDA|P0001.*SESSAO_INVALIDA/.test(normalized)) {
     setAuthToken('');
     try { window.dispatchEvent(new CustomEvent('a-profecia-auth-expired')); } catch {}
   }
@@ -112,8 +114,17 @@ export async function authCheck() {
   const token = getAuthToken();
   if (!token || !supabase) return null;
   const { data, error } = await supabase.rpc('a_profecia_whoami', { p_token: token });
-  if (error) throw error;
-  return data || null;
+  if (error) throw handleAuthError(error);
+  // `a_profecia_whoami` returns NULL for an expired/revoked token instead of
+  // raising an RPC error. Treat that exactly like an invalid session so every
+  // caller follows the same recovery path and the app does not remain stuck
+  // in Player read-only mode with a dead token.
+  if (!data) {
+    const e = new Error('SESSAO_INVALIDA');
+    handleAuthError(e);
+    return null;
+  }
+  return data;
 }
 export async function changeMasterPassword(oldPassword, newPassword) {
   return await rpc('a_profecia_change_master_password', { p_token: getAuthToken(), p_old: String(oldPassword || ''), p_new: String(newPassword || '') });

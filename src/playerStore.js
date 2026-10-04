@@ -1,4 +1,4 @@
-import { supabase, getAuthToken, handleAuthError, syncMarkOffline, syncMarkSyncing, syncMarkSuccess, syncMarkError } from './globalSync.js';
+import { supabase, getAuthToken, handleAuthError, authCheck, syncMarkOffline, syncMarkSyncing, syncMarkSuccess, syncMarkError } from './globalSync.js';
 
 const TABLE = 'a_profecia_players';
 const RPC = 'a_profecia_player_save';
@@ -14,10 +14,46 @@ export async function fetchPlayers() {
   if (!supabase) return [];
   if (++fetchCount % 20 === 0) rowCache = new Map();
 
-  const { data, error } = await supabase.rpc('a_profecia_list_players', {
-    p_token: getAuthToken()
-  });
-  if (error) throw handleAuthError(error);
+  // V1.4.3: nunca chama o RPC de roster sem um token. Isso evitava um 400
+  // silencioso quando o cache da sessão sobrevivia ao token da aba.
+  let token = getAuthToken();
+  if (!token) {
+    // Sem sessão não há motivo para consultar o RPC nem para transformar a
+    // ausência normal de autenticação em erro de sincronização. O fluxo de
+    // login é responsável por iniciar uma nova leitura.
+    return [];
+  }
+
+  let result = await supabase.rpc('a_profecia_list_players', { p_token: token });
+  if (result.error) {
+    // Se o endpoint responder 400 por sessão inválida, confirma a sessão uma
+    // única vez antes de entrar em modo somente-leitura. Assim não ficamos
+    // repetindo requests com token morto e também não tratamos um 400 de
+    // autenticação como falha genérica de banco.
+    const errText = String(result.error?.message || '');
+    const normalized = errText.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,'_').toUpperCase();
+    if (/SESSAO_INVALIDA|P0001.*SESSAO_INVALIDA/.test(normalized)) {
+      handleAuthError(result.error);
+      throw result.error;
+    }
+    try {
+      const who = await authCheck();
+      if (!who) {
+        const e = new Error('SESSAO_INVALIDA');
+        handleAuthError(e);
+        throw e;
+      }
+      // Token ainda é válido segundo o servidor: repete uma única vez para
+      // absorver uma falha transitória do PostgREST.
+      token = getAuthToken();
+      result = await supabase.rpc('a_profecia_list_players', { p_token: token });
+    } catch (checkError) {
+      if (/SESSAO_INVALIDA/.test(String(checkError?.message || ''))) throw checkError;
+      throw result.error;
+    }
+  }
+  if (result.error) throw handleAuthError(result.error);
+  const data = result.data;
 
   const rows = Array.isArray(data) ? data : [];
   const next = new Map();
@@ -41,8 +77,10 @@ export async function fetchPlayersByIds(ids) {
   if (!supabase || !Array.isArray(ids) || !ids.length) return [];
   const clean = [...new Set(ids.map(id => String(id || '').trim()).filter(Boolean))].slice(0, 50);
   if (!clean.length) return [];
+  const token = getAuthToken();
+  if (!token) return [];
   const { data, error } = await supabase.rpc('a_profecia_get_players_by_ids', {
-    p_token: getAuthToken(),
+    p_token: token,
     p_ids: clean
   });
   if (error) throw handleAuthError(error);
