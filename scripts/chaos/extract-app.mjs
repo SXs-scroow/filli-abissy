@@ -2,6 +2,8 @@
 // arquivo de 400 KB) e as executa num sandbox `vm` com stubs mínimos de DOM/estado.
 // Se alguém renomear/mover essas funções, o teste falha alto em vez de passar em falso.
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 export function extractFunction(src, name) {
@@ -27,12 +29,24 @@ export function extractFunction(src, name) {
   throw new Error(`Não consegui delimitar ${name}`);
 }
 
-const NEEDED = ['imageValue', 'clone', 'sameGlobalValue', 'playerSyncKey', 'mergeRollHistory', 'mergeSecretClues',
+// V1.5.2: a lógica de Players saiu do app.js para src/players.js. As funções são extraídas dos dois arquivos juntos.
+export function readAppSources(appPath = join(dirname(fileURLToPath(import.meta.url)), '../../app.js')) {
+  const players = join(dirname(appPath), 'src/players.js');
+  return readFileSync(appPath, 'utf8') + '\n' + readFileSync(players, 'utf8');
+}
+// Mesmo estado/host que o players.js real recebe (ps = estado do sync; host.state = o state vivo do sandbox).
+// V1.5.3: players.js importa nextStamp/observePlayerStamps de src/stampClock.js. No sandbox usamos o código REAL desse
+// arquivo (sem os `export`), para o teste exercitar o mesmo relógio lógico que roda no site.
+const stampClockSrc = () => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../src/stampClock.js'), 'utf8').replace(/^export /gm, '');
+export const playerPrelude = (snapshot = '[]') =>
+  `${stampClockSrc()}\nconst ps={timer:null,hydrated:false,applying:false,hydrating:false,hydratePromise:null,lastSyncAt:0,unsubscribe:null,syncBusy:false,syncPromise:null,circuitOpen:false,readOnly:false,lastSnapshot:${snapshot}};const host={get state(){return state}};`;
+
+const NEEDED = ['imageValue', 'clone', 'sameGlobalValue', 'playerSyncKey', 'keepNewerLocalPoints', 'isEmptySheetValue', 'preserveLocalSheetAgainstReset', 'adoptPlayerInPlace', 'mergeRollHistory', 'mergeSecretClues',
   'playerRowStamp', 'playerRowDeletedStamp', 'saveConfirmedPlayerRoster',
   'fetchPlayerRowsConfirmed', 'applyPlayerRows', 'syncPlayersDbNow', 'hydratePlayersDb'];
 
 export function buildAppSandbox(appPath, store) {
-  const src = readFileSync(appPath, 'utf8');
+  const src = readAppSources(appPath);
   const fns = NEEDED.map(n => extractFunction(src, n)).join('\n');
   const mem = new Map();
   const ctx = vm.createContext({
@@ -52,14 +66,12 @@ export function buildAppSandbox(appPath, store) {
     state: null
   });
   vm.runInContext(`
-    let playerDbHydrated=false,playerDbApplying=false,playerDbHydrating=false,playerDbHydratePromise=null,playerDbLastSyncAt=0;
-    let playerDbSyncBusy=false,playerDbSyncPromise=null,playerSyncCircuitOpen=false,playerDbReadOnly=false;
-    let lastPlayersSnapshot=[];
+    ${playerPrelude()}
     ${fns}
     globalThis.__api={
       sync:(m,o)=>syncPlayersDbNow(m,o), hydrate:()=>hydratePlayersDb(),
-      peek:()=>({readOnly:playerDbReadOnly,hydrated:playerDbHydrated,busy:playerDbSyncBusy}),
-      markHydrated:()=>{playerDbHydrated=true}
+      peek:()=>({readOnly:ps.readOnly,hydrated:ps.hydrated,busy:ps.syncBusy}),
+      markHydrated:()=>{ps.hydrated=true}
     };
   `, ctx);
   return { ctx, api: ctx.__api, mem };

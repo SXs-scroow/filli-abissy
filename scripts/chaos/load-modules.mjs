@@ -14,6 +14,7 @@ export async function loadRealStore(supabaseUrl) {
     `export const SUPABASE_URL = ${JSON.stringify(supabaseUrl)};\nexport const SUPABASE_PUBLISHABLE_KEY = 'chaos-test-key';\n`);
   const sync = readFileSync(resolve(root, 'src/globalSync.js'), 'utf8').replaceAll('import.meta.env', '({})');
   writeFileSync(resolve(out, 'globalSync.js'), sync);
+  writeFileSync(resolve(out, 'stampClock.js'), readFileSync(resolve(root, 'src/stampClock.js'), 'utf8'));
   writeFileSync(resolve(out, 'playerStore.js'), readFileSync(resolve(root, 'src/playerStore.js'), 'utf8'));
   const store = await import(pathToFileURL(resolve(out, 'playerStore.js')).href);
   const gs = await import(pathToFileURL(resolve(out, 'globalSync.js')).href);

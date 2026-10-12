@@ -3,17 +3,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { extractFunction } from '../chaos/extract-app.mjs';
+import { extractFunction, readAppSources, playerPrelude } from '../chaos/extract-app.mjs';
 
-const src = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
-const NEEDED = ['imageValue', 'clone', 'playerSyncKey', 'playerRowStamp', 'playerRowDeletedStamp',
+const src = readAppSources();
+const NEEDED = ['imageValue', 'clone', 'playerSyncKey', 'keepNewerLocalPoints', 'isEmptySheetValue', 'preserveLocalSheetAgainstReset', 'adoptPlayerInPlace', 'playerRowStamp', 'playerRowDeletedStamp',
   'mergeRollHistory', 'mergeSecretClues', 'applyPlayerRows'];
 
 function makeSandbox(localPlayers, role = 'player', activeId = 'p1') {
   const ctx = vm.createContext({ JSON, Date, Math, Map, Set, Object, Array, String, Number, console,
     playerStoreEnabled: true, normalize: () => {},
     state: { players: localPlayers, playerTombstones: {}, session: { role, playerId: activeId, login: 'ana' } } });
-  vm.runInContext(`let lastPlayersSnapshot=[];\n${NEEDED.map(n => extractFunction(src, n)).join('\n')}
+  vm.runInContext(`${playerPrelude()}\n${NEEDED.map(n => extractFunction(src, n)).join('\n')}
     globalThis.api={apply:(rows,o)=>applyPlayerRows(rows,o),merge:(...a)=>mergeSecretClues(...a),get players(){return state.players}};`, ctx);
   return ctx.api;
 }

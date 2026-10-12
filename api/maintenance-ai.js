@@ -172,7 +172,7 @@ export default async function handler(req, res) {
   const diagnostics = String(body?.diagnostics || '').slice(0, 18000);
   if (!messages.length) return json(res, 400, { error: 'MENSAGEM_VAZIA' });
 
-  const system = `Você é a IA de manutenção do site A Profecia / Filii-Abyssi.
+  const system = `Você é a IA de manutenção do site Ashen Testimony (antes A Profecia) / Filii-Abyssi.
 Sua função é ajudar o Mestre a diagnosticar erros reais do site e propor correções seguras.
 REGRAS ABSOLUTAS:
 - Não invente que executou testes, alterou arquivos, fez deploy ou corrigiu algo.

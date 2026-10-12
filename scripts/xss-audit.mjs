@@ -6,7 +6,7 @@ const file = process.argv.slice(2).find(a => !a.startsWith('--')) || 'app.js';
 const src = readFileSync(file, 'utf8');
 
 // Escapadores / conversores considerados seguros
-const SAFE_CALL = /^(esc|escAttr|safeImgSrc|safeUrl|safeMediaSrc|imageValue|Number|parseInt|parseFloat|Math\.\w+|String\(\s*Number|encodeURIComponent|JSON\.stringify)\s*\(/;
+const SAFE_CALL = /^(esc|escAttr|pointField|safeImgSrc|safeUrl|safeMediaSrc|imageValue|Number|parseInt|parseFloat|Math\.\w+|String\(\s*Number|encodeURIComponent|JSON\.stringify)\s*\(/;
 const NUMERIC = /^[\d\s+\-*/().%]+$/;
 const SAFE_IDENT = /^(i|j|k|n|idx|index|page|pages|round|total|count|len|pct|percent|max|min|val|num|hp|san|hpMax|sanMax|level|lvl)$/;
 

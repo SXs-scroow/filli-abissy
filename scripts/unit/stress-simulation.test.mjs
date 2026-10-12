@@ -3,17 +3,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { extractFunction } from '../chaos/extract-app.mjs';
+import { extractFunction, readAppSources, playerPrelude } from '../chaos/extract-app.mjs';
 
-const src = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
-const NEEDED = ['imageValue', 'clone', 'playerSyncKey', 'playerRowStamp', 'playerRowDeletedStamp',
+const src = readAppSources();
+const NEEDED = ['imageValue', 'clone', 'playerSyncKey', 'keepNewerLocalPoints', 'isEmptySheetValue', 'preserveLocalSheetAgainstReset', 'adoptPlayerInPlace', 'playerRowStamp', 'playerRowDeletedStamp',
   'mergeRollHistory', 'mergeSecretClues', 'applyPlayerRows', 'simulateRosterConvergence'];
 
 function build(mutate = t => t) {
   const real = { players: [{ id: 'REAL', login: 'real', name: 'Ficha real' }], playerTombstones: { keep: 1 }, session: { role: 'master' } };
   const ctx = vm.createContext({ JSON, Date, Math, Map, Set, Object, Array, String, Number, console, playerStoreEnabled: true, normalize: () => {}, state: real });
   const code = NEEDED.map(n => extractFunction(src, n)).join('\n');
-  vm.runInContext(`let lastPlayersSnapshot='ORIGINAL';\n${mutate(code)}\nglobalThis.sim=simulateRosterConvergence;globalThis.snap=()=>lastPlayersSnapshot;`, ctx);
+  vm.runInContext(`${playerPrelude("'ORIGINAL'")}\n${mutate(code)}\nglobalThis.sim=simulateRosterConvergence;globalThis.snap=()=>ps.lastSnapshot;`, ctx);
   return { ctx, real };
 }
 
@@ -32,7 +32,7 @@ test('a simulação NÃO altera o state real (players, tombstones, snapshot)', (
 });
 
 test('o state é restaurado mesmo quando a simulação quebra no meio', () => {
-  const { ctx, real } = build(c => c.replace('function applyPlayerRows(rows,', 'function applyPlayerRows(rows,').replace('const beforeState=JSON.stringify(state.players||[]);', 'throw new Error("boom");const beforeState=0;'));
+  const { ctx, real } = build(c => c.replace('function applyPlayerRows(rows,', 'function applyPlayerRows(rows,').replace('const beforeState=JSON.stringify(host.state.players||[]);', 'throw new Error("boom");const beforeState=0;'));
   const before = JSON.stringify(real);
   const r = ctx.sim(20, 3);
   assert.equal(r.ok, false);

@@ -1,3 +1,4 @@
+import { nextStamp, observeStamp, observePlayerStamps } from './stampClock.js';
 import { supabase, getAuthToken, handleAuthError, authCheck, syncMarkOffline, syncMarkSyncing, syncMarkSuccess, syncMarkError } from './globalSync.js';
 
 const TABLE = 'a_profecia_players';
@@ -141,6 +142,25 @@ export async function restorePlayerServer(player) {
   return restored;
 }
 
+// V1.4.7 — histórico de versões no servidor (somente o Mestre).
+export async function fetchPlayerHistory(playerId, limit = 80) {
+  if (!supabase) throw new Error('Supabase não configurado');
+  const token = getAuthToken();
+  if (!token) { const e = new Error('SESSAO_INVALIDA'); handleAuthError(e); throw e; }
+  const { data, error } = await supabase.rpc('a_profecia_player_history_list', { p_token: token, p_id: String(playerId || ''), p_limit: limit });
+  if (error) throw handleAuthError(error);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchPlayerHistoryEntry(playerId, historyId) {
+  if (!supabase) throw new Error('Supabase não configurado');
+  const token = getAuthToken();
+  if (!token) { const e = new Error('SESSAO_INVALIDA'); handleAuthError(e); throw e; }
+  const { data, error } = await supabase.rpc('a_profecia_player_history_get', { p_token: token, p_id: String(playerId || ''), p_history_id: Number(historyId) });
+  if (error) throw handleAuthError(error);
+  return data && typeof data === 'object' ? data : null;
+}
+
 export async function deletePlayerServer(playerId) {
   if (!supabase) throw new Error('Supabase não configurado');
   const token = getAuthToken();
@@ -206,8 +226,8 @@ export async function upsertPlayerTombstones(tombstones, playerIndex = {}) {
 
 
 // V1.2.1 — fila durável, liderança entre abas e reconciliação.
-const PLAYER_QUEUE_KEY='a_profecia_player_sync_queue_v1';
-const PLAYER_LEADER_KEY='a_profecia_player_sync_leader_v1';
+const PLAYER_QUEUE_KEY_BASE='a_profecia_player_sync_queue_v2';
+const PLAYER_LEADER_KEY_BASE='a_profecia_player_sync_leader_v2';
 const PLAYER_TAB_ID=(globalThis.crypto?.randomUUID?.()||`tab-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 let queueFlushTimer=0;
 let queueBusy=false;
@@ -215,15 +235,33 @@ let leaderTimer=0;
 let presenceChannel=null;
 let presenceTimer=0;
 const localQueue=new Map();
+let activeQueueScope='';
 
+// A fila de sincronização é específica da sessão. Sem esse isolamento, um
+// Player que saísse da conta no mesmo navegador poderia deixar uma alteração
+// pendente e essa alteração ser enviada posteriormente usando o token de outra
+// conta. Tokens são aleatórios, então usamos um fingerprint estável do token
+// somente como namespace de armazenamento; o token nunca é salvo na fila.
+function queueScope(){
+  const token=String(getAuthToken()||'');
+  if(!token)return 'none';
+  let h=2166136261;
+  for(let i=0;i<token.length;i++){h^=token.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  return h.toString(36);
+}
+function queueKey(){return `${PLAYER_QUEUE_KEY_BASE}:${queueScope()}`;}
+function leaderKey(){return `${PLAYER_LEADER_KEY_BASE}:${queueScope()}`;}
 function readQueue(){
+  const scope=queueScope();
+  // Nunca reutiliza itens em memória de outra sessão, mesmo sem recarregar a página.
+  if(scope!==activeQueueScope){localQueue.clear();activeQueueScope=scope;}
   try{
-    const raw=JSON.parse(localStorage.getItem(PLAYER_QUEUE_KEY)||'[]');
+    const raw=JSON.parse(localStorage.getItem(queueKey())||'[]');
     if(Array.isArray(raw)) for(const item of raw){ if(item?.id)localQueue.set(String(item.id),item); }
   }catch{}
   return [...localQueue.values()];
 }
-function writeQueue(){try{localStorage.setItem(PLAYER_QUEUE_KEY,JSON.stringify([...localQueue.values()].slice(-100)))}catch{}}
+function writeQueue(){try{localStorage.setItem(queueKey(),JSON.stringify([...localQueue.values()].slice(-100)))}catch{}}
 function queuePlayerRows(players){
   readQueue();
   for(const p of players||[]){
@@ -239,9 +277,9 @@ function removeQueued(id){localQueue.delete(String(id));writeQueue()}
 function isLeader(){
   const now=Date.now();
   try{
-    const current=JSON.parse(localStorage.getItem(PLAYER_LEADER_KEY)||'null');
+    const current=JSON.parse(localStorage.getItem(leaderKey())||'null');
     if(!current||!current.id||Number(current.expiresAt)<now||current.id===PLAYER_TAB_ID){
-      localStorage.setItem(PLAYER_LEADER_KEY,JSON.stringify({id:PLAYER_TAB_ID,expiresAt:now+5000}));
+      localStorage.setItem(leaderKey(),JSON.stringify({id:PLAYER_TAB_ID,expiresAt:now+5000}));
       return true;
     }
   }catch{}
@@ -255,11 +293,24 @@ function startLeaderLease(){
 async function flushPlayerQueue(){
   if(queueBusy||!supabase||!getAuthToken()||!isLeader()||typeof navigator!=='undefined'&&navigator.onLine===false)return false;
   readQueue(); if(!localQueue.size)return true;
+  const flushScope=queueScope();
+  const flushToken=String(getAuthToken()||'');
+  if(!flushToken)return false;
   queueBusy=true;
   try{
     for(const item of [...localQueue.values()]){
+      // Conta/token mudou durante a execução? Interrompe antes de tocar em outra fila.
+      if(queueScope()!==flushScope||String(getAuthToken()||'')!==flushToken){
+        localQueue.clear();activeQueueScope=queueScope();
+        return false;
+      }
       try{
         const saved=await rpcUpsert({id:item.id,login:item.login,data:item.data,deleted_at:null});
+        if(queueScope()!==flushScope||String(getAuthToken()||'')!==flushToken){
+          localQueue.clear();activeQueueScope=queueScope();
+          return false;
+        }
+        if(saved)observePlayerStamps([saved]);
         const remoteStamp=syncStamp(saved?.data, Number(saved?.updated_at ? new Date(saved.updated_at).getTime() : 0));
         const localStamp=syncStamp(item.data, Number(item.queuedAt)||Date.now());
         if(saved?.data && remoteStamp && localStamp && remoteStamp < localStamp){
@@ -274,13 +325,29 @@ async function flushPlayerQueue(){
             const localV=JSON.stringify(localData[k]);
             if(localV!==baseV) merged[k]=localData[k];
           }
-          merged._syncUpdatedAt=Date.now();
+          merged._syncUpdatedAt=nextStamp();
           await rpcUpsert({id:item.id,login:item.login,data:merged,deleted_at:null});
+        }
+        // O servidor devolveu a ficha SEM os pontos que enviamos (carimbo perdeu a disputa)? Não dá a edição
+        // como salva: renova os carimbos acima de tudo que já vimos e deixa na fila para a próxima rodada.
+        const localPts=Number(item.data?._pointsAt)||0,savedPts=Number(saved?.data?._pointsAt)||0;
+        if(saved?.data&&localPts>0&&savedPts<localPts&&
+           (JSON.stringify(saved.data.attrs||{})!==JSON.stringify(item.data?.attrs||{})||JSON.stringify(saved.data.skills||{})!==JSON.stringify(item.data?.skills||{}))){
+          observeStamp(savedPts);
+          item.data={...item.data,_pointsAt:nextStamp(),_syncUpdatedAt:nextStamp()};
+          throw new Error('PONTOS_NAO_CONFIRMADOS');
         }
         removeQueued(item.id);
       }catch(e){
+        if(queueScope()!==flushScope||String(getAuthToken()||'')!==flushToken){
+          localQueue.clear();activeQueueScope=queueScope();
+          return false;
+        }
         item.attempts=(Number(item.attempts)||0)+1; localQueue.set(item.id,item); writeQueue();
-        if(/SESSAO_INVALIDA|NAO_AUTORIZADO/.test(String(e?.message||'')))break;
+        if(/SESSAO_INVALIDA|NAO_AUTORIZADO/.test(String(e?.message||''))){
+          // Falha de autenticação é terminal para esta tentativa; não martela o RPC.
+          break;
+        }
       }
     }
     if(localQueue.size)syncMarkError('Alterações aguardando sincronização',localQueue.size);

@@ -18,7 +18,7 @@ const cfg = join(dir, 'tsconfig.json');
 writeFileSync(cfg, JSON.stringify({
   compilerOptions: { allowJs: true, checkJs: true, noEmit: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler',
     lib: ['es2022', 'dom', 'dom.iterable'], skipLibCheck: true, strict: false, types: [], maxNodeModuleJsDepth: 0 },
-  files: [resolve('app.js'), ...['src/globalSync.js','src/playerStore.js','src/supabaseConfig.js','src/main.js'].map(f => resolve(f)).filter(existsSync)]
+  files: [resolve('app.js'), ...['src/globalSync.js','src/playerStore.js','src/players.js','src/supabaseConfig.js','src/main.js'].map(f => resolve(f)).filter(existsSync)]
 }));
 const r = spawnSync('node', [tsc, '-p', cfg], { encoding: 'utf8' });
 // TS2304 = não encontrou o nome | TS2448/TS2454 = usado antes de declarar/atribuir

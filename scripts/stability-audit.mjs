@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 
 const index = readFileSync('index.html','utf8');
 const main = readFileSync('src/main.js','utf8');
-const app = readFileSync('app.js','utf8');
+// V1.5.2: lógica de Players está em src/players.js; as verificações olham app.js + players.js juntos.
+const app = readFileSync('app.js','utf8') + '\n' + readFileSync('src/players.js','utf8');
 const store = readFileSync('src/playerStore.js','utf8');
 const sync = readFileSync('src/globalSync.js','utf8');
 const migration = readFileSync('supabase/migrations/20260927000000_player_delete_integrity.sql','utf8');
@@ -11,7 +12,7 @@ const syncRegression = readFileSync('scripts/player-sync-regression.mjs','utf8')
 const passwordMigration = readFileSync('supabase/migrations/20260929110000_player_password_reset_and_sync_guard.sql','utf8');
 
 const checks = [
-  ['cache bust matches', /main\.js\?v=1500/.test(index) && /app\.js\?build=1500/.test(main)],
+  ['cache bust matches', /main\.js\?v=1501/.test(index) && /app\.js\?build=1501/.test(main)],
   ['dedicated delete RPC is used', /deletePlayerServer\(id\)/.test(app) && /a_profecia_player_delete/.test(store)],
   ['deleted rows cannot be undeleted', (/PLAYER_EXCLUIDO/.test(app) || /PLAYER_EXCLUIDO/.test(readFileSync('src/globalSync.js','utf8'))) && /a_profecia_players_no_undelete/.test(migration)],
   ['pending creates are explicit', /_pendingCreate/.test(app)],
