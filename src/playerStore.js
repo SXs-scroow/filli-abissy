@@ -366,7 +366,10 @@ export function startPlayerSyncInfrastructure(){
 }
 
 // Start only after module-scoped queue state has been initialized.
-startPlayerSyncInfrastructure();
+const stopStartedPlayerSyncInfrastructure = startPlayerSyncInfrastructure();
+// Encerra o intervalo do leader lease iniciado acima. O navegador não precisa disso (o timer vive com a página),
+// mas processos Node (suíte de caos) ficariam pendurados para sempre com o setInterval ativo.
+export function stopPlayerSyncInfrastructure(){stopStartedPlayerSyncInfrastructure()}
 
 export function subscribePlayerPresence(sessionId, playerId, callback){
   if(!supabase||!sessionId||!playerId)return ()=>{};

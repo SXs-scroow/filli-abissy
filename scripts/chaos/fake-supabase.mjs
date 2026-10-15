@@ -49,6 +49,37 @@ export function createFakeSupabase() {
       return own ? [shape(own)] : [];
     },
 
+    a_profecia_get_players_by_ids({ p_token, p_ids }) {
+      const token = String(p_token || '');
+      const requested = [...new Set((Array.isArray(p_ids) ? p_ids : []).map(id => String(id || '').trim()).filter(Boolean))].slice(0, 50);
+      if (!requested.length) return [];
+
+      // A revoked Player session may only read its own explicit deletion marker.
+      if (!db.sessions.has(token)) {
+        const ownId = db.revoked.get(token);
+        const own = ownId && db.players.get(ownId);
+        if (!own?.deleted_at || !requested.includes(ownId)) throw fail('SESSAO_INVALIDA');
+        return [{ id: own.id, login: own.login, data: { _syncUpdatedAt: stampOf(own) }, updated_at: own.updated_at, deleted_at: own.deleted_at }];
+      }
+
+      const s = auth(token);
+      const shape = p => ({
+        id: p.id,
+        login: p.login,
+        data: p.deleted_at
+          ? (s.role === 'player' ? { _syncUpdatedAt: stampOf(p) } : strip(p.data))
+          : strip(p.data),
+        updated_at: p.updated_at,
+        deleted_at: p.deleted_at
+      });
+      if (s.role === 'master') return requested.map(id => db.players.get(id)).filter(Boolean).map(shape);
+      if (s.role === 'player') {
+        const own = db.players.get(s.player_id);
+        return own && requested.includes(own.id) ? [shape(own)] : [];
+      }
+      throw fail('NAO_AUTORIZADO');
+    },
+
     a_profecia_player_save({ p_token, p_id, p_login, p_data, p_sync_updated_at, p_deleted_at }) {
       const s = auth(p_token);
       if (s.role === 'player' && s.player_id !== p_id) throw fail('NAO_AUTORIZADO');

@@ -19,8 +19,8 @@ export function initPlayers(deps){
 export const ps={
   timer:null,hydrated:false,applying:false,hydrating:false,hydratePromise:null,lastSyncAt:0,
   unsubscribe:null,syncBusy:false,syncPromise:null,
-  // Circuit breaker de segurança: um teste de carga ou uma anomalia confirmada pode
-  // pausar o sync automático nesta abertura para impedir sobrescritas/ressurreições.
+  // Circuit breaker reservado a falhas reais confirmadas da sincronização.
+  // O teste de carga usa dados artificiais e nunca deve abrir esta proteção.
   circuitOpen:false,
   readOnly:false,
   lastSnapshot:[]
@@ -194,7 +194,10 @@ async function fetchPlayerRowsConfirmed(ids=null){
   observePlayerStamps(first);
   if(first.length)return first;
   await new Promise(r=>setTimeout(r,600));
-  try{const second=await read();observePlayerStamps(second);return second;}catch{return first;}
+  // Uma segunda leitura que falha não confirma que o roster está vazio.
+  // Propaga o erro para a sincronização entrar em modo seguro e preservar
+  // fichas, snapshot e tombstones locais.
+  const second=await read();observePlayerStamps(second);return second;
 }
 function applyPlayerRows(rows,{initial=false,authoritative=false}={}){
   observePlayerStamps(rows);
@@ -365,6 +368,10 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
     const remoteById=new Map(rows.map(r=>[String(r.id),r]));
     const localById=new Map((host.state.players||[]).map(p=>[playerSyncKey(p),p]));
     const startKeys=new Set(localById.keys()); // o que existia quando a foto foi tirada (para detectar mudanças durante os awaits)
+    // Exclusões confirmadas pelo servidor não podem ser reintroduzidas pela foto local
+    // capturada antes do await. startKeys distingue mudanças concorrentes, mas não
+    // distingue uma remoção autoritativa feita durante esta própria reconciliação.
+    const confirmedDeletedKeys=new Set();
 
     // V66.7: o servidor é a fonte de verdade para descobrir Players novos.
     // Antes, esta rotina só percorria o estado local; por isso um Mestre que já
@@ -376,6 +383,7 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
       const k=String(row?.id||'').trim(); if(!k)continue;
       const remoteStamp=playerRowStamp(row);
       if(row?.deleted_at){
+        confirmedDeletedKeys.add(k);
         host.state.playerTombstones=host.state.playerTombstones||{};
         host.state.playerTombstones[k]=Math.max(Number(host.state.playerTombstones[k])||0,playerRowDeletedStamp(row)||remoteStamp||nextStamp());
         localById.delete(k);
@@ -406,6 +414,7 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
       if(localTomb){ localById.delete(k); continue; }
       const remote=remoteById.get(k), localStamp=Number(p._syncUpdatedAt)||0, remoteStamp=playerRowStamp(remote);
       if(remote?.deleted_at){
+        confirmedDeletedKeys.add(k);
         localById.delete(k);
         host.state.playerTombstones=host.state.playerTombstones||{};
         host.state.playerTombstones[k]=Math.max(Number(host.state.playerTombstones[k])||0,remoteStamp||nextStamp());
@@ -494,7 +503,7 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
         if(!c){if(!startKeys.has(k))merged.set(k,p);continue}          // removida durante o await: respeita a remoção
         merged.set(k,(Number(c._syncUpdatedAt)||0)>=(Number(p._syncUpdatedAt)||0)?c:p); // versão mais nova vence
       }
-      for(const [k,c] of cur){if(!merged.has(k)&&!startKeys.has(k))merged.set(k,c)}      // criada durante o await: mantém
+      for(const [k,c] of cur){if(confirmedDeletedKeys.has(k))continue;if(!merged.has(k)&&!startKeys.has(k))merged.set(k,c)}      // criada durante o await: mantém, exceto exclusão confirmada pelo servidor
       for(const [k,tm] of Object.entries(host.state.playerTombstones||{})){const p=merged.get(k);if(p&&Number(tm)>=(Number(p._syncUpdatedAt)||0))merged.delete(k)}
       host.state.players=[...merged.values()];
     }

@@ -54,6 +54,7 @@ export function buildAppSandbox(appPath, store) {
     setTimeout, clearTimeout, JSON, Date, Math, Promise, Map, Set, Object, Array, String, Number,
     playerStoreEnabled: true,
     fetchPlayerRows: store.fetchPlayers,
+    fetchPlayersByIds: store.fetchPlayersByIds,
     upsertPlayers: store.upsertPlayers,
     upsertPlayerTombstones: store.upsertPlayerTombstones,
     storageGet: k => mem.get(k) ?? null,

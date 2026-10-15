@@ -10,9 +10,11 @@ const migration = readFileSync('supabase/migrations/20260927000000_player_delete
 const explicitMigration = readFileSync('supabase/migrations/20260930000000_list_players_explicit_deleted_at.sql','utf8');
 const syncRegression = readFileSync('scripts/player-sync-regression.mjs','utf8');
 const passwordMigration = readFileSync('supabase/migrations/20260929110000_player_password_reset_and_sync_guard.sql','utf8');
+const indexCacheVersion = index.match(/src="\/src\/main\.js\?v=(\d+)"/)?.[1] || '';
+const appCacheVersion = main.match(/app\.js\?build=(\d+)/)?.[1] || '';
 
 const checks = [
-  ['cache bust matches', /main\.js\?v=1501/.test(index) && /app\.js\?build=1501/.test(main)],
+  ['cache bust matches and is refreshed', !!indexCacheVersion && indexCacheVersion === appCacheVersion && indexCacheVersion !== '1501'],
   ['dedicated delete RPC is used', /deletePlayerServer\(id\)/.test(app) && /a_profecia_player_delete/.test(store)],
   ['deleted rows cannot be undeleted', (/PLAYER_EXCLUIDO/.test(app) || /PLAYER_EXCLUIDO/.test(readFileSync('src/globalSync.js','utf8'))) && /a_profecia_players_no_undelete/.test(migration)],
   ['pending creates are explicit', /_pendingCreate/.test(app)],
@@ -29,6 +31,8 @@ const checks = [
   ['realtime only treats a physical DELETE as a missing-row deletion', /ops\.get\(id\) === 'delete'/.test(store)],
   ['network chaos test is included', /createChaosProxy/.test(readFileSync('scripts/chaos/network-chaos.test.mjs','utf8'))],
   ['sync regression suite is included', /Player sync regression audit/.test(syncRegression)],
+  ['Player roster polling uses jitter to avoid synchronized client bursts', /delay\*\(0\.85\+Math\.random\(\)\*0\.30\)/.test(app) && /schedulePlayerReconcile/.test(app)],
+  ['global state polling uses jitter and schedules the next request after completion', /pollDelay\*\(0\.85\+Math\.random\(\)\*0\.30\)/.test(app) && /finally\{scheduleGlobalPoll\(\);\}/.test(app)],
 ];
 let failed=false;
 for (const [name, ok] of checks) {

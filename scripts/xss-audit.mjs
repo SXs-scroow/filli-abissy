@@ -39,7 +39,13 @@ function scanTemplate(s, i) {
   return { start, end: i, text, exprs };
 }
 
-function lineOf(pos) { let n = 1; for (let k = 0; k < pos; k++) if (src.charCodeAt(k) === 10) n++; return n; }
+const lineStarts = [0];
+for (let i = 0; i < src.length; i++) if (src.charCodeAt(i) === 10) lineStarts.push(i + 1);
+function lineOf(pos) {
+  let lo = 0, hi = lineStarts.length;
+  while (lo + 1 < hi) { const mid = (lo + hi) >>> 1; if (lineStarts[mid] <= pos) lo = mid; else hi = mid; }
+  return lo + 1;
+}
 
 const NUMERIC_CALL = /^(clamp|effectiveAttr|effectiveSkill|derivedMax|spellCost|resourceState|punchDamage|damageFor|calc\w*|total\w*|count\w*|round\w*)\s*\(/;
 function isSafeExpr(code) {
@@ -119,7 +125,12 @@ let templates = 0, htmlTemplates = 0, interpolations = 0;
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (c === '/' && src[i + 1] === '/') { i = src.indexOf('\n', i); if (i < 0) break; continue; }
-    if (c === '/' && src[i + 1] === '*') { i = src.indexOf('*/', i) + 1; continue; }
+    if (c === '/' && src[i + 1] === '*') {
+      const end = src.indexOf('*/', i + 2);
+      if (end >= 0) { i = end + 1; continue; }
+      // Nunca use indexOf(...)+1 sem validar: -1 reiniciava a varredura em zero.
+      // Sem terminador, avance como código normal; `npm run check` avalia a sintaxe.
+    }
     if (c === "'" || c === '"') { i = skipString(src, i, c); continue; }
     if (c === '`') {
       const t = scanTemplate(src, i); templates++;

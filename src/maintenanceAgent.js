@@ -130,7 +130,10 @@ function ensure(){
   const isMaster=!!context().session?.role&&context().session.role==='master';b.hidden=!isMaster;
   if(modalOpen&&!aiPanelOpen&&!aiBusy)renderModal();
 }
-function bind(){if(bound)return;bound=true;window.addEventListener('error',e=>addEvent('error',e.message||'Erro JavaScript',{source:e.filename||'',line:e.lineno||0}));window.addEventListener('unhandledrejection',e=>addEvent('rejection',e.reason?.message||String(e.reason||'Promise rejeitada')));window.addEventListener('online',()=>addEvent('network','Conexão restabelecida'));window.addEventListener('offline',()=>addEvent('network','Conexão perdida'));setInterval(ensure,2000);ensure()}
+function bind(){if(bound)return;bound=true;window.addEventListener('error',e=>addEvent('error',e.message||'Erro JavaScript',{source:e.filename||'',line:e.lineno||0}));window.addEventListener('unhandledrejection',e=>addEvent('rejection',e.reason?.message||String(e.reason||'Promise rejeitada')));window.addEventListener('online',()=>addEvent('network','Conexão restabelecida'));window.addEventListener('offline',()=>addEvent('network','Conexão perdida'));// O botão de manutenção não precisa ser reconciliado a cada 2 s.
+  // Um intervalo menor gerava trabalho periódico em todas as sessões, inclusive
+  // durante a mesa. Eventos de visibilidade/rede cobrem mudanças imediatas.
+  setInterval(ensure,10000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')ensure()});ensure()}
 window.__aProfeciaMaintenance={version:AGENT_VERSION,open,close,status,proposal,events,ensure};
 window.addEventListener('DOMContentLoaded',bind,{once:true});
 setTimeout(bind,0);

@@ -12,7 +12,49 @@ export async function loadRealStore(supabaseUrl) {
   mkdirSync(out, { recursive: true });
   writeFileSync(resolve(out, 'supabaseConfig.js'),
     `export const SUPABASE_URL = ${JSON.stringify(supabaseUrl)};\nexport const SUPABASE_PUBLISHABLE_KEY = 'chaos-test-key';\n`);
-  const sync = readFileSync(resolve(root, 'src/globalSync.js'), 'utf8').replaceAll('import.meta.env', '({})');
+  let sync = readFileSync(resolve(root, 'src/globalSync.js'), 'utf8').replaceAll('import.meta.env', '({})');
+  // A suíte deve conseguir rodar também em ambientes isolados, sem npm install.
+  // Quando o SDK real está instalado, ele continua sendo usado; o fallback abaixo
+  // implementa apenas o transporte RPC necessário contra o servidor Supabase falso.
+  try {
+    await import.meta.resolve('@supabase/supabase-js');
+  } catch {
+    writeFileSync(resolve(out, 'supabase-test-client.js'), `
+export function createClient(url, key) {
+  const base = String(url).endsWith('/') ? String(url).slice(0, -1) : String(url);
+  const makeChannel = () => {
+    const channel = {
+      on() { return channel; },
+      subscribe(callback) { if (typeof callback === 'function') queueMicrotask(() => callback('SUBSCRIBED')); return channel; },
+      track() { return Promise.resolve('ok'); },
+      presenceState() { return {}; },
+      send() { return Promise.resolve({ status: 'ok' }); }
+    };
+    return channel;
+  };
+  return {
+    async rpc(name, args = {}) {
+      let response;
+      try {
+        response = await fetch(base + '/rest/v1/rpc/' + encodeURIComponent(name), {
+          method: 'POST',
+          headers: { apikey: key, authorization: 'Bearer ' + key, 'content-type': 'application/json' },
+          body: JSON.stringify(args)
+        });
+      } catch (cause) { return { data: null, error: { message: String(cause?.message || cause) } }; }
+      let body = null;
+      try { body = await response.json(); } catch (cause) { return { data: null, error: { status: response.status, message: String(cause?.message || cause || 'Resposta RPC inválida') } }; }
+      return response.ok ? { data: body, error: null } : { data: null, error: { ...(body && typeof body === 'object' ? body : {}), status: response.status, message: body?.message || response.statusText || 'RPC failed' } };
+    },
+    channel: makeChannel,
+    removeChannel() { return Promise.resolve('ok'); },
+    storage: { from(bucket) { return { getPublicUrl(path) { return { data: { publicUrl: base + '/storage/v1/object/public/' + bucket + '/' + path } }; } }; } },
+    functions: { async invoke() { return { data: null, error: { message: 'Functions.invoke não está implementado no adaptador de teste' } }; } }
+  };
+}
+`);
+    sync = sync.replace("import { createClient } from '@supabase/supabase-js';", "import { createClient } from './supabase-test-client.js';");
+  }
   writeFileSync(resolve(out, 'globalSync.js'), sync);
   writeFileSync(resolve(out, 'stampClock.js'), readFileSync(resolve(root, 'src/stampClock.js'), 'utf8'));
   writeFileSync(resolve(out, 'playerStore.js'), readFileSync(resolve(root, 'src/playerStore.js'), 'utf8'));

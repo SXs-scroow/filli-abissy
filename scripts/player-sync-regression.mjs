@@ -18,14 +18,19 @@ const checks = [
   ['Master entity save declares passwordToSet/secretLovedDraft in the handler scope', /onclick=async\(\)=>\{const isP=type==='player',list=isP\?state\.players:state\.creatures;let passwordToSet='',secretLovedDraft='';/.test(app)],
   ['Same-view re-renders do not replay the enter animation (anti-flicker)', /classList\.toggle\('no-enter-anim',!!same\)/.test(app) && /#root\.no-enter-anim \.main/.test(readFileSync(new URL('../styles.css', import.meta.url), 'utf8'))],
   ['Stress test performs 20-client concurrent targeted server reads', /virtualClients=20/.test(app) && /Promise\.all\(targets\.map\(async\(id\)=>/.test(app) && /fetchPlayersByIds\(id\?\[id\]:\[\]\)/.test(app)],
+  ['Stress test scales local simulation to 50 and 100 virtual clients while limiting real server reads', /for\(const clients of \[50,100\]\)/.test(app) && /scaleTests/.test(app) && /up to 20|até 20 leituras concorrentes ao servidor/i.test(app)],
   ['Stress test uses the real applyPlayerRows in an isolated state', /function simulateRosterConvergence\(/.test(app) && /applyPlayerRows\(rows,\{authoritative:false\}\)\}finally\{c\.players=state\.players/.test(app) && /finally\{state\.players=savedPlayers;state\.playerTombstones=savedTomb;ps\.lastSnapshot=savedSnap\}/.test(app)],
-  ['Stress test only opens the circuit breaker on logic failures, never on network errors', /const logicFail=!sim\.ok\|\|serverMismatch\.length>0;/.test(app) && /serverFailures>0\?'inconclusive'/.test(app) && (app.match(/ps\.circuitOpen=true/g)||[]).length===1 && /if\(logicFail\)\{[\s\S]{0,400}ps\.circuitOpen=true/.test(app)],
+  ['Stress-test fixtures use valid campaign attributes so derived HP is not clamped to 1', /campaignType:'campaign',attrs:\{Corpo:2,Sanidade:2\},skills:\{\},attrLimits:\{\},hp:10,hpMax:18/.test(app)],
+  ['Stress test reports logic failure without changing live sync protection', /const logicFail=!sim\.ok\|\|scaleTests\.some\(x=>!x\.ok\)\|\|serverMismatch\.length>0;/.test(app) && /serverFailures>0\?'inconclusive'/.test(app) && /if\(logicFail\)\{[\s\S]{0,800}sincronização real NÃO foi pausada/.test(app) && !/ps\.circuitOpen=true/.test(app)],
   ['Stress test reports PARCIAL (not PASSOU) when the server part was skipped', /outcome=logicFail\?'failed':serverFailures>0\?'inconclusive':skipReason\?'partial':'passed'/.test(app)],
-  ['Stress failure opens Player sync circuit breaker', /ps\.circuitOpen=true/.test(app) && /if\(ps\.circuitOpen&&!manual\)return false/.test(app)],
+  ['Player sync circuit breaker is controlled only by real sync flow, not stress test', !/ps\.circuitOpen=true/.test(app) && /if\(ps\.circuitOpen&&!manual\)return false/.test(app)],
   ['Automatic reconciliation respects circuit breaker', /if\(ps\.circuitOpen\)return;/.test(app)],
   ['Master secret is isolated from Player roster JSON', /delete data\.secretLovedEffect/.test(store) && /a_profecia_player_master_secret_get/.test(sync) && /a_profecia_player_master_secret_save/.test(sync)],
   ['Player command center includes calculated ficha data', /punchDamage\(p\)/.test(app) && /trainedSkills\(p\)/.test(app) && /player-dossier-stats/.test(app)],
   ['Hunger drops automatically every 5 rounds', /round%5===0/.test(app) && /tickPlayerHungerOnRound/.test(app)],
+  ['Session order normalization makes turnOrder unique and contiguous', /ordered\.forEach\(\(entry,index\)=>\{entry\.turnOrder=index\}\)/.test(app)],
+  ['New session resets encounter state and allows the Master to select Players', /fresh\.active=false;fresh\.round=1;fresh\.turn=0;fresh\.currentKey='';fresh\.actedKeys=\[\];fresh\.history=\[\];/.test(app) && /openCombatNewSessionPicker/.test(app) && /fresh\.participants=buildCombatSessionParticipants\(players,selected\)/.test(app)],
+  ['Session tools are collapsed by default to simplify the table UI', /<details class="player-utilities combat-secondary-tools">/.test(app)],
   // V67: um Player não pode perder a própria ficha (nem o snapshot de fallback)
   // por causa de uma leitura vazia/transitória do servidor. Uma segunda leitura
   // confirma antes de tratar isso como autoritativo, e a própria ficha do

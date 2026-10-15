@@ -13,6 +13,7 @@ import { createFakeSupabase } from './fake-supabase.mjs';
 import { createChaosProxy } from './chaos-proxy.mjs';
 import { loadRealStore, cleanupBuild } from './load-modules.mjs';
 import { buildAppSandbox } from './extract-app.mjs';
+import { resetStampClock } from '../../src/stampClock.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 let fake, proxy, store, gs;
@@ -49,9 +50,9 @@ before(async () => {
   globalThis.sessionStorage = { getItem: k => sessions[k] ?? null, setItem: (k, v) => { sessions[k] = v; }, removeItem: k => { delete sessions[k]; } };
   ({ store, gs } = await loadRealStore(`http://127.0.0.1:${proxyPort}`));
 });
-after(async () => { await proxy.close(); await fake.close(); cleanupBuild(); });
+after(async () => { store.stopPlayerSyncInfrastructure(); await proxy.close(); await fake.close(); cleanupBuild(); });
 beforeEach(() => {
-  fake.reset(); proxy.heal(); proxy.clearLog();
+  fake.reset(); proxy.heal(); proxy.clearLog(); resetStampClock();
   fake.addSession('tok-master', 'master');
   fake.addSession('tok-p1', 'player', 'p1');
 });
@@ -146,7 +147,7 @@ test('corte no meio da leitura: ficha, snapshot e tombstones intactos', async ()
   const c = makeClient('player', 'p1', [ficha('p1', { _syncUpdatedAt: 1000 })]);
   const before = clone(c.ctx.state.players[0]);
 
-  proxy.inject('a_profecia_list_players', 'cut-response', { times: 4, fraction: 0.4 });
+  proxy.inject('a_profecia_get_players_by_ids', 'cut-response', { times: 4, fraction: 0.4 });
   assert.equal(await c.api.sync(true), false);
   assert.deepEqual(plain(c.ctx.state.players[0]), before);
   assert.equal(c.ctx.state.session.playerSnapshot.id, 'p1');
@@ -178,7 +179,7 @@ test('exclusão pelo Mestre chega ao Player como deleted_at explícito (e só en
   gs.setAuthToken('tok-p1');
 
   // Rede cai justo na leitura seguinte: ninguém sabe se foi excluída => NÃO remove.
-  proxy.inject('a_profecia_list_players', 'cut-response', { times: 2 });
+  proxy.inject('a_profecia_get_players_by_ids', 'cut-response', { times: 2 });
   await c.api.sync(true);
   assert.equal(c.ctx.state.players.length, 1, 'sem confirmação explícita a ficha fica');
 
@@ -246,7 +247,7 @@ test('realtime: ausência na leitura NÃO fabrica exclusão; exclusão explícit
   const rt = realtimeHarness();
   try {
     // (a) evento sobre a própria ficha + rede cortada => nenhum callback
-    proxy.inject('a_profecia_list_players', 'cut-response', { times: 5 });
+    proxy.inject('a_profecia_get_players_by_ids', 'cut-response', { times: 5 });
     rt.emit('p1', 'update'); await settle(300);
     assert.equal(rt.events.length, 0);
     proxy.heal();
@@ -255,15 +256,18 @@ test('realtime: ausência na leitura NÃO fabrica exclusão; exclusão explícit
     rt.emit('p9', 'update'); await settle(900);
     assert.equal(rt.events.length, 0, 'ausência não é exclusão');
 
-    // (c) exclusão explícita da própria ficha => callback com deleted_at real
+    // (c) DELETE físico anunciado pelo trigger (op=delete) => marcador.
+    //     Roda ANTES da exclusão do p1: depois dela o token tok-p1 é revogado e, por contrato
+    //     (RPC real e servidor simulado), só pode ler a tombstone da PRÓPRIA ficha.
+    rt.emit('p7', 'delete'); await settle(900);
+    assert.equal(rt.events.length, 1);
+    assert.deepEqual(rt.events[0], { id: 'p7', deleted_at: 'deleted' });
+
+    // (d) exclusão explícita da própria ficha => callback com deleted_at real
     gs.setAuthToken('tok-master'); await store.deletePlayerServer('p1'); gs.setAuthToken('tok-p1');
     rt.emit('p1', 'update'); await settle(300);
-    assert.equal(rt.events.length, 1);
-    assert.ok(rt.events[0].deleted_at && rt.events[0].deleted_at !== 'deleted', 'deleted_at vem da linha');
-
-    // (d) DELETE físico anunciado pelo trigger (op=delete) => marcador
-    rt.emit('p7', 'delete'); await settle(900);
     assert.equal(rt.events.length, 2);
-    assert.deepEqual(rt.events[1], { id: 'p7', deleted_at: 'deleted' });
+    assert.ok(rt.events[1].deleted_at && rt.events[1].deleted_at !== 'deleted', 'deleted_at vem da linha');
+    assert.equal(rt.events[1].id, 'p1');
   } finally { rt.stop(); }
 });

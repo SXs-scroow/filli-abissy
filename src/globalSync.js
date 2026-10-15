@@ -53,10 +53,40 @@ export function handleAuthError(error) {
   }
   return error;
 }
+const SESSION_PUZZLE_RPCS = new Set([
+  'a_profecia_session_puzzles_list', 'a_profecia_session_puzzle_save',
+  'a_profecia_session_puzzle_delete', 'a_profecia_session_puzzle_unlock',
+  'a_profecia_session_master_notes_get', 'a_profecia_session_master_notes_save'
+]);
+let sessionPuzzleSchemaUnavailable = false;
+function isMissingSessionPuzzleRpc(error) {
+  const code = String(error?.code || '').toUpperCase();
+  const status = Number(error?.status) || 0;
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return code === 'PGRST202' || status === 404 || /could not find the function|schema cache|PGRST202|a_profecia_session_.*not found/i.test(message);
+}
+function sessionPuzzleSchemaError() {
+  const error = new Error('As funções de puzzles não estão registradas no Supabase. Execute supabase/migrations/20261014120000_session_puzzles.sql no SQL Editor e recarregue o site.');
+  error.code = 'PGRST202'; error.status = 404; error.schemaMissing = true;
+  return error;
+}
 async function rpc(name, args) {
   if (!supabase) throw new Error('Supabase não configurado');
+  // Se uma RPC da migração de puzzles der PGRST202/404, não repetir o mesmo
+  // pedido a cada render. O estado é válido até recarregar o site após aplicar SQL.
+  if (SESSION_PUZZLE_RPCS.has(name) && sessionPuzzleSchemaUnavailable) throw sessionPuzzleSchemaError();
   const { data, error } = await supabase.rpc(name, args);
-  if (error) throw handleAuthError(error);
+  if (error) {
+    if (SESSION_PUZZLE_RPCS.has(name) && isMissingSessionPuzzleRpc(error)) {
+      sessionPuzzleSchemaUnavailable = true;
+      const actionable = sessionPuzzleSchemaError();
+      actionable.details = error?.details || '';
+      actionable.hint = error?.hint || '';
+      actionable.cause = error;
+      throw actionable;
+    }
+    throw handleAuthError(error);
+  }
   return data;
 }
 export function authErrorText(error) {
@@ -96,6 +126,27 @@ export async function getPlayerMasterSecret(playerId) {
 }
 export async function savePlayerMasterSecret(playerId, secretLovedEffect) {
   return await rpc('a_profecia_player_master_secret_save', { p_token: getAuthToken(), p_player_id: String(playerId || ''), p_secret_loved_effect: String(secretLovedEffect || '') });
+}
+
+// V1.5.25: puzzles de sessão usam RPCs privadas. Credenciais e conteúdo dos arquivos
+// nunca são adicionados ao JSON global entregue aos jogadores.
+export async function listSessionPuzzles(sessionId) {
+  return await rpc('a_profecia_session_puzzles_list', { p_token: getAuthToken(), p_session_id: String(sessionId || '') });
+}
+export async function saveSessionPuzzle(sessionId, puzzle) {
+  return await rpc('a_profecia_session_puzzle_save', { p_token: getAuthToken(), p_session_id: String(sessionId || ''), p_puzzle: puzzle || {} });
+}
+export async function deleteSessionPuzzle(sessionId, puzzleId) {
+  return await rpc('a_profecia_session_puzzle_delete', { p_token: getAuthToken(), p_session_id: String(sessionId || ''), p_puzzle_id: String(puzzleId || '') });
+}
+export async function unlockSessionPuzzle(sessionId, puzzleId, login, password) {
+  return await rpc('a_profecia_session_puzzle_unlock', { p_token: getAuthToken(), p_session_id: String(sessionId || ''), p_puzzle_id: String(puzzleId || ''), p_login: String(login || ''), p_password: String(password || '') });
+}
+export async function getSessionMasterNotes(sessionId) {
+  return await rpc('a_profecia_session_master_notes_get', { p_token: getAuthToken(), p_session_id: String(sessionId || '') });
+}
+export async function saveSessionMasterNotes(sessionId, notes) {
+  return await rpc('a_profecia_session_master_notes_save', { p_token: getAuthToken(), p_session_id: String(sessionId || ''), p_notes: String(notes || '') });
 }
 export async function changePlayerPassword(playerId, newPassword) {
   return await rpc('a_profecia_player_set_password', {
