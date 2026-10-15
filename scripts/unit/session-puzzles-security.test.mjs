@@ -21,7 +21,8 @@ test('puzzles usam RPCs privadas e não são inseridos no JSON global do jogo', 
   assert.match(app, /data-puzzle-unlock-form/);
   assert.match(app, /await unlockSessionPuzzle\(/);
   assert.match(app, /function terminalFileWindowMarkup\(p,unlocked,opened\)/);
-  assert.match(app, /opened==='secret'\?String\(unlocked\.content\|\|''\)/);
+  assert.match(app, /decodeAshenDesktopContent\(unlocked\.content\|\|''\)/);
+  assert.match(app, /decoded\.config\?\.corrupted/);
   assert.match(app, /<pre>\$\{esc\(body\)\}<\/pre>/);
   assert.match(app, /unlocked\?terminalDesktopMarkup\(p,unlocked\):terminalLoginMarkup\(p\)/);
   assert.match(app, /primeTerminalAudio\(\)/);

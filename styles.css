@@ -2182,8 +2182,8 @@ body::before{
 .ashen-boot-brand>span{display:grid;place-items:center;width:42px;height:42px;border:1px solid #80be99;color:#b6f1cc;font-size:23px;box-shadow:0 0 20px #4b9d6c40}
 .ashen-boot-brand>div{display:grid;gap:4px}.ashen-boot-brand strong{font-size:clamp(15px,2vw,21px)}.ashen-boot-brand small,.ashen-boot-brand>i{font-size:9px;color:#719d83;font-style:normal}.ashen-boot-brand>i{margin-left:auto}
 .ashen-terminal-boot-screen pre{display:grid;gap:8px;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;font-size:clamp(10px,1.45vw,13px);line-height:1.45;color:#95c9a8}
-.ashen-terminal-boot-screen pre span{opacity:0;animation:ashenBootLine .12s steps(1,end) forwards;animation-delay:calc(var(--line-index)*.12s)}
-.ashen-boot-progress{height:7px;border:1px solid #375e47;background:#0b1710;overflow:hidden;margin-top:auto}.ashen-boot-progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,#458a5e,#baf0c7);box-shadow:0 0 16px #8ee2a1;animation:ashenBootProgress 2.55s cubic-bezier(.22,.74,.21,1) forwards}
+.ashen-terminal-boot-screen pre span{opacity:0;animation:ashenBootLine .12s steps(1,end) forwards;animation-delay:calc(var(--line-index)*1.4s)}
+.ashen-boot-progress{height:7px;border:1px solid #375e47;background:#0b1710;overflow:hidden;margin-top:auto}.ashen-boot-progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,#458a5e,#baf0c7);box-shadow:0 0 16px #8ee2a1;animation:ashenBootProgress 34s cubic-bezier(.22,.74,.21,1) forwards}
 .ashen-boot-bottom{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:9px;letter-spacing:.13em;color:#659477}.ashen-boot-bottom strong{color:#c6efd1;animation:ashenBootBlink .7s steps(2,start) infinite}
 .ashen-boot-scanline{pointer-events:none;position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0 3px,#a9ffc008 4px);mix-blend-mode:screen}
 .session-puzzle-audio-list{display:grid;gap:7px;margin-top:10px}.session-puzzle-audio-item{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:8px;align-items:center;padding:9px;border:1px solid var(--line, #3c4038);background:rgba(0,0,0,.16)}.session-puzzle-audio-item>span:first-child{font-size:22px;color:#c5a45a}.session-puzzle-audio-item>span:nth-child(2){display:grid;gap:3px;min-width:0}.session-puzzle-audio-item b{overflow-wrap:anywhere;font-size:.85em}.session-puzzle-audio-item small{color:var(--muted,#999);font-size:.72em}
@@ -2206,3 +2206,43 @@ body::before{
 .ashen-terminal-boot-screen pre span{animation-duration:.18s}
 .ashen-boot-progress i{animation-duration:4.4s!important}
 @media(max-width:760px){.ashen-terminal-file-dock{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;padding:8px}.ashen-terminal-file-dock>button.ashen-desktop-folder{min-width:0}.ashen-folder-art{width:40px;height:30px}}
+
+/* V1.5.34: inicialização longa e mensagem final quase subliminar */
+.ashen-terminal-boot-screen pre span.ashen-hidden-heresy{opacity:0;animation:ashenHeresyFlash .34s linear 30.8s forwards;color:#b8e5c8;text-shadow:0 0 8px #a9ffc0}
+@keyframes ashenHeresyFlash{0%{opacity:0}18%{opacity:.62}48%{opacity:.18}70%{opacity:.48}100%{opacity:0}}
+.ashen-desktop-folder .ashen-folder-art{display:grid;place-items:center;width:48px;height:38px;border:1px solid #6e9da7;border-radius:4px 7px 3px 3px;background:linear-gradient(145deg,#b7d9df,#507b86 70%,#203d46);color:#10242b;box-shadow:inset 0 2px 0 #e1f6f8,0 5px 16px #0006;font-size:21px}
+
+/* V1.5.36: boot de 25s, símbolo ASCII persistente e logs rápidos */
+.ashen-terminal-boot-screen{gap:clamp(9px,1.5vw,16px)}
+.ashen-boot-core{display:grid;grid-template-columns:minmax(90px,22%) minmax(0,1fr);gap:clamp(10px,2vw,24px);min-height:0;flex:1;align-items:center}
+.ashen-boot-ascii{margin:0;white-space:pre;font-size:clamp(8px,1.15vw,13px);line-height:1.18;color:#b9f0cb;text-shadow:0 0 8px #85dba555;animation:ashenAsciiPulse 2.8s steps(2,end) infinite;align-self:center}
+.ashen-terminal-boot-screen pre.ashen-boot-logs{min-width:0;max-height:100%;overflow:hidden;gap:clamp(3px,.55vw,7px);font-size:clamp(9px,1.15vw,12px);line-height:1.32}
+.ashen-terminal-boot-screen .ashen-boot-logs span{animation-delay:calc(var(--line-index)*.72s);animation-duration:.12s}
+.ashen-terminal-boot-screen .ashen-boot-progress i{animation-duration:25s!important}
+.ashen-terminal-boot-screen pre span.ashen-hidden-heresy{animation:ashenHeresyFlash .28s linear 22.2s forwards}
+@keyframes ashenAsciiPulse{0%,100%{opacity:.92;filter:brightness(1)}50%{opacity:.72;filter:brightness(1.35)}}
+@media(max-width:600px){.ashen-boot-core{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr);gap:8px}.ashen-boot-ascii{font-size:8px;line-height:1.05}.ashen-terminal-boot-screen pre.ashen-boot-logs{font-size:9px;line-height:1.22}.ashen-terminal-boot-screen pre.ashen-boot-logs span{animation-delay:calc(var(--line-index)*.48s)}}
+@media(prefers-reduced-motion:reduce){.ashen-boot-ascii{animation:none;opacity:1}.ashen-terminal-boot-screen .ashen-boot-progress i{animation:none!important;width:100%}}
+
+/* Terminal horror: corrupted directory state */
+.ashen-terminal-file-window.is-corrupted { border-color: rgba(255, 70, 70, .72); box-shadow: 0 0 24px rgba(255, 35, 35, .12), inset 0 0 18px rgba(255, 35, 35, .035); }
+.ashen-terminal-file-window.is-corrupted > header { color: #ff7777; border-bottom-color: rgba(255, 70, 70, .42); }
+.ashen-terminal-file-window.is-corrupted pre { color: #ff9b9b; text-shadow: 0 0 5px rgba(255, 35, 35, .18); }
+.ashen-corruption-warning { padding: 8px 12px; color: #ff7777; background: rgba(150, 0, 0, .14); border-bottom: 1px dashed rgba(255, 70, 70, .4); font: 600 11px/1.4 monospace; letter-spacing: .12em; animation: ashen-corrupt-flicker 1.8s steps(2, end) infinite; }
+@keyframes ashen-corrupt-flicker { 0%, 88%, 100% { opacity: 1; } 90% { opacity: .42; } 94% { opacity: .78; } }
+@media (prefers-reduced-motion: reduce) { .ashen-corruption-warning { animation: none; } }
+/* V1.5.38 — shell interativo e itens de diretório configuráveis */
+.ashen-terminal-interactive-shell{padding:10px 14px 12px;border-top:1px solid rgba(126,170,150,.18);background:#05090a;color:#a9c7b8;font: .78em/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+.ashen-shell-history{max-height:150px;overflow:auto;display:grid;gap:7px;margin-bottom:8px}
+.ashen-shell-command{color:#c4e8d3;overflow-wrap:anywhere}
+.ashen-shell-history pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:3px 0 0 10px;color:#91a99d;font:inherit}
+.ashen-terminal-interactive-shell form{display:flex;align-items:center;gap:8px;min-width:0}
+.ashen-terminal-interactive-shell label{white-space:nowrap;color:#b9dfc9}
+.ashen-terminal-interactive-shell input{flex:1;min-width:0;background:#020505;border:1px solid #284438;color:#d9eee2;padding:9px 10px;font:inherit;border-radius:0}
+.ashen-terminal-interactive-shell input:focus{outline:1px solid #7db797;border-color:#7db797}
+.ashen-terminal-interactive-shell button{background:#12261c;border:1px solid #537b64;color:#d9eee2;padding:8px 13px;cursor:pointer;font:inherit}
+.ashen-folder-children{display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid #21382d;background:#08100d}
+.ashen-folder-children>small{width:100%;color:#7f9e8c;font-size:.65em;letter-spacing:.12em}
+.ashen-folder-children button{border:1px solid #315344;background:#0b1711;color:#c7e1d1;padding:7px 9px;cursor:pointer;overflow-wrap:anywhere}
+.session-puzzle-quick-actions{margin:8px 0;gap:8px;flex-wrap:wrap}
+@media(max-width:760px){.ashen-terminal-interactive-shell{padding:9px}.ashen-terminal-interactive-shell label{font-size:.9em}.ashen-terminal-interactive-shell form{gap:5px}.ashen-terminal-interactive-shell input{padding:8px 6px}}
