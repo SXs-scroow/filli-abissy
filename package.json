@@ -1,7 +1,7 @@
 {
   "name": "a-profecia",
   "private": true,
-  "version": "1.1.3",
+  "version": "1.1.7",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -15,7 +15,9 @@
     "test:sync": "node scripts/player-sync-regression.mjs",
     "test:unit": "node --test scripts/unit/*.test.mjs",
     "audit:xss": "node scripts/xss-audit.mjs --check",
-    "check:scope": "node scripts/scope-check.mjs"
+    "check:scope": "node scripts/scope-check.mjs",
+    "test:sync-queue": "node --test scripts/unit/sync-coordinator.test.mjs",
+    "test:e2e:staging-sync": "node scripts/e2e/staging-sync-load.mjs"
   },
   "devDependencies": {
     "vite": "7.3.6"

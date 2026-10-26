@@ -14,3 +14,8 @@ test('flush fixa token/escopo e verifica antes e depois de RPC', () => {
 test('falha de autenticação interrompe retry da fila', () => {
   assert.match(src, /SESSAO_INVALIDA\|NAO_AUTORIZADO/);
 });
+
+test('playerStore sanitiza os dados antes de inserir a fila em memória', () => {
+  assert.match(src, /sanitizePlayerQueueItem\(\{id:String\(p\?\.id\|\|''\)\.trim\(\),login:String\(p\?\.login\|\|''\),data:p\}\)/);
+  assert.match(src, /data:safePlayer\.data,baseData:safeBase/);
+});

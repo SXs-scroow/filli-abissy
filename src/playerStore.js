@@ -1,3 +1,5 @@
+import { readStoredJson, writeStoredJson, getBrowserStorage } from './persistence/browserStorage.js';
+import { mergePlayerQueueItems, serializePlayerQueue, sanitizePlayerQueueItem } from './persistence/playerQueue.js';
 import { nextStamp, observeStamp, observePlayerStamps } from './stampClock.js';
 import { supabase, getAuthToken, handleAuthError, authCheck, syncMarkOffline, syncMarkSyncing, syncMarkSuccess, syncMarkError } from './globalSync.js';
 
@@ -76,17 +78,26 @@ export async function fetchPlayers() {
 
 export async function fetchPlayersByIds(ids) {
   if (!supabase || !Array.isArray(ids) || !ids.length) return [];
-  const clean = [...new Set(ids.map(id => String(id || '').trim()).filter(Boolean))].slice(0, 50);
+  const clean = [...new Set(ids.map(id => String(id || '').trim()).filter(Boolean))];
   if (!clean.length) return [];
   const token = getAuthToken();
   if (!token) return [];
-  const { data, error } = await supabase.rpc('a_profecia_get_players_by_ids', {
-    p_token: token,
-    p_ids: clean
-  });
-  if (error) throw handleAuthError(error);
-  const rows = Array.isArray(data) ? data : [];
-  return rows.map(row => ({
+  // A RPC aceita até 50 IDs por chamada. Dividir em lotes evita descartar
+  // silenciosamente os Players depois do quinquagésimo em sessões maiores.
+  const rows = [];
+  for (let offset = 0; offset < clean.length; offset += 50) {
+    // Não iniciar outro lote se a sessão mudou enquanto o anterior estava em voo.
+    if (getAuthToken() !== token) throw new Error('SESSAO_INVALIDA');
+    const batch = clean.slice(offset, offset + 50);
+    const { data, error } = await supabase.rpc('a_profecia_get_players_by_ids', {
+      p_token: token,
+      p_ids: batch
+    });
+    if (error) throw handleAuthError(error);
+    if (getAuthToken() !== token) throw new Error('SESSAO_INVALIDA');
+    if (Array.isArray(data)) rows.push(...data);
+  }
+  return rows.filter(row => row?.id != null).map(row => ({
     id: String(row.id),
     login: String(row.login || ''),
     data: row.data && typeof row.data === 'object' ? row.data : {},
@@ -255,20 +266,32 @@ function readQueue(){
   const scope=queueScope();
   // Nunca reutiliza itens em memória de outra sessão, mesmo sem recarregar a página.
   if(scope!==activeQueueScope){localQueue.clear();activeQueueScope=scope;}
-  try{
-    const raw=JSON.parse(localStorage.getItem(queueKey())||'[]');
-    if(Array.isArray(raw)) for(const item of raw){ if(item?.id)localQueue.set(String(item.id),item); }
-  }catch{}
+  const raw=readStoredJson(queueKey(), [], getBrowserStorage());
+  const merged=mergePlayerQueueItems([...localQueue.values()], Array.isArray(raw) ? raw : []);
+  localQueue.clear();
+  for(const item of merged) localQueue.set(String(item.id),item);
   return [...localQueue.values()];
 }
-function writeQueue(){try{localStorage.setItem(queueKey(),JSON.stringify([...localQueue.values()].slice(-100)))}catch{}}
+function writeQueue(){
+  // Não truncar a fila: descartar os itens mais antigos aqui causaria perda de
+  // alterações pendentes após recarregar a página. Se exceder a quota, avisamos.
+  const ok=writeStoredJson(queueKey(),serializePlayerQueue([...localQueue.values()]),getBrowserStorage());
+  if(!ok){
+    syncMarkError('Fila de sincronização não pôde ser salva neste dispositivo',localQueue.size);
+    try{window.dispatchEvent(new CustomEvent('a-profecia-storage-error',{detail:{key:queueKey(),reason:'PLAYER_QUEUE_NOT_DURABLE'}}))}catch{}
+  }
+  return ok;
+}
 function queuePlayerRows(players){
   readQueue();
   for(const p of players||[]){
-    const id=String(p?.id||'').trim(); if(!id)continue;
+    const safePlayer=sanitizePlayerQueueItem({id:String(p?.id||'').trim(),login:String(p?.login||''),data:p});
+    const id=String(safePlayer?.id||'').trim(); if(!id)continue;
     const old=localQueue.get(id);
     const base=rowCache.get(id)?.data || old?.baseData || null;
-    localQueue.set(id,{id,login:String(p.login||''),data:p,baseData:base,queuedAt:old?.queuedAt||Date.now(),attempts:Number(old?.attempts)||0});
+    const safeBase=base&&typeof base==='object'?sanitizePlayerQueueItem({id,data:base})?.data:null;
+    // A fila em memória também é sanitizada: não basta retirar segredos apenas na escrita.
+    localQueue.set(id,{id,login:String(safePlayer.login||''),data:safePlayer.data,baseData:safeBase,queuedAt:old?.queuedAt||Date.now(),attempts:Number(old?.attempts)||0});
   }
   writeQueue();
   syncMarkError('Alteração do Player pendente',localQueue.size);
@@ -389,44 +412,69 @@ export function subscribePlayerPresence(sessionId, playerId, callback){
 export function subscribePlayers(callback) {
   if (!supabase) return () => {};
   let disposed = false, refreshTimer = null, reconnectTimer = null, channel = null;
+  let flushAttempt = 0, eventSequence = 0;
   const pendingOps = new Map();
+  const scheduleFlush = (delay = 120) => {
+    if (disposed || refreshTimer) return;
+    refreshTimer = setTimeout(async () => {
+      refreshTimer = null;
+      if (disposed || !pendingOps.size) return;
+      const batch = new Map(pendingOps);
+      const ids = [...batch.keys()];
+      try {
+        const rows = await fetchPlayersByIds(ids);
+        if (disposed) return;
+        const byId = new Map(rows.map(item => [String(item.id), item]));
+        const missingDeletes = ids.filter(id => !byId.has(id) && batch.get(id)?.op === 'delete');
+        if (missingDeletes.length) {
+          // Só considerar exclusão física após duas leituras bem-sucedidas.
+          // Erro na segunda leitura não é evidência de que a ficha foi apagada.
+          await new Promise(resolve => setTimeout(resolve, 220));
+          const confirmRows = await fetchPlayersByIds(missingDeletes);
+          if (disposed) return;
+          for (const row of confirmRows) byId.set(String(row.id), row);
+        }
+        for (const id of ids) {
+          const found = byId.get(id);
+          if (found) callback(found);
+          else if (batch.get(id)?.op === 'delete' && missingDeletes.includes(id)) callback({ id, deleted_at: 'deleted' });
+          // Comparar a identidade do evento, não só o tipo: um UPDATE/DELETE novo
+          // pode chegar enquanto a leitura está em andamento.
+          if (pendingOps.get(id) === batch.get(id)) pendingOps.delete(id);
+        }
+        flushAttempt = 0;
+        if (pendingOps.size) scheduleFlush(0);
+      } catch (error) {
+        if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
+          console.warn('Falha ao atualizar Players em tempo real; evento será repetido:', error);
+          flushAttempt = Math.min(flushAttempt + 1, 6);
+          // Mantém os eventos na fila e usa backoff exponencial com limite para
+          // não perder atualizações em falhas transitórias nem martelar o servidor.
+          scheduleFlush(Math.min(1000 * (2 ** (flushAttempt - 1)), 30000));
+        }
+      }
+    }, delay);
+  };
   const attach = () => {
     if (disposed) return;
     channel = supabase
-      .channel(`a-profecia-players-events-${Date.now()}`)
+      // O trigger SQL publica neste tópico fixo. Um tópico com Date.now() nunca
+      // receberia os eventos do banco, deixando os clientes dependentes do polling.
+      .channel('a-profecia-players-events')
       .on('broadcast', { event: 'player-changed' }, payload => {
         if (disposed) return;
         const changedId = String(payload?.payload?.id || '').trim();
         if (!changedId) return;
-        pendingOps.set(changedId, String(payload?.payload?.op || '').toLowerCase());
-        clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(async () => {
-          if (disposed) return;
-          const ids = [...pendingOps.keys()];
-          const ops = new Map(pendingOps); pendingOps.clear();
-          try {
-            const rows = await fetchPlayersByIds(ids);
-            const byId = new Map(rows.map(item => [String(item.id), item]));
-            const missing = ids.filter(id => !byId.has(id) && ops.get(id) === 'delete');
-            if (missing.length) {
-              await new Promise(resolve => setTimeout(resolve, 220));
-              try { const confirmRows = await fetchPlayersByIds(missing); for (const row of confirmRows) byId.set(String(row.id), row); } catch {}
-            }
-            for (const id of ids) {
-              const found = byId.get(id);
-              if (found) callback(found);
-              else if (ops.get(id) === 'delete') callback({ id, deleted_at: 'deleted' });
-            }
-          } catch (error) {
-            if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) console.warn('Falha ao atualizar Players em tempo real:', error);
-          }
-        }, 120);
+        pendingOps.set(changedId, { op: String(payload?.payload?.op || '').toLowerCase(), sequence: ++eventSequence });
+        if (refreshTimer) clearTimeout(refreshTimer);
+        refreshTimer = null;
+        scheduleFlush(120);
       })
       .subscribe(status => {
-        if (status === 'SUBSCRIBED') { clearTimeout(reconnectTimer); return; }
+        if (status === 'SUBSCRIBED') { clearTimeout(reconnectTimer); reconnectTimer = null; return; }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           if (disposed) return;
-          try { supabase.removeChannel(channel); } catch {}
+          try { Promise.resolve(supabase.removeChannel(channel)).catch(() => {}); } catch {}
           clearTimeout(reconnectTimer);
           reconnectTimer = setTimeout(attach, 1200);
         }
@@ -436,6 +484,7 @@ export function subscribePlayers(callback) {
   return () => {
     disposed = true;
     clearTimeout(refreshTimer); clearTimeout(reconnectTimer);
-    if (channel) supabase.removeChannel(channel).catch(() => {});
+    if (channel) Promise.resolve(supabase.removeChannel(channel)).catch(() => {});
+    pendingOps.clear();
   };
 }

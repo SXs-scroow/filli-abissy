@@ -1,3 +1,4 @@
+import { readStoredJson, writeStoredJson } from './persistence/browserStorage.js';
 import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './supabaseConfig.js';
 
@@ -15,8 +16,8 @@ export const supabase = remoteEnabled
 // Health da sincronização: apenas estado operacional, sem conteúdo de fichas.
 const SYNC_HEALTH_KEY='a_profecia_sync_health_v1';
 let syncHealthState={state:'idle',message:'Aguardando sincronização',lastSuccessAt:0,lastErrorAt:0,pending:false,attempts:0};
-function readSyncHealth(){try{const x=JSON.parse(localStorage.getItem(SYNC_HEALTH_KEY)||'null');if(x&&typeof x==='object')syncHealthState={...syncHealthState,...x}}catch{}return {...syncHealthState}}
-function writeSyncHealth(patch){syncHealthState={...readSyncHealth(),...patch};try{localStorage.setItem(SYNC_HEALTH_KEY,JSON.stringify(syncHealthState))}catch{};try{window.dispatchEvent(new CustomEvent('a-profecia-sync-status',{detail:{...syncHealthState}}))}catch{};return {...syncHealthState}}
+function readSyncHealth(){const x=readStoredJson(SYNC_HEALTH_KEY,null);if(x&&typeof x==='object')syncHealthState={...syncHealthState,...x};return {...syncHealthState}}
+function writeSyncHealth(patch){syncHealthState={...readSyncHealth(),...patch};writeStoredJson(SYNC_HEALTH_KEY,syncHealthState);try{window.dispatchEvent(new CustomEvent('a-profecia-sync-status',{detail:{...syncHealthState}}))}catch{};return {...syncHealthState}}
 export function syncHealth(){return readSyncHealth()}
 export function syncMarkOffline(message='Offline — alterações ficam salvas neste dispositivo'){return writeSyncHealth({state:'offline',message,pending:true})}
 export function syncMarkSyncing(message='Sincronizando…'){return writeSyncHealth({state:'syncing',message,pending:true})}
@@ -219,6 +220,11 @@ export async function pushGlobal(data) {
       // V66: só o Mestre autenticado grava; o servidor devolve apenas o carimbo (antes devolvia o estado inteiro de volta).
       const result = await rpc('a_profecia_push_global', { p_token: getAuthToken(), p_data: data });
       syncMarkSuccess();
+      // A confirmação do banco é a fonte de verdade. A notificação Realtime é
+      // apenas um acelerador; se o canal estiver indisponível, o polling continua
+      // sendo a via de recuperação e a gravação já confirmada não deve falhar.
+      Promise.resolve(broadcastLive('global-changed', { updated_at: result?.updated_at || null }))
+        .catch(error => console.warn('Estado global salvo; aviso Realtime não enviado:', error));
       return { updated_at: result?.updated_at, verified: true };
     } catch (error) {
       lastError = error;
@@ -257,55 +263,98 @@ export async function uploadGlobalFile(path, file) {
 
 export function subscribeGlobal(callback) {
   if (!supabase || typeof callback !== 'function') return () => {};
-  let disposed = false, timer = null, reconnectTimer = null, channel = null;
-  const attach = () => {
-    if (disposed) return;
-    channel = supabase.channel(`a-profecia-global-events-${Date.now()}`)
-      .on('broadcast', { event: 'global-changed' }, () => {
-        if (disposed) return;
-        clearTimeout(timer);
-        timer = setTimeout(async () => {
-          try { const row = await fetchGlobal(); if (!disposed && row) callback(row); }
-          catch (error) { if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) console.warn('Falha ao atualizar o estado global:', error); }
-        }, 100);
-      })
-      .subscribe(status => {
-        if (status === 'SUBSCRIBED') { clearTimeout(reconnectTimer); return; }
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          if (disposed) return;
-          try { supabase.removeChannel(channel); } catch {}
-          clearTimeout(reconnectTimer);
-          reconnectTimer = setTimeout(attach, 1200);
+  let disposed = false, timer = null;
+  // Reusa o mesmo canal Realtime da sessão para evitar um tópico aleatório por
+  // aba. O emissor publica em `a-profecia-live-v2`, então todos os inscritos
+  // precisam escutar exatamente esse tópico.
+  const unsubscribe = subscribeLive(msg => {
+    if (disposed || msg?.event !== 'global-changed') return;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        const row = await fetchGlobal();
+        if (!disposed && row) callback(row);
+      } catch (error) {
+        if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
+          console.warn('Falha ao atualizar o estado global:', error);
         }
-      });
-  };
-  attach();
+      }
+    }, 100);
+  });
   return () => {
     disposed = true;
-    clearTimeout(timer); clearTimeout(reconnectTimer);
-    if (channel) supabase.removeChannel(channel).catch(() => {});
+    clearTimeout(timer);
+    unsubscribe();
   };
 }
 
 let liveChannel = null;
 let liveReady = null;
 let liveSubscribers = new Map();
+const LIVE_EVENTS = ['sound-trigger','secret-clue','session-start','tv-scene','nexus-join','nexus-offer','nexus-answer','nexus-ice','nexus-start','nexus-stop','session-join','session-join-ack','global-changed'];
+let liveReconnectTimer = null;
+
+function dispatchLiveMessage(event, message) {
+  const normalized = { event, payload: message?.payload || {} };
+  // A faulty UI callback must not prevent other subscribers from receiving the event.
+  for (const callback of [...liveSubscribers.values()]) {
+    try { callback(normalized); }
+    catch (error) { console.warn('Falha em assinante Realtime:', error); }
+  }
+}
+
+function scheduleLiveReconnect() {
+  if (liveReconnectTimer || liveSubscribers.size === 0 || typeof setTimeout !== 'function') return;
+  liveReconnectTimer = setTimeout(async () => {
+    liveReconnectTimer = null;
+    if (liveSubscribers.size === 0) return;
+    try {
+      if (liveChannel) {
+        const stale = liveChannel;
+        liveChannel = null;
+        liveReady = null;
+        try { await supabase.removeChannel(stale); } catch {}
+      }
+      await ensureLiveChannel();
+    } catch {
+      scheduleLiveReconnect();
+    }
+  }, 2500);
+}
 
 async function ensureLiveChannel() {
   if (!supabase) return null;
   if (liveChannel && liveReady) {
     await liveReady.catch(() => {});
-    return liveChannel;
+    if (liveChannel) return liveChannel;
   }
 
   const channel = supabase.channel('a-profecia-live-v2', {
     config: { broadcast: { self: false } }
   });
+  // IMPORTANT: Supabase sends broadcast bindings to the server when subscribe()
+  // joins the channel. Register every event before subscribe; adding .on() after
+  // the join can update only local bindings and silently miss server broadcasts.
+  for (const event of LIVE_EVENTS) {
+    channel.on('broadcast', { event }, message => dispatchLiveMessage(event, message));
+  }
   liveChannel = channel;
+  let wasSubscribed = false;
   liveReady = new Promise((resolve, reject) => {
     channel.subscribe(status => {
-      if (status === 'SUBSCRIBED') resolve();
-      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') reject(new Error(status));
+      if (status === 'SUBSCRIBED') {
+        wasSubscribed = true;
+        if (liveReconnectTimer) { clearTimeout(liveReconnectTimer); liveReconnectTimer = null; }
+        resolve();
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        if (!wasSubscribed) reject(new Error(status));
+        else if (liveChannel === channel) {
+          liveChannel = null;
+          liveReady = null;
+          Promise.resolve(supabase.removeChannel(channel)).catch(() => {});
+          scheduleLiveReconnect();
+        }
+      }
     });
   });
   try {
@@ -330,20 +379,13 @@ export async function broadcastLive(event, payload = {}) {
 export function subscribeLive(callback) {
   if (!supabase || typeof callback !== 'function') return () => {};
   const id = Symbol('live-subscriber');
-  const events = ['sound-trigger','secret-clue','session-start','tv-scene','nexus-join','nexus-offer','nexus-answer','nexus-ice','nexus-start','nexus-stop','session-join','session-join-ack'];
   let disposed = false;
   let retryTimer = null;
+  liveSubscribers.set(id, callback);
 
   const attach = async () => {
     try {
-      const channel = await ensureLiveChannel();
-      if (disposed || !channel) return;
-      liveSubscribers.set(id, callback);
-      for (const event of events) {
-        channel.on('broadcast', { event }, ({ payload }) => {
-          if (!disposed) callback({ event, payload: payload || {} });
-        });
-      }
+      await ensureLiveChannel();
     } catch (error) {
       if (!disposed) {
         console.warn('Realtime ao vivo indisponível:', error);
@@ -351,17 +393,21 @@ export function subscribeLive(callback) {
       }
     }
   };
-
   attach();
+
   return () => {
     disposed = true;
     clearTimeout(retryTimer);
     liveSubscribers.delete(id);
-    if (liveSubscribers.size === 0 && liveChannel) {
-      const channel = liveChannel;
-      liveChannel = null;
-      liveReady = null;
-      supabase.removeChannel(channel).catch(() => {});
+    if (liveSubscribers.size === 0) {
+      clearTimeout(liveReconnectTimer);
+      liveReconnectTimer = null;
+      if (liveChannel) {
+        const channel = liveChannel;
+        liveChannel = null;
+        liveReady = null;
+        Promise.resolve(supabase.removeChannel(channel)).catch(() => {});
+      }
     }
   };
 }

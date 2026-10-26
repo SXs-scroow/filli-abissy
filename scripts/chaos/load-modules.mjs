@@ -1,6 +1,6 @@
 // Carrega o playerStore.js REAL fora do Vite: copia src/*.js para .chaos-build/,
 // troca import.meta.env (só existe no Vite) e aponta o Supabase para o proxy de teste.
-import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -10,6 +10,9 @@ const out = resolve(root, '.chaos-build');
 export async function loadRealStore(supabaseUrl) {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
+  mkdirSync(resolve(out, 'persistence'), { recursive: true });
+  copyFileSync(resolve(root, 'src/persistence/browserStorage.js'), resolve(out, 'persistence/browserStorage.js'));
+  copyFileSync(resolve(root, 'src/persistence/playerQueue.js'), resolve(out, 'persistence/playerQueue.js'));
   writeFileSync(resolve(out, 'supabaseConfig.js'),
     `export const SUPABASE_URL = ${JSON.stringify(supabaseUrl)};\nexport const SUPABASE_PUBLISHABLE_KEY = 'chaos-test-key';\n`);
   let sync = readFileSync(resolve(root, 'src/globalSync.js'), 'utf8').replaceAll('import.meta.env', '({})');

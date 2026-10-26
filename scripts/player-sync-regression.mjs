@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 const app = readFileSync('app.js','utf8') + '\n' + readFileSync('src/players.js','utf8');
 const store = readFileSync('src/playerStore.js','utf8');
 const sync = readFileSync('src/globalSync.js','utf8');
+const loadTest = readFileSync('src/loadTest.js','utf8');
+const e2eLoad = readFileSync('scripts/e2e/staging-sync-load.mjs','utf8');
 
 const checks = [
   ['row reconciliation has an explicit authoritative flag', /function applyPlayerRows\(rows,\{initial=false,authoritative=false\}\=\{\}\)/.test(app)],
@@ -13,16 +15,17 @@ const checks = [
   ['password changes use a dedicated server RPC', /changePlayerPassword\(/.test(sync) && /a_profecia_player_set_password/.test(sync)],
   ['Player store does not send plaintext password fields through normal save', /const data = \{ \.\.\.\(row\.data \|\| \{\}\) \};[\s\S]*delete data\.password;[\s\S]*delete data\.newPassword;/.test(store)],
   ['same-view renders preserve scroll position', /const keepViewScroll=prevView===view/.test(app) && /window\.scrollTo\(0,savedScrollY\)/.test(app)],
-  ['Master has 20-player stress test UI', /runPlayerStressTest/.test(app) && /Teste de 20 Players/.test(app)],
+  ['Master has an isolated 15-user capacity test tab', /data-tab="load"/.test(app) && /export function loadAdmin\(version/.test(loadTest) && /runPlayerStressTest/.test(loadTest) && /Meta de capacidade — 15 pessoas simultâneas/.test(loadTest)],
+  ['Load-test implementation is isolated from app.js and measures latency percentiles', !/function simulateRosterConvergence|async function runPlayerStressTest|function loadAdmin/.test(app) && /export function simulateRosterConvergence/.test(loadTest) && /serverLatency=summarizeLatency\(serverLatencyMs\)/.test(loadTest) && /p95/.test(loadTest)],
   ['Player secret clues page is routed by render() (was a dead button)', /view==='secrets'&&state\.session\.role==='player'\?secretCluesPage\(\)/.test(app) && /data-open-secret-clues\]'\)\.forEach\(b=>b\.onclick=\(\)=>render\('secrets'\)\)/.test(app)],
   ['Master entity save declares passwordToSet/secretLovedDraft in the handler scope', /onclick=async\(\)=>\{const isP=type==='player',list=isP\?state\.players:state\.creatures;let passwordToSet='',secretLovedDraft='';/.test(app)],
   ['Same-view re-renders do not replay the enter animation (anti-flicker)', /classList\.toggle\('no-enter-anim',!!same\)/.test(app) && /#root\.no-enter-anim \.main/.test(readFileSync(new URL('../styles.css', import.meta.url), 'utf8'))],
-  ['Stress test performs 20-client concurrent targeted server reads', /virtualClients=20/.test(app) && /Promise\.all\(targets\.map\(async\(id\)=>/.test(app) && /fetchPlayersByIds\(id\?\[id\]:\[\]\)/.test(app)],
-  ['Stress test scales local simulation to 50 and 100 virtual clients while limiting real server reads', /for\(const clients of \[50,100\]\)/.test(app) && /scaleTests/.test(app) && /up to 20|até 20 leituras concorrentes ao servidor/i.test(app)],
-  ['Stress test uses the real applyPlayerRows in an isolated state', /function simulateRosterConvergence\(/.test(app) && /applyPlayerRows\(rows,\{authoritative:false\}\)\}finally\{c\.players=state\.players/.test(app) && /finally\{state\.players=savedPlayers;state\.playerTombstones=savedTomb;ps\.lastSnapshot=savedSnap\}/.test(app)],
-  ['Stress-test fixtures use valid campaign attributes so derived HP is not clamped to 1', /campaignType:'campaign',attrs:\{Corpo:2,Sanidade:2\},skills:\{\},attrLimits:\{\},hp:10,hpMax:18/.test(app)],
-  ['Stress test reports logic failure without changing live sync protection', /const logicFail=!sim\.ok\|\|scaleTests\.some\(x=>!x\.ok\)\|\|serverMismatch\.length>0;/.test(app) && /serverFailures>0\?'inconclusive'/.test(app) && /if\(logicFail\)\{[\s\S]{0,800}sincronização real NÃO foi pausada/.test(app) && !/ps\.circuitOpen=true/.test(app)],
-  ['Stress test reports PARCIAL (not PASSOU) when the server part was skipped', /outcome=logicFail\?'failed':serverFailures>0\?'inconclusive':skipReason\?'partial':'passed'/.test(app)],
+  ['Stress test performs 15-client concurrent targeted server reads', /virtualClients=15/.test(loadTest) && /Promise\.all\(targets\.map\(async\(id\)=>/.test(loadTest) && /fetchPlayersByIds\(id\?\[id\]:\[\]\)/.test(loadTest)],
+  ['Stress test scales local simulation to 15, 20, 30, 50 and 100 virtual clients while limiting real server reads', /for\(const clients of \[15,20,30,50,100\]\)/.test(loadTest) && /scaleTests/.test(loadTest) && /15 leituras concorrentes/i.test(loadTest)],
+  ['Stress test uses the real applyPlayerRows in an isolated state', /export function simulateRosterConvergence\(deps/.test(loadTest) && /applyPlayerRows\(rows,\{authoritative:false\}\)\}finally\{c\.players=state\.players/.test(loadTest) && /finally\{state\.players=savedPlayers;state\.playerTombstones=savedTomb;ps\.lastSnapshot=savedSnap\}/.test(loadTest)],
+  ['Stress-test fixtures use valid campaign attributes so derived HP is not clamped to 1', /campaignType:'campaign',attrs:\{Corpo:2,Sanidade:2\},skills:\{\},attrLimits:\{\},hp:10,hpMax:18/.test(loadTest)],
+  ['Stress test reports logic failure without changing live sync protection', /const logicFail=!sim\.ok\|\|scaleTests\.some\(x=>!x\.ok\)\|\|serverMismatch\.length>0;/.test(loadTest) && /serverFailures>0\?'inconclusive'/.test(loadTest) && /if\(logicFail\)\{[\s\S]{0,800}sincronização real NÃO foi pausada/.test(loadTest) && !/ps\.circuitOpen=true/.test(loadTest)],
+  ['Read-only stress probe never claims end-to-end capacity is passed', /outcome=logicFail\?'failed':serverFailures>0\?'inconclusive':'partial'/.test(loadTest) && /endToEndValidated:false/.test(loadTest)],
   ['Player sync circuit breaker is controlled only by real sync flow, not stress test', !/ps\.circuitOpen=true/.test(app) && /if\(ps\.circuitOpen&&!manual\)return false/.test(app)],
   ['Automatic reconciliation respects circuit breaker', /if\(ps\.circuitOpen\)return;/.test(app)],
   ['Master secret is isolated from Player roster JSON', /delete data\.secretLovedEffect/.test(store) && /a_profecia_player_master_secret_get/.test(sync) && /a_profecia_player_master_secret_save/.test(sync)],
@@ -41,7 +44,17 @@ const checks = [
   ['an empty confirmed roster never nulls a Player session snapshot', !/state\.session\.playerSnapshot=null/.test(app)],
   ['a Player never deletes their own active row from a single missing-row read', /if\(k!==syncActiveId\)localById\.delete\(k\);/.test(app)],
   ['authoritative apply never removes the active Player id from the local roster', /if\(key&&key!==activeId&&!remoteIds\.has\(key\)\)byId\.delete\(key\);/.test(app)],
-  ['realtime deletion signals require a confirming second read before firing', /const missing = ids\.filter\(id => !byId\.has\(id\) && ops\.get\(id\) === 'delete'\);/.test(store) && /await new Promise\(resolve => setTimeout\(resolve, 220\)\)/.test(store) && /fetchPlayersByIds\(missing\)/.test(store)],
+  ['Realtime uses the same fixed topic as the SQL trigger', /channel\('a-profecia-players-events'\)/.test(store) && !/channel\(`a-profecia-players-events-\$\{Date\.now\(\)\}`\)/.test(store)],
+  ['targeted Player reads are chunked instead of silently truncating after 50 IDs', /const clean = \[\.\.\.new Set\(ids\.map/.test(store) && /offset \+= 50/.test(store) && /clean\.slice\(offset, offset \+ 50\)/.test(store)],
+  ['Realtime deletion requires a successful confirming read', /const confirmRows = await fetchPlayersByIds\(missingDeletes\)/.test(store) && /else if \(batch\.get\(id\)\?\.op === 'delete' && missingDeletes\.includes\(id\)\)/.test(store)],
+  ['Realtime read failures retain queued events and use bounded exponential backoff', /pendingOps\.size/.test(store) && /flushAttempt = Math\.min\(flushAttempt \+ 1, 6\)/.test(store) && /Math\.min\(1000 \* \(2 \*\* \(flushAttempt - 1\)\), 30000\)/.test(store)],
+  ['Global Realtime listens on the shared live channel, not a random topic per tab', /export function subscribeGlobal\(callback\)[\s\S]{0,700}subscribeLive\(msg/.test(sync) && !/channel\(`a-profecia-global-events-\$\{Date\.now\(\)\}`\)/.test(sync)],
+  ['Global writes emit a Realtime change notice only after the server confirms the save', /await rpc\('a_profecia_push_global',[\s\S]{0,350}broadcastLive\('global-changed'/.test(sync)],
+  ['Shared live channel registers broadcast bindings before joining the channel', /const LIVE_EVENTS = \[[^\]]*'global-changed'/.test(sync) && /for \(const event of LIVE_EVENTS\) \{\s*channel\.on\('broadcast', \{ event \}/.test(sync) && sync.indexOf("channel.on('broadcast', { event }, message => dispatchLiveMessage(event, message))") < sync.indexOf('channel.subscribe(status =>') && /channel\('a-profecia-live-v2'/.test(sync)],
+  ['E2E load probe requires explicit staging confirmation and has no production URL fallback', /ASHEN_STAGING_CONFIRM !== REQUIRED_CONFIRMATION/.test(e2eLoad) && /ASHEN_TEST_SUPABASE_URL/.test(e2eLoad) && !/VITE_SUPABASE_URL/.test(e2eLoad)],
+  ['E2E load probe uses 15 independent sessions and restores plus verifies disposable HP values', /const USER_COUNT = 15/.test(e2eLoad) && /createClient\(url, key/.test(e2eLoad) && /Verificação da limpeza/.test(e2eLoad)],
+  ['Shared Realtime dispatch is centralized and isolates subscriber exceptions', /function dispatchLiveMessage\(event, message\)/.test(sync) && /for \(const callback of \[\.\.\.liveSubscribers\.values\(\)\]\)/.test(sync) && /Falha em assinante Realtime/.test(sync)],
+  ['E2E load probe measures latency percentiles and confirms Realtime fan-out', /writeLatency: summarize\(latencies\)/.test(e2eLoad) && /realtimeClientsReceivingAllEvents/.test(e2eLoad) && /a-profecia-players-events/.test(e2eLoad)],
 ];
 let failed=false;
 for(const [name,ok] of checks){console.log(`${ok?'OK':'FAIL'}  ${name}`);if(!ok)failed=true;}

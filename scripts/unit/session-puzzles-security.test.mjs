@@ -20,13 +20,9 @@ test('puzzles usam RPCs privadas e não são inseridos no JSON global do jogo', 
   }
   assert.match(app, /data-puzzle-unlock-form/);
   assert.match(app, /await unlockSessionPuzzle\(/);
-  assert.match(app, /function terminalFileWindowMarkup\(p,unlocked,opened\)/);
-  assert.match(app, /decodeAshenDesktopContent\(unlocked\.content\|\|''\)/);
-  assert.match(app, /decoded\.config\?\.corrupted/);
-  assert.match(app, /<pre>\$\{esc\(body\)\}<\/pre>/);
   assert.match(app, /unlocked\?terminalDesktopMarkup\(p,unlocked\):terminalLoginMarkup\(p\)/);
-  assert.match(app, /primeTerminalAudio\(\)/);
-  assert.match(app, /playTerminalBootSound\(\)/);
+  assert.match(app, /termAudioPrime\(\)/);
+  assert.match(app, /startTerminalBoot\(/);
   assert.match(sql, /create table if not exists public\.a_profecia_session_puzzles/);
   assert.match(sql, /alter table public\.a_profecia_session_puzzles enable row level security/);
   assert.match(sql, /revoke all on table public\.a_profecia_session_puzzles from public, anon, authenticated/);

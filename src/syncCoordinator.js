@@ -1,3 +1,5 @@
+import { readStoredJson, writeStoredJson, removeStoredValue, getBrowserStorage } from './persistence/browserStorage.js';
+
 /**
  * Coordenador único para gravações do estado global.
  * Mantém o último snapshot pendente em armazenamento local e só o remove
@@ -11,26 +13,21 @@ let waiters = [];
 let retryTimer = 0;
 let attempts = 0;
 
-function storage() {
-  try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
-}
+function storage() { return getBrowserStorage(); }
 function readPending() {
   if (pending) return pending;
-  try {
-    const raw = storage()?.getItem(PENDING_KEY);
-    if (raw) pending = JSON.parse(raw);
-  } catch { /* Mantém a cópia em memória se o armazenamento estiver indisponível. */ }
+  const restored = readStoredJson(PENDING_KEY, null, storage());
+  if (restored && typeof restored === 'object') pending = restored;
   return pending;
 }
 function persistPending(value) {
   pending = value;
-  try {
-    const s = storage();
-    if (s && value) s.setItem(PENDING_KEY, JSON.stringify(value));
-    else if (s) s.removeItem(PENDING_KEY);
-  } catch (error) {
-    // A cópia de estado do app e os backups locais continuam sendo a recuperação alternativa.
-    console.warn('Não foi possível persistir a fila de sincronização no navegador:', error);
+  const s = storage();
+  const saved = value ? writeStoredJson(PENDING_KEY, value, s) : removeStoredValue(PENDING_KEY, s);
+  if (!saved) {
+    // Mantém o item em memória e avisa: sem persistência local, uma recarga pode perder esta fila.
+    try { console.warn('Não foi possível persistir a fila de sincronização no navegador.'); } catch {}
+    notify('storage-error', { reason: 'PENDING_QUEUE_NOT_DURABLE' });
   }
 }
 function notify(status, detail = {}) {

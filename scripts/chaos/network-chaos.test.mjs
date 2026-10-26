@@ -246,11 +246,15 @@ test('realtime: ausência na leitura NÃO fabrica exclusão; exclusão explícit
   fake.seedPlayer(ficha('p1'));
   const rt = realtimeHarness();
   try {
-    // (a) evento sobre a própria ficha + rede cortada => nenhum callback
+    // (a) evento sobre a própria ficha + rede cortada => fica pendente; após recuperar, retry entrega a ficha.
     proxy.inject('a_profecia_get_players_by_ids', 'cut-response', { times: 5 });
     rt.emit('p1', 'update'); await settle(300);
     assert.equal(rt.events.length, 0);
     proxy.heal();
+    await settle(1300);
+    assert.equal(rt.events.length, 1, 'evento pendente é repetido após a rede voltar');
+    assert.equal(rt.events[0].id, 'p1');
+    rt.events.length = 0;
 
     // (b) evento sobre OUTRO Player (RLS não devolve a linha) => nada de 'deleted' inventado
     rt.emit('p9', 'update'); await settle(900);
