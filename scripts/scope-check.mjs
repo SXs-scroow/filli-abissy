@@ -5,9 +5,11 @@ import { existsSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
+const globalNpmRoot = spawnSync('npm', ['root', '-g'], { encoding: 'utf8' }).stdout?.trim();
 const candidates = [
   resolve('node_modules/typescript/bin/tsc'),
   ...(process.env.TSC ? [process.env.TSC] : []),
+  ...(globalNpmRoot ? [join(globalNpmRoot, 'typescript/bin/tsc')] : []),
   '/home/claude/.npm-global/lib/node_modules/typescript/bin/tsc'
 ];
 const tsc = candidates.find(existsSync);
@@ -15,10 +17,14 @@ if (!tsc) { console.log('scope-check: typescript não encontrado (npm i -D types
 
 const dir = mkdtempSync(join(tmpdir(), 'scope-'));
 const cfg = join(dir, 'tsconfig.json');
+// Vite substitui esse identificador em build; declare-o para o analisador estático
+// não confundir a constante de compilação com um bug de variável fora de escopo.
+const viteDefine = join(dir, 'vite-defines.d.ts');
+writeFileSync(viteDefine, 'declare const __ASHEN_BUILD_ID__: string;\n');
 writeFileSync(cfg, JSON.stringify({
   compilerOptions: { allowJs: true, checkJs: true, noEmit: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler',
     lib: ['es2022', 'dom', 'dom.iterable'], skipLibCheck: true, strict: false, types: [], maxNodeModuleJsDepth: 0 },
-  files: [resolve('app.js'), ...['src/globalSync.js','src/playerStore.js','src/players.js','src/supabaseConfig.js','src/main.js'].map(f => resolve(f)).filter(existsSync)]
+  files: [viteDefine, resolve('app.js'), ...['src/globalSync.js','src/playerStore.js','src/players.js','src/supabaseConfig.js','src/main.js'].map(f => resolve(f)).filter(existsSync)]
 }));
 const r = spawnSync('node', [tsc, '-p', cfg], { encoding: 'utf8' });
 // TS2304 = não encontrou o nome | TS2448/TS2454 = usado antes de declarar/atribuir

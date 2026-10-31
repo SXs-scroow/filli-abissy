@@ -96,7 +96,7 @@ test('resistência de escala: 20, 50 e 100 aparelhos convergem sem divergência 
 });
 
 test('renderizador do laboratório não depende de window em execução de teste', () => {
-  const markup = loadAdmin('V1.5.55');
+  const markup = loadAdmin('V1.5.56');
   assert.match(markup, /Meta de capacidade — 15 pessoas simultâneas/);
   assert.match(markup, /runPlayerStressTest/);
   assert.match(markup, /não simula gravações reais/i);
@@ -125,7 +125,7 @@ test('teste de carga executa 15 leituras concorrentes somente de leitura e resta
   let startedReads = 0, activeReads = 0, maxActiveReads = 0;
   try {
     await runPlayerStressTest({
-      version: 'V1.5.55', state: ctx.state, ps: ctx.realPs,
+      version: 'V1.5.56', state: ctx.state, ps: ctx.realPs,
       applyPlayerRows: ctx.realApply, clone: ctx.realClone,
       playerStoreEnabled: true, getAuthToken: () => 'token-de-teste',
       fetchPlayersByIds: async ids => {
@@ -159,7 +159,7 @@ test('sem armazenamento remoto, o teste informa PARCIAL e não tenta ler nem gra
   let reads = 0;
   try {
     await runPlayerStressTest({
-      version: 'V1.5.55', state: ctx.state, ps: ctx.realPs,
+      version: 'V1.5.56', state: ctx.state, ps: ctx.realPs,
       applyPlayerRows: ctx.realApply, clone: ctx.realClone,
       playerStoreEnabled: false, getAuthToken: () => '',
       fetchPlayersByIds: async () => { reads++; return []; }, toast() {}

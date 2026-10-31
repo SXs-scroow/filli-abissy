@@ -10,7 +10,7 @@ import { classifyPerformanceSnapshot, collectPerformanceSnapshot, runResponsiven
  * As dependências entram por parâmetro para que os testes possam reproduzir a lógica
  * real do sincronizador sem criar acoplamento circular com app.js.
  */
-export function loadAdmin(version = 'V1.5.55'){
+export function loadAdmin(version = 'V1.5.56'){
   const report=typeof window!=='undefined'?(window.__aProfeciaStressReport||null):null;
   const status=report?({passed:'Último teste: PASSOU',partial:'Último teste: PARCIAL',inconclusive:'Último teste: INCONCLUSIVO',failed:'Último teste: FALHOU'}[report.status]||'Ainda não executado'):'Ainda não foi executado nenhum teste nesta sessão.';
   const latency=report?.serverLatency||{};

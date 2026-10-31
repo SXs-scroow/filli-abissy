@@ -6,7 +6,7 @@ export const BUILD_ID = typeof __ASHEN_BUILD_ID__ !== 'undefined'
   ? String(__ASHEN_BUILD_ID__)
   : 'build-id-unavailable';
 
-export const APP_RELEASE = 'V1.5.55';
+export const APP_RELEASE = 'V1.5.61';
 
 try {
   window.__ASHEN_BUILD_INFO__ = Object.freeze({

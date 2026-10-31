@@ -1,14 +1,14 @@
 {
   "name": "a-profecia",
   "private": true,
-  "version": "1.1.7",
+  "version": "1.5.62",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "node scripts/check-syntax.mjs",
-    "release:check": "npm run check && npm run check:scope && npm run stability:check && npm run test:sync && npm run audit:xss && npm run test:unit && npm run test:maintenance-ai && npm run test:chaos && npm run build",
+    "release:check": "npm run check && npm run check:scope && npm run stability:check && npm run test:sync && npm run test:player-backup && npm run audit:xss && npm run test:unit && npm run test:maintenance-ai && npm run test:chaos && npm run build",
     "stability:check": "node scripts/stability-audit.mjs",
     "test:chaos": "node --test scripts/chaos/network-chaos.test.mjs",
     "test:maintenance-ai": "node scripts/test-maintenance-ai.mjs",
@@ -17,10 +17,12 @@
     "audit:xss": "node scripts/xss-audit.mjs --check",
     "check:scope": "node scripts/scope-check.mjs",
     "test:sync-queue": "node --test scripts/unit/sync-coordinator.test.mjs",
-    "test:e2e:staging-sync": "node scripts/e2e/staging-sync-load.mjs"
+    "test:e2e:staging-sync": "node scripts/e2e/staging-sync-load.mjs",
+    "test:player-backup": "node scripts/player-backup-points-regression.mjs"
   },
   "devDependencies": {
-    "vite": "7.3.6"
+    "vite": "7.3.6",
+    "typescript": "5.8.3"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.57.4"

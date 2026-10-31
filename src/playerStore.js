@@ -1,5 +1,6 @@
 import { readStoredJson, writeStoredJson, getBrowserStorage } from './persistence/browserStorage.js';
 import { mergePlayerQueueItems, serializePlayerQueue, sanitizePlayerQueueItem } from './persistence/playerQueue.js';
+import { mapWithConcurrency } from './persistence/concurrency.js';
 import { nextStamp, observeStamp, observePlayerStamps } from './stampClock.js';
 import { supabase, getAuthToken, handleAuthError, authCheck, syncMarkOffline, syncMarkSyncing, syncMarkSuccess, syncMarkError } from './globalSync.js';
 
@@ -12,8 +13,10 @@ export const playerStoreEnabled = Boolean(supabase);
 // (id + carimbo) e busca por inteiro apenas as fichas que mudaram desde a última vez.
 let rowCache = new Map();
 let fetchCount = 0;
+let rosterRequestInFlight = null;
+const playerBatchRequestsInFlight = new Map();
 
-export async function fetchPlayers() {
+async function fetchPlayersUnshared() {
   if (!supabase) return [];
   if (++fetchCount % 20 === 0) rowCache = new Map();
 
@@ -76,14 +79,18 @@ export async function fetchPlayers() {
 }
 
 
-export async function fetchPlayersByIds(ids) {
-  if (!supabase || !Array.isArray(ids) || !ids.length) return [];
-  const clean = [...new Set(ids.map(id => String(id || '').trim()).filter(Boolean))];
-  if (!clean.length) return [];
-  const token = getAuthToken();
-  if (!token) return [];
-  // A RPC aceita até 50 IDs por chamada. Dividir em lotes evita descartar
-  // silenciosamente os Players depois do quinquagésimo em sessões maiores.
+// Coalesce leituras idênticas disparadas quase ao mesmo tempo dentro da mesma aba.
+// Isso evita rajadas duplicadas em reconexões/visibilidade sem esconder gravações:
+// cada reconciliação continua recebendo o resultado completo do servidor.
+export function fetchPlayers() {
+  if (rosterRequestInFlight) return rosterRequestInFlight;
+  const request = fetchPlayersUnshared();
+  rosterRequestInFlight = request;
+  request.finally(() => { if (rosterRequestInFlight === request) rosterRequestInFlight = null; }).catch(() => {});
+  return request;
+}
+
+async function fetchPlayersByIdsUnshared(clean, token) {
   const rows = [];
   for (let offset = 0; offset < clean.length; offset += 50) {
     // Não iniciar outro lote se a sessão mudou enquanto o anterior estava em voo.
@@ -105,6 +112,21 @@ export async function fetchPlayersByIds(ids) {
     deleted_at: row.deleted_at || null
   }));
 }
+
+export function fetchPlayersByIds(ids) {
+  if (!supabase || !Array.isArray(ids) || !ids.length) return Promise.resolve([]);
+  const clean = [...new Set(ids.map(id => String(id || '').trim()).filter(Boolean))].sort();
+  if (!clean.length) return Promise.resolve([]);
+  const token = getAuthToken();
+  if (!token) return Promise.resolve([]);
+  const key = `${token}:${clean.join('|')}`;
+  if (playerBatchRequestsInFlight.has(key)) return playerBatchRequestsInFlight.get(key);
+  const request = fetchPlayersByIdsUnshared(clean, token);
+  playerBatchRequestsInFlight.set(key, request);
+  request.finally(() => { if (playerBatchRequestsInFlight.get(key) === request) playerBatchRequestsInFlight.delete(key); }).catch(() => {});
+  return request;
+}
+
 
 function syncStamp(p, fallback = Date.now()) {
   const n = Number(p?._syncUpdatedAt);
@@ -192,30 +214,56 @@ export async function upsertPlayers(players) {
   if (!supabase || !Array.isArray(players) || !players.length) return [];
   if (typeof navigator !== 'undefined' && navigator.onLine === false) { syncMarkOffline(); throw new Error('OFFLINE'); }
   syncMarkSyncing();
-  const rows = players.map(p => ({
-    id: String(p.id || '').trim(),
-    login: String(p.login || '').trim(),
-    data: p,
-    updated_at: new Date(syncStamp(p)).toISOString(),
-    deleted_at: null
-  })).filter(r => r.id && r.login);
+
+  // Um lote do Mestre costuma conter vários Players independentes. Enviá-los
+  // um a um somava uma ida completa à rede para cada ficha. Agora usamos até
+  // quatro gravações em paralelo e mantemos ordem para alterações repetidas do
+  // mesmo ID, sem abrir uma rajada ilimitada contra o Supabase.
+  const rows = [];
+  players.forEach((source) => {
+    const id = String(source?.id || '').trim();
+    const login = String(source?.login || '').trim();
+    if (!id || !login) return;
+    rows.push({ id, login, data: source, source, resultIndex: rows.length,
+      updated_at: new Date(syncStamp(source)).toISOString(), deleted_at: null });
+  });
   if (!rows.length) return [];
 
-  const saved = [];
+  const groupsById = new Map();
+  for (const row of rows) {
+    const group = groupsById.get(row.id) || [];
+    group.push(row);
+    groupsById.set(row.id, group);
+  }
+  const groups = [...groupsById.values()];
+  const saved = new Array(rows.length);
+  const failures = [];
+
   try {
-    for (let i=0;i<rows.length;i++) {
-      saved.push(await rpcUpsert(rows[i]));
-      // Senha nova (definida pelo Mestre) já foi para o servidor como hash:
-      // remova o texto assim que cada gravação for confirmada.
-      try { delete players[i].newPassword; } catch {}
-    }
+    await mapWithConcurrency(groups, 4, async (group) => {
+      // Same-player writes remain ordered; only distinct Player rows run in parallel.
+      for (const row of group) {
+        try {
+          saved[row.resultIndex] = await rpcUpsert(row);
+          // A senha definida pelo Mestre já foi enviada como hash; retire o texto
+          // apenas do objeto de origem cujo salvamento foi confirmado.
+          try { delete row.source.newPassword; } catch {}
+        } catch (error) {
+          failures.push(error);
+          break;
+        }
+      }
+    });
+    if (failures.length) throw failures[0];
     syncMarkSuccess();
     return saved;
   } catch (error) {
+    // Alguns itens podem já ter sido confirmados. Reenfileirar o lote inteiro é
+    // seguro: os carimbos e o RPC do servidor impedem que uma resposta antiga
+    // sobrescreva uma alteração mais nova.
     queuePlayerRows(players);
     if (/OFFLINE/.test(String(error?.message||''))) syncMarkOffline();
     else syncMarkError('Alteração do Player pendente',pendingPlayerSyncCount());
-    // Keep the local state; the durable queue will retry when connectivity returns.
     throw error;
   }
 }
@@ -299,14 +347,23 @@ function queuePlayerRows(players){
 function removeQueued(id){localQueue.delete(String(id));writeQueue()}
 function isLeader(){
   const now=Date.now();
+  // A liderança entre abas é uma otimização, não pode bloquear a sincronização.
+  // Em navegadores que bloqueiam localStorage, a fila fica isolada em memória
+  // por aba; permitir o flush local evita deixar alterações pendentes para sempre.
+  const storage=getBrowserStorage();
+  if(!storage)return true;
   try{
-    const current=JSON.parse(localStorage.getItem(leaderKey())||'null');
+    const current=JSON.parse(storage.getItem(leaderKey())||'null');
     if(!current||!current.id||Number(current.expiresAt)<now||current.id===PLAYER_TAB_ID){
-      localStorage.setItem(leaderKey(),JSON.stringify({id:PLAYER_TAB_ID,expiresAt:now+5000}));
+      storage.setItem(leaderKey(),JSON.stringify({id:PLAYER_TAB_ID,expiresAt:now+5000}));
       return true;
     }
-  }catch{}
-  return false;
+    return false;
+  }catch{
+    // Falha no lease não deve desativar a gravação no servidor. Quando o
+    // armazenamento falha, a fila local não é compartilhada entre abas.
+    return true;
+  }
 }
 function startLeaderLease(){
   clearInterval(leaderTimer);
@@ -412,8 +469,44 @@ export function subscribePlayerPresence(sessionId, playerId, callback){
 export function subscribePlayers(callback) {
   if (!supabase) return () => {};
   let disposed = false, refreshTimer = null, reconnectTimer = null, channel = null;
-  let flushAttempt = 0, eventSequence = 0;
+  let flushAttempt = 0, eventSequence = 0, rosterRetryAttempt = 0, rosterRetryTimer = null, rosterRefreshTimer = null;
+  let hasSubscribedOnce = false;
   const pendingOps = new Map();
+
+  // Broadcasts are an acceleration path, not the only source of truth. After a
+  // reconnect, browser resume, or network recovery, reconcile against the
+  // server roster so an event missed while disconnected cannot leave stale UI.
+  const refreshRoster = async () => {
+    if (disposed || !getAuthToken() || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+    try {
+      const rows = await fetchPlayers();
+      if (disposed) return;
+      rosterRetryAttempt = 0;
+      for (const row of rows) {
+        try { callback(row); } catch (error) { console.warn('Callback de reconciliação de Players falhou:', error); }
+      }
+    } catch (error) {
+      if (disposed || /SESSAO_INVALIDA/.test(String(error?.message || ''))) return;
+      rosterRetryAttempt = Math.min(rosterRetryAttempt + 1, 6);
+      clearTimeout(rosterRetryTimer);
+      rosterRetryTimer = setTimeout(() => { rosterRetryTimer = null; refreshRoster().catch(() => {}); }, Math.min(30000, 1000 * (2 ** (rosterRetryAttempt - 1))));
+      console.warn('Reconciliação de Players adiada; haverá nova tentativa:', error);
+    }
+  };
+  const scheduleRosterRefresh = (delay = 0) => {
+    if (disposed || rosterRetryTimer || rosterRefreshTimer) return;
+    rosterRefreshTimer = setTimeout(() => {
+      rosterRefreshTimer = null;
+      refreshRoster().catch(() => {});
+    }, delay);
+  };
+  const onOnline = () => scheduleRosterRefresh(0);
+  const onVisible = () => { if (!document.hidden) scheduleRosterRefresh(0); };
+  try {
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+  } catch {}
+
   const scheduleFlush = (delay = 120) => {
     if (disposed || refreshTimer) return;
     refreshTimer = setTimeout(async () => {
@@ -471,7 +564,14 @@ export function subscribePlayers(callback) {
         scheduleFlush(120);
       })
       .subscribe(status => {
-        if (status === 'SUBSCRIBED') { clearTimeout(reconnectTimer); reconnectTimer = null; return; }
+        if (status === 'SUBSCRIBED') {
+          clearTimeout(reconnectTimer); reconnectTimer = null;
+          // Initial login already performs hydration. On a later subscribe the
+          // WebSocket may have missed writes while disconnected: fetch truth.
+          if (hasSubscribedOnce) scheduleRosterRefresh(0);
+          hasSubscribedOnce = true;
+          return;
+        }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           if (disposed) return;
           try { Promise.resolve(supabase.removeChannel(channel)).catch(() => {}); } catch {}
@@ -483,7 +583,8 @@ export function subscribePlayers(callback) {
   attach();
   return () => {
     disposed = true;
-    clearTimeout(refreshTimer); clearTimeout(reconnectTimer);
+    clearTimeout(refreshTimer); clearTimeout(reconnectTimer); clearTimeout(rosterRetryTimer); clearTimeout(rosterRefreshTimer);
+    try { window.removeEventListener('online', onOnline); document.removeEventListener('visibilitychange', onVisible); } catch {}
     if (channel) Promise.resolve(supabase.removeChannel(channel)).catch(() => {});
     pendingOps.clear();
   };

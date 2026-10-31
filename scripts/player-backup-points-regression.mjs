@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+const migration = fs.readFileSync(path.join(root, 'supabase/migrations/20261026000000_player_autobackup_and_dedicated_points.sql'), 'utf8');
+assert.match(app, /async function persistPlayerSheetBackup\(snap\)/, 'backup local durável de ficha');
+assert.match(app, /schedulePlayerSheetBackup\(current,state\.session\?\.sheetDraft,0\)/, 'backup imediato antes da sincronização');
+assert.match(app, /schedulePlayerSheetBackup\(p,state\?\.session\?\.sheetDraft,250\)/, 'backup do rascunho de pontos');
+assert.match(migration, /create table if not exists public\.a_profecia_player_points/, 'tabela de pontos separada');
+assert.match(migration, /alter table public\.a_profecia_player_points enable row level security/, 'RLS nos pontos');
+assert.match(migration, /after insert or update of data on public\.a_profecia_players/, 'sincronização atômica dos pontos');
+assert.match(migration, /who is distinct from 'player'/, 'histórico sem sobrescrever salvamentos rápidos do Player');
+assert.match(migration, /Keep a recoverable snapshot on soft deletion/, 'backup preservado após exclusão lógica');
+console.log('Player backup and dedicated-points regression audit OK.');

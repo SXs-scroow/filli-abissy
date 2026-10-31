@@ -14,6 +14,7 @@ const REQUIRED_CONFIRMATION = 'I_CONFIRM_DISPOSABLE_STAGING_ONLY';
 const USER_COUNT = 15;
 const REALTIME_TOPIC = 'a-profecia-players-events';
 const REALTIME_EVENT = 'player-changed';
+const REALTIME_STARTUP_GRACE_MS = 5000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function requiredEnv(name) {
@@ -159,6 +160,11 @@ async function main() {
 
     for (let i = 0; i < users.length; i++) subscriptions.push(attachRealtime(users[i], i));
     await waitUntil(() => subscriptions.every(sub => sub.isSubscribed()), 20000, 'as 15 sessões Realtime ficarem SUBSCRIBED');
+
+    // SUBSCRIBED confirma a entrada no canal WebSocket, mas não garante que a
+    // replicação lógica de realtime.messages já esteja pronta num projeto frio.
+    // Damos uma janela de estabilização antes de iniciar as escritas do teste.
+    await sleep(REALTIME_STARTUP_GRACE_MS);
 
     const baseNow = Date.now();
     const probes = users.map((user, index) => {

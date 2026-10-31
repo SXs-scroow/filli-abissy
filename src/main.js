@@ -1,5 +1,6 @@
 import { BUILD_ID } from './version/buildInfo.js';
 import '../styles.css';
+import '../styles-bloodborne.css';
 import './maintenanceAgent.js';
 
 // Configuração opcional. Se VITE_SPOTIFY_CLIENT_ID estiver no .env,

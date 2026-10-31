@@ -13,6 +13,7 @@ export async function loadRealStore(supabaseUrl) {
   mkdirSync(resolve(out, 'persistence'), { recursive: true });
   copyFileSync(resolve(root, 'src/persistence/browserStorage.js'), resolve(out, 'persistence/browserStorage.js'));
   copyFileSync(resolve(root, 'src/persistence/playerQueue.js'), resolve(out, 'persistence/playerQueue.js'));
+  copyFileSync(resolve(root, 'src/persistence/concurrency.js'), resolve(out, 'persistence/concurrency.js'));
   writeFileSync(resolve(out, 'supabaseConfig.js'),
     `export const SUPABASE_URL = ${JSON.stringify(supabaseUrl)};\nexport const SUPABASE_PUBLISHABLE_KEY = 'chaos-test-key';\n`);
   let sync = readFileSync(resolve(root, 'src/globalSync.js'), 'utf8').replaceAll('import.meta.env', '({})');
