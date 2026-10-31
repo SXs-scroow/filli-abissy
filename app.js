@@ -2093,6 +2093,8 @@ function bindTvAdmin(){
   document.getElementById('saveTvScene')?.addEventListener('click',async()=>{
     const btn=document.getElementById('saveTvScene'),file=document.getElementById('tvSceneFile')?.files?.[0],url=document.getElementById('tvSceneUrl')?.value.trim()||'',name=document.getElementById('tvSceneName')?.value.trim()||file?.name?.replace(/\.[^.]+$/,'')||'Cinemática',loop=!!document.getElementById('tvSceneLoop')?.checked,upscale=!!document.getElementById('tvSceneUpscale')?.checked;
     if(!file&&!url){toast('Escolha um vídeo ou informe uma URL direta.');return}
+    if(file&&!/^(mp4|webm|mov|m4v|ogv|ogg)$/.test((file.name.split('.').pop()||'').toLowerCase())){toast('Formato não suportado. Use MP4, WebM, MOV, M4V ou OGV.');return}
+    if(!file&&!/^https?:\/\//i.test(url)){toast('A URL precisa começar com http:// ou https://');return}
     try{
       btn.disabled=true;btn.textContent='Enviando...';
       let remoteUrl=url;

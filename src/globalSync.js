@@ -236,6 +236,31 @@ export async function pushGlobal(data) {
   throw lastError || new Error('Falha ao salvar o estado global.');
 }
 
+// O supabase-js devolve só "non-2xx status code" quando a função responde erro.
+// Lê o corpo da resposta para mostrar o motivo real (formato, tamanho, limite do Storage).
+async function explainUploadError(error) {
+  let code = '', detail = '';
+  try {
+    const body = await error?.context?.json?.();
+    code = String(body?.error || '');
+    detail = String(body?.detail || '');
+  } catch {}
+  if (code === 'unauthorized') return handleAuthError(new Error('SESSAO_INVALIDA'));
+  const messages = {
+    unsupported_file_type: 'Formato não suportado. Use MP4, WebM, MOV, M4V ou OGV.',
+    file_too_large: 'O arquivo excede o limite de 200 MB.',
+    forbidden: 'Sem permissão para enviar para esta pasta.',
+    method_not_allowed: 'Requisição de upload inválida.'
+  };
+  if (code === 'upload_failed') {
+    return new Error(/exceed|size|large|payload/i.test(detail)
+      ? 'O arquivo passa do limite de tamanho configurado no Storage do Supabase.'
+      : `Falha ao gravar no Storage${detail ? `: ${detail}` : '.'}`);
+  }
+  if (messages[code]) return new Error(messages[code]);
+  return handleAuthError(error);
+}
+
 export async function uploadGlobalFile(path, file) {
   if (!supabase) throw new Error('Supabase não configurado');
   if (!getAuthToken()) throw new Error('SESSAO_INVALIDA');
@@ -255,7 +280,7 @@ export async function uploadGlobalFile(path, file) {
       'x-asset-content-type': contentType
     }
   });
-  if (error) throw handleAuthError(error);
+  if (error) throw await explainUploadError(error);
   const publicPath = data?.path || safePath;
   const base = data?.url || publicUrl(publicPath);
   return base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : '';

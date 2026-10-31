@@ -50,18 +50,27 @@ function allowedPath(path: string, role: string, playerId: string | null) {
 
 function typeForPath(path: string, supplied: string) {
   const ext = path.split(".").pop()?.toLowerCase() || "";
+  const isVideoPath = path.startsWith("tv/");
   const map: Record<string, string> = {
     png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", jfif: "image/jpeg",
     webp: "image/webp", avif: "image/avif",
     mp3: "audio/mpeg", mpeg: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg",
     oga: "audio/ogg", opus: "audio/ogg", m4a: "audio/mp4", aac: "audio/aac", flac: "audio/flac",
     webm: "video/webm", mp4: "video/mp4", mov: "video/quicktime",
+    m4v: "video/mp4", ogv: "video/ogg",
   };
-  const expected = map[ext];
+  // Em tv/ um .ogg é vídeo (Theora), não áudio.
+  const expected = isVideoPath && ext === "ogg" ? "video/ogg" : map[ext];
   if (!expected) return null;
   if (supplied && supplied !== "application/octet-stream") {
-    const compatible = supplied === expected ||
-      (supplied === "audio/webm" && expected === "video/webm");
+    const extra: Record<string, string[]> = {
+      "video/mp4": ["video/x-m4v", "video/quicktime"],
+      "video/quicktime": ["video/mp4"],
+      "video/webm": ["audio/webm"],
+      "video/ogg": ["application/ogg", "audio/ogg"],
+      "audio/ogg": ["application/ogg", "video/ogg"],
+    };
+    const compatible = supplied === expected || (extra[expected] || []).includes(supplied);
     if (!compatible) return null;
   }
   return expected;
@@ -110,7 +119,7 @@ Deno.serve(async (req) => {
     body,
     { upsert: true, contentType, cacheControl: "31536000" },
   );
-  if (uploadError) return json({ error: "upload_failed" }, 500);
+  if (uploadError) return json({ error: "upload_failed", detail: String(uploadError.message || "").slice(0, 200) }, 500);
 
   const { data: publicData } = admin.storage.from(BUCKET).getPublicUrl(path);
   return json({ ok: true, path, url: publicData.publicUrl });

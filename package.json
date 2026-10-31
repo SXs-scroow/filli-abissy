@@ -1,7 +1,7 @@
 {
   "name": "a-profecia",
   "private": true,
-  "version": "1.5.62",
+  "version": "1.5.64",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -29,8 +29,5 @@
   },
   "engines": {
     "node": "22.x"
-  },
-  "allowScripts": {
-    "esbuild@0.28.2": true
   }
 }
