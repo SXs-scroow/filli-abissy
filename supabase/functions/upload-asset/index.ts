@@ -40,7 +40,7 @@ function allowedPath(path: string, role: string, playerId: string | null) {
     return false;
   }
   if (role === "master") {
-    return /^(branding|backgrounds|slasher-music|music|sounds|tv|spells|conditions|deities|symbols)\//.test(path);
+    return /^(branding|backgrounds|slasher-music|music|sounds|tv|spells|conditions|deities|symbols|players)\//.test(path);
   }
   if (role === "player" && playerId) {
     return path.startsWith(`players/${playerId}/`);
@@ -59,7 +59,6 @@ function typeForPath(path: string, supplied: string) {
     webm: "video/webm", mp4: "video/mp4", mov: "video/quicktime",
     m4v: "video/mp4", ogv: "video/ogg",
   };
-  // Em tv/ um .ogg é vídeo (Theora), não áudio.
   const expected = isVideoPath && ext === "ogg" ? "video/ogg" : map[ext];
   if (!expected) return null;
   if (supplied && supplied !== "application/octet-stream") {
@@ -110,6 +109,15 @@ Deno.serve(async (req) => {
 
   if (sessionError || !session) return json({ error: "unauthorized" }, 401);
   if (!allowedPath(path, session.role, session.player_id)) return json({ error: "forbidden" }, 403);
+
+  if (req.headers.get("x-asset-mode") === "sign") {
+    const size = Number(req.headers.get("x-asset-size") || 0);
+    if (!size || size > MAX_BYTES) return json({ error: "file_too_large" }, 413);
+    const { data: signed, error: signError } = await admin.storage.from(BUCKET).createSignedUploadUrl(path, { upsert: true });
+    if (signError || !signed) return json({ error: "sign_failed", detail: String(signError?.message || "").slice(0, 200) }, 500);
+    const { data: pub } = admin.storage.from(BUCKET).getPublicUrl(path);
+    return json({ ok: true, mode: "sign", path, token: signed.token, contentType, url: pub.publicUrl });
+  }
 
   const body = await req.arrayBuffer();
   if (!body.byteLength || body.byteLength > MAX_BYTES) return json({ error: "file_too_large" }, 413);

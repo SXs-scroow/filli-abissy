@@ -1,10 +1,3 @@
-// Teste de rede instável (V68).
-//
-// Sobe um servidor Supabase de teste + um proxy que CORTA O SOCKET de verdade no
-// meio de uma sincronização, e roda o código REAL do projeto (src/playerStore.js e
-// as funções de sync do app.js) contra ele. Verifica que a ficha continua intacta.
-//
-// Rodar:  npm run test:chaos
 import test, { before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve, dirname } from 'node:path';
@@ -18,7 +11,7 @@ import { resetStampClock } from '../../src/stampClock.js';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 let fake, proxy, store, gs;
 
-const big = 'x'.repeat(300_000); // foto grande: o corpo da requisição atravessa vários pacotes TCP
+const big = 'x'.repeat(300_000);
 const ficha = (id, over = {}) => ({
   id, login: id, name: `Ficha ${id}`, hp: 30, hpMax: 35, hunger: 80,
   backpack: [{ name: 'Lanterna', qty: 1 }, { name: 'Faca', qty: 2 }],
@@ -26,7 +19,6 @@ const ficha = (id, over = {}) => ({
   _syncUpdatedAt: 1000, ...over
 });
 const clone = v => JSON.parse(JSON.stringify(v));
-// valores vindos do sandbox `vm` têm outro realm: normaliza antes de comparar com deepEqual
 const plain = clone;
 const ids = c => plain(c.ctx.state.players.map(p => p.id)).sort();
 
@@ -57,7 +49,6 @@ beforeEach(() => {
   fake.addSession('tok-p1', 'player', 'p1');
 });
 
-// ---------------------------------------------------------------- contrato
 test('contrato: o Player recebe a PRÓPRIA linha com deleted_at explícito quando excluída', async () => {
   gs.setAuthToken('tok-p1');
   fake.seedPlayer(ficha('p1'));
@@ -94,7 +85,6 @@ test('segurança: token do Player excluído lê SÓ a própria exclusão e não 
   await assert.rejects(() => store.fetchPlayers(), e => /SESSAO_INVALIDA/.test(String(e?.message || e)), 'token inventado segue inválido');
 });
 
-// ------------------------------------------------ corte no meio do UPLOAD
 test('corte no meio do envio da ficha: ficha local e servidor intactos; retry converge', async () => {
   fake.seedPlayer(ficha('p1'));
   const edited = ficha('p1', { hp: 12, _syncUpdatedAt: 2000, backpack: [{ name: 'Lanterna', qty: 1 }, { name: 'Faca', qty: 2 }, { name: 'Corda', qty: 1 }] });
@@ -122,7 +112,6 @@ test('corte no meio do envio da ficha: ficha local e servidor intactos; retry co
   assert.equal(c.ctx.state.players[0].hp, 12);
 });
 
-// ------------------------------- servidor aplicou, mas a resposta se perdeu
 test('resposta perdida (servidor aplicou, cliente não soube): retry é seguro e idempotente', async () => {
   fake.seedPlayer(ficha('p1'));
   const edited = ficha('p1', { hp: 9, _syncUpdatedAt: 3000 });
@@ -141,7 +130,6 @@ test('resposta perdida (servidor aplicou, cliente não soube): retry é seguro e
   assert.equal(fake.db.calls.filter(x => x.rpc === 'save' && x.applied).length, 1, 'sem gravação duplicada');
 });
 
-// ------------------------------------- corte no meio da LEITURA do roster
 test('corte no meio da leitura: ficha, snapshot e tombstones intactos', async () => {
   fake.seedPlayer(ficha('p1', { _syncUpdatedAt: 1000 }));
   const c = makeClient('player', 'p1', [ficha('p1', { _syncUpdatedAt: 1000 })]);
@@ -162,14 +150,13 @@ test('leitura vazia transitória (200 com []): Player não perde a ficha', async
   fake.seedPlayer(ficha('p1'));
   const c = makeClient('player', 'p1', [ficha('p1')]);
   const before = clone(c.ctx.state.players[0]);
-  fake.db.glitchEmptyReads = 2; // as duas leituras de confirmação vêm vazias
+  fake.db.glitchEmptyReads = 2;
   await c.api.sync(true);
   assert.deepEqual(plain(c.ctx.state.players[0]), before);
   assert.equal(c.ctx.state.session.playerSnapshot.id, 'p1');
   assert.deepEqual(plain(c.ctx.state.playerTombstones), {});
 });
 
-// ----------------------------------------------- exclusão explícita chegando
 test('exclusão pelo Mestre chega ao Player como deleted_at explícito (e só então some)', async () => {
   fake.seedPlayer(ficha('p1'));
   const c = makeClient('player', 'p1', [ficha('p1')]);
@@ -178,7 +165,6 @@ test('exclusão pelo Mestre chega ao Player como deleted_at explícito (e só en
   await store.deletePlayerServer('p1');
   gs.setAuthToken('tok-p1');
 
-  // Rede cai justo na leitura seguinte: ninguém sabe se foi excluída => NÃO remove.
   proxy.inject('a_profecia_get_players_by_ids', 'cut-response', { times: 2 });
   await c.api.sync(true);
   assert.equal(c.ctx.state.players.length, 1, 'sem confirmação explícita a ficha fica');
@@ -206,11 +192,10 @@ test('Player com edição local pendente + ficha excluída no servidor: não ten
   delete globalThis.window; delete globalThis.CustomEvent;
 });
 
-// -------------------------------- Mestre: corte no meio de uma exclusão
 test('Mestre: corte no meio da exclusão não perde os outros Players e o retry conclui', async () => {
   for (const id of ['p1', 'p2', 'p3']) fake.seedPlayer(ficha(id));
   const c = makeClient('master', null, ['p1', 'p2', 'p3'].map(id => ficha(id)));
-  c.ctx.state.playerTombstones = { p2: Date.now() }; // intenção explícita de excluir p2
+  c.ctx.state.playerTombstones = { p2: Date.now() };
   c.ctx.state.players = c.ctx.state.players.filter(p => p.id !== 'p2');
 
   proxy.inject('a_profecia_player_delete', 'cut-request', { bytes: 20 });
@@ -226,7 +211,6 @@ test('Mestre: corte no meio da exclusão não perde os outros Players e o retry 
   assert.deepEqual(ids(c), ['p1', 'p3']);
 });
 
-// ------------------------------------------------------------- Realtime
 function realtimeHarness() {
   let handler;
   const channel = { on(_t, _f, cb) { handler = cb; return channel; }, subscribe() { return channel; } };
@@ -246,7 +230,6 @@ test('realtime: ausência na leitura NÃO fabrica exclusão; exclusão explícit
   fake.seedPlayer(ficha('p1'));
   const rt = realtimeHarness();
   try {
-    // (a) evento sobre a própria ficha + rede cortada => fica pendente; após recuperar, retry entrega a ficha.
     proxy.inject('a_profecia_get_players_by_ids', 'cut-response', { times: 5 });
     rt.emit('p1', 'update'); await settle(300);
     assert.equal(rt.events.length, 0);
@@ -256,18 +239,13 @@ test('realtime: ausência na leitura NÃO fabrica exclusão; exclusão explícit
     assert.equal(rt.events[0].id, 'p1');
     rt.events.length = 0;
 
-    // (b) evento sobre OUTRO Player (RLS não devolve a linha) => nada de 'deleted' inventado
     rt.emit('p9', 'update'); await settle(900);
     assert.equal(rt.events.length, 0, 'ausência não é exclusão');
 
-    // (c) DELETE físico anunciado pelo trigger (op=delete) => marcador.
-    //     Roda ANTES da exclusão do p1: depois dela o token tok-p1 é revogado e, por contrato
-    //     (RPC real e servidor simulado), só pode ler a tombstone da PRÓPRIA ficha.
     rt.emit('p7', 'delete'); await settle(900);
     assert.equal(rt.events.length, 1);
     assert.deepEqual(rt.events[0], { id: 'p7', deleted_at: 'deleted' });
 
-    // (d) exclusão explícita da própria ficha => callback com deleted_at real
     gs.setAuthToken('tok-master'); await store.deletePlayerServer('p1'); gs.setAuthToken('tok-p1');
     rt.emit('p1', 'update'); await settle(300);
     assert.equal(rt.events.length, 2);

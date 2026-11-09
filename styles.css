@@ -1759,14 +1759,7 @@ body::before{
 .campaign-map-labels{pointer-events:none}
 .campaign-region-label{font-size:9px;stroke-width:3px;paint-order:stroke;letter-spacing:.1px}
 @media(max-width:700px){.player-utilities>summary,.player-stress-details>summary{align-items:flex-start;flex-wrap:wrap}.player-utilities>summary span,.player-stress-details>summary span{width:100%;margin-left:0;text-align:left}.campaign-map-panel svg{min-height:300px}}
-.master-more-tabs{position:relative;flex:none}
-.master-more-tabs>summary{cursor:pointer;list-style:none;background:#0b0708;color:#d5b873;border:1px solid rgba(201,166,91,.28);padding:9px 12px;border-radius:8px;white-space:nowrap}
-.master-more-tabs>summary::-webkit-details-marker{display:none}
-.master-more-tabs>summary::after{content:'⌄';margin-left:8px;color:#a99b96}
-.master-more-tabs[open]>summary{border-color:#8b713c;background:#15100a}
-.master-more-tabs-list{position:absolute;right:0;top:calc(100% + 7px);z-index:25;display:grid;grid-template-columns:repeat(2,minmax(130px,1fr));gap:5px;width:min(360px,88vw);padding:9px;border:1px solid rgba(201,166,91,.25);border-radius:10px;background:#100c0c;box-shadow:0 14px 32px rgba(0,0,0,.5)}
-.panel-tabs .master-more-tabs-list button{width:100%;text-align:left}
-@media(max-width:700px){.master-more-tabs-list{right:auto;left:0;grid-template-columns:1fr 1fr}.panel-tabs{align-items:flex-start}}
+@media(max-width:700px){.panel-tabs{align-items:flex-start}}
 
 /* =========================================================
    ASHEN TESTIMONY V1.5.23 — DOSSIÊ GÓTICO SANGUÍNEO

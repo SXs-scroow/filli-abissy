@@ -1,6 +1,3 @@
-// Extrai do app.js REAL as funções de sincronização de Players (sem refatorar o
-// arquivo de 400 KB) e as executa num sandbox `vm` com stubs mínimos de DOM/estado.
-// Se alguém renomear/mover essas funções, o teste falha alto em vez de passar em falso.
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,14 +26,10 @@ export function extractFunction(src, name) {
   throw new Error(`Não consegui delimitar ${name}`);
 }
 
-// V1.5.2: a lógica de Players saiu do app.js para src/players.js. As funções são extraídas dos dois arquivos juntos.
 export function readAppSources(appPath = join(dirname(fileURLToPath(import.meta.url)), '../../app.js')) {
   const players = join(dirname(appPath), 'src/players.js');
   return readFileSync(appPath, 'utf8') + '\n' + readFileSync(players, 'utf8');
 }
-// Mesmo estado/host que o players.js real recebe (ps = estado do sync; host.state = o state vivo do sandbox).
-// V1.5.3: players.js importa nextStamp/observePlayerStamps de src/stampClock.js. No sandbox usamos o código REAL desse
-// arquivo (sem os `export`), para o teste exercitar o mesmo relógio lógico que roda no site.
 const stampClockSrc = () => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../src/stampClock.js'), 'utf8').replace(/^export /gm, '');
 export const playerPrelude = (snapshot = '[]') =>
   `${stampClockSrc()}\nconst ps={timer:null,hydrated:false,applying:false,hydrating:false,hydratePromise:null,lastSyncAt:0,unsubscribe:null,syncBusy:false,syncPromise:null,circuitOpen:false,readOnly:false,lastSnapshot:${snapshot}};const host={get state(){return state}};`;
@@ -61,7 +54,7 @@ export function buildAppSandbox(appPath, store) {
     storageSet: (k, v) => { mem.set(k, v); },
     KEY: 'app_state', PLAYER_ROSTER_CACHE_KEY: 'a_profecia_server_roster_v1',
     serializeState: () => JSON.stringify(ctx.state),
-    normalize: e => e,                       // stub: o normalize real é grande e só ajusta campos
+    normalize: e => e,
     refreshMasterPlayersAdminView() {}, persistCriticalCache() {}, persistSessionCache() {},
     applyConfirmedPlayerRosterFallback() {}, toast() {},
     state: null

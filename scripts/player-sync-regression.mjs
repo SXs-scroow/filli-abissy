@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 
-// V1.5.2: a lógica de Players está em src/players.js; as verificações olham app.js + players.js juntos.
 const app = readFileSync('app.js','utf8') + '\n' + readFileSync('src/players.js','utf8');
 const store = readFileSync('src/playerStore.js','utf8');
 const sync = readFileSync('src/globalSync.js','utf8');
@@ -34,10 +33,6 @@ const checks = [
   ['Session order normalization makes turnOrder unique and contiguous', /ordered\.forEach\(\(entry,index\)=>\{entry\.turnOrder=index\}\)/.test(app)],
   ['New session resets encounter state and allows the Master to select Players', /fresh\.active=false;fresh\.round=1;fresh\.turn=0;fresh\.currentKey='';fresh\.actedKeys=\[\];fresh\.history=\[\];/.test(app) && /openCombatNewSessionPicker/.test(app) && /fresh\.participants=buildCombatSessionParticipants\(players,selected\)/.test(app)],
   ['Session tools are collapsed by default to simplify the table UI', /<details class="player-utilities combat-secondary-tools">/.test(app)],
-  // V67: um Player não pode perder a própria ficha (nem o snapshot de fallback)
-  // por causa de uma leitura vazia/transitória do servidor. Uma segunda leitura
-  // confirma antes de tratar isso como autoritativo, e a própria ficha do
-  // usuário nunca é apagada por uma ausência isolada.
   ['a confirming second read exists before trusting an empty/missing roster response', /async function fetchPlayerRowsConfirmed\(ids=null\)/.test(app) && /await fetchPlayerRowsConfirmed\(/.test(app)],
   ['hydrate uses the confirmed read instead of a single raw fetch', /const rows=await fetchPlayerRowsConfirmed\([^\n]*\);[\s\S]{0,80}ps\.readOnly=false;[\s\S]{0,80}ps\.lastSyncAt=Date\.now\(\);[\s\S]{0,80}saveConfirmedPlayerRoster\(rows\);[\s\S]{0,40}if\(rows\.length\)\{/.test(app)],
   ['sync reconciliation uses the confirmed read instead of a single raw fetch', /const rows=await fetchPlayerRowsConfirmed\([^\n]*\);[\s\S]{0,80}ps\.readOnly=false;/.test(app)],

@@ -1,5 +1,3 @@
-// Reproduz, com o syncPlayersDbNow REAL, a corrida em que o sync automático (que espera a rede) sobrescreve
-// state.players com uma cópia velha e faz Players criados/atualizados durante a espera "sumirem".
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve, dirname } from 'node:path';
@@ -43,7 +41,7 @@ test('Player criado pelo Mestre DURANTE a leitura do servidor não some', async 
 
 test('Player registrado em outro aparelho (chega por Realtime) DURANTE o envio não some', async () => {
   const t = setup();
-  Object.assign(t.ctx.state.players.find(p => p.id === 'A'), { _syncUpdatedAt: 4000, hp: 6 }); // edição local real -> força um upsert (abre a janela de espera)
+  Object.assign(t.ctx.state.players.find(p => p.id === 'A'), { _syncUpdatedAt: 4000, hp: 6 });
   t.hooks.duringUpsert = () => { const r = mk('REGISTRADO', 5000); t.server.set('REGISTRADO', toRow(r)); t.ctx.state.players.push(r); };
   await t.api.sync(false);
   assert.ok(t.ids().includes('REGISTRADO'), `sumiu! lista: ${t.ids()}`);
@@ -58,7 +56,7 @@ test('atualização mais nova aplicada pelo Realtime DURANTE o sync não é reve
 
 test('edição do Mestre durante o upsert não é perdida', async () => {
   const t = setup();
-  t.ctx.state.players.find(p => p.id === 'A')._syncUpdatedAt = 4000; // A local mais novo -> será enviado
+  t.ctx.state.players.find(p => p.id === 'A')._syncUpdatedAt = 4000;
   t.ctx.state.players.find(p => p.id === 'A').hp = 6;
   t.hooks.duringUpsert = () => t.ctx.state.players.push(mk('NOVO2', 6000, { _pendingCreate: true }));
   await t.api.sync(false);
@@ -74,11 +72,11 @@ test('exclusão feita pelo Mestre DURANTE o sync continua excluída', async () =
 
 test('salvar do Mestre com um sync automático já em andamento ainda envia a ficha nova ao servidor', async () => {
   const t = setup();
-  Object.assign(t.ctx.state.players.find(p => p.id === 'A'), { _syncUpdatedAt: 4000, hp: 6 }); // edição local real -> força upsert no sync automático
+  Object.assign(t.ctx.state.players.find(p => p.id === 'A'), { _syncUpdatedAt: 4000, hp: 6 });
   let fresh;
-  t.hooks.duringUpsert = () => {                       // o Mestre cria o Player e clica em salvar NESTE instante
+  t.hooks.duringUpsert = () => {
     t.ctx.state.players.push(mk('NOVO3', 8000, { _pendingCreate: true }));
-    fresh = t.api.sync(false, { fresh: true });        // o botão salvar chama o sync enquanto o automático ainda roda
+    fresh = t.api.sync(false, { fresh: true });
   };
   await t.api.sync(false);
   assert.equal(await fresh, true);

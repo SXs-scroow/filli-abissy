@@ -29,32 +29,45 @@ function summarizeLatency(values=[]){
 }
 
 export function simulateRosterConvergence(deps, n=20, cycles=3){
+  const g=rosterConvergenceSteps(deps,n,cycles);let r;while(!(r=g.next()).done);return r.value;
+}
+export async function simulateRosterConvergenceAsync(deps, n=20, cycles=3){
+  const g=rosterConvergenceSteps(deps,n,cycles);let r,last=performance.now();
+  while(!(r=g.next()).done){if(performance.now()-last>12){await new Promise(res=>setTimeout(res,0));last=performance.now()}}
+  return r.value;
+}
+function* rosterConvergenceSteps(deps, n=20, cycles=3){
   const { state, ps, applyPlayerRows, clone } = deps;
   const problems=[];
   const savedPlayers=state.players,savedTomb=state.playerTombstones,savedSnap=ps.lastSnapshot;
   const pid=i=>`stress-${i}`;
   const truth=Array.from({length:n},(_,i)=>({id:pid(i+1),login:pid(i+1),name:`Stress Player ${i+1}`,campaignType:'campaign',attrs:{Corpo:2,Sanidade:2},skills:{},attrLimits:{},hp:10,hpMax:18,sanity:18,sanityMax:18,conditions:[],conditionTurns:{},conditionTick:{},backpack:[],secretClues:[],rolls:[],_syncUpdatedAt:1000}));
   const toRow=(p,stamp,deleted=false)=>({id:p.id,login:p.login,data:{...clone(p),_syncUpdatedAt:stamp},updated_at:new Date(stamp).toISOString(),deleted_at:deleted?new Date(stamp).toISOString():null});
+  {const scratch={players:truth.map(p=>clone(p)),tomb:{},snapshot:[]};
+   state.players=scratch.players;state.playerTombstones={};ps.lastSnapshot=[];
+   try{applyPlayerRows([],{authoritative:false});scratch.players=state.players;
+     scratch.players.forEach((np,i)=>{truth[i]={...clone(np),hp:truth[i].hp,secretClues:[],rolls:[],_syncUpdatedAt:1000}})
+   }catch(error){problems.push(`erro na simulação: ${String(error?.message||error)}`)}
+   finally{state.players=savedPlayers;state.playerTombstones=savedTomb;ps.lastSnapshot=savedSnap}}
   const clients=Array.from({length:n},()=>{const players=truth.map(p=>clone(p));return {players,tomb:{},snapshot:clone(players)}});
-  // Aparelho 4 com relógio adiantado: a ficha local "parece" mais nova que a do servidor (vida 3 só existe nele).
   const SKEW=3;clients[SKEW].players[SKEW]={...clients[SKEW].players[SKEW],hp:3,_syncUpdatedAt:9e12};
-  const apply=(c,rows)=>{state.players=c.players;state.playerTombstones=c.tomb;ps.lastSnapshot=c.snapshot;try{applyPlayerRows(rows,{authoritative:false})}finally{c.players=state.players;c.tomb=state.playerTombstones;c.snapshot=ps.lastSnapshot}};
+  const apply=(c,rows)=>{state.players=c.players;state.playerTombstones=c.tomb;ps.lastSnapshot=c.snapshot;try{applyPlayerRows(rows,{authoritative:false})}finally{c.players=state.players;c.tomb=state.playerTombstones;c.snapshot=ps.lastSnapshot;state.players=savedPlayers;state.playerTombstones=savedTomb;ps.lastSnapshot=savedSnap}};
   try{
     let t=2000;
     for(let cy=0;cy<cycles;cy++){
       t+=1000;
       truth.forEach((p,i)=>{p.hp=Math.max(4,9-cy);p.secretClues.unshift({id:`clue-${cy}-${i}`,title:'Teste',message:'Teste',receivedAt:t})});
       const rows=truth.map(p=>toRow(p,t));
-      clients.forEach((c,ci)=>{
-        // Cada aparelho recebe numa ordem diferente e o evento chega duplicado (o Realtime costuma repetir).
+      for(const [ci,c] of clients.entries()){
         const k=(ci+cy)%rows.length,order=rows.slice(k).concat(rows.slice(0,k));
         apply(c,order);apply(c,order);
-      });
+        yield;
+      }
     }
-    const stale=toRow({...truth[0],hp:99},1500); // resposta atrasada: nunca pode sobrescrever a ficha mais nova
-    clients.forEach(c=>apply(c,[stale]));
-    const del=toRow(truth[n-1],t+1000,true);      // exclusão confirmada pelo servidor
-    clients.forEach(c=>apply(c,[del]));
+    const stale=toRow({...truth[0],hp:99},1500);
+    for(const c of clients){apply(c,[stale]);yield}
+    const del=toRow(truth[n-1],t+1000,true);
+    for(const c of clients){apply(c,[del]);yield}
     const finalHp=Math.max(4,9-(cycles-1));
     clients.forEach((c,ci)=>{
       const byId=new Map(c.players.map(p=>[p.id,p]));
@@ -90,16 +103,12 @@ export async function runPlayerStressTest(deps){
   const serverMismatch=[];
   const log=(type,message)=>{try{window.__aProfeciaMaintenance?.events?.push({time:new Date().toISOString(),type,message})}catch{}};
   try{
-    // 1) Simulação local com o applyPlayerRows real (ordem embaralhada, eventos duplicados, relógio adiantado, exclusão).
-    sim=simulateRosterConvergence({state,ps,applyPlayerRows,clone},virtualClients,cycles);
-    // 1b) Escala local progressiva: valida a lógica com rosters maiores sem tocar no servidor.
+    sim=await simulateRosterConvergenceAsync({state,ps,applyPlayerRows,clone},virtualClients,cycles);
     for(const clients of [15,20,30,50,100]){
       const scaleStarted=performance.now();
-      const result=simulateRosterConvergence({state,ps,applyPlayerRows,clone},clients,cycles);
+      const result=await simulateRosterConvergenceAsync({state,ps,applyPlayerRows,clone},clients,cycles);
       scaleTests.push({clients,ok:result.ok,total:result.total,elapsed:Math.round(performance.now()-scaleStarted),problems:result.problems});
     }
-    // 2) Sonda autenticada de leitura: 15 requisições concorrentes, uma por cliente virtual.
-    //    Cada ficha é consultada mais de uma vez ao mesmo tempo e as respostas precisam concordar.
     if(!playerStoreEnabled)skipReason='o armazenamento de Players no servidor está desativado';
     else if(!getAuthToken())skipReason='você não está logado no servidor';
     else if(typeof navigator==='undefined'||navigator.onLine===false)skipReason='o aparelho está offline';
@@ -130,14 +139,11 @@ export async function runPlayerStressTest(deps){
     }
     const elapsed=Math.round(performance.now()-started);
     const serverLatency=summarizeLatency(serverLatencyMs);
-    // Só inconsistência de LÓGICA (simulação ou respostas contraditórias) protege o sync. Falha de rede não.
     const logicFail=!sim.ok||scaleTests.some(x=>!x.ok)||serverMismatch.length>0;
     const outcome=logicFail?'failed':serverFailures>0?'inconclusive':'partial';
     window.__aProfeciaStressReport={status:outcome,build:version,targetUsers:15,virtualClients,cycles,scaleTests,serverReads,serverProbeType:'authenticated-read-only',endToEndValidated:false,serverFailures,serverMaxInFlight,serverLatency,skipReason,simulationProblems:sim.problems,serverMismatch,elapsed,at:Date.now()};
     if(logicFail){
       const why=[...sim.problems,...scaleTests.flatMap(x=>x.problems||[]),...serverMismatch].slice(0,5).join(' | ');
-      // Falha na simulação aponta problema no diagnóstico; ela não é uma gravação remota
-      // nem uma prova de que os dados reais estão inconsistentes. Nunca bloqueie o sync por este teste.
       log('error',`STRESS TEST ENCONTROU INCONSISTÊNCIA NA SIMULAÇÃO: ${why}`);
       set(status,`🔴 FALHOU • inconsistência no teste`);
       set(details,`Resultado: ${why}. A sincronização real NÃO foi pausada, pois a simulação usa fichas artificiais e não modificou o servidor.`);
@@ -155,7 +161,6 @@ export async function runPlayerStressTest(deps){
       toast('Simulação concluída. A validação real de 15 usuários continua pendente.');
     }
   }catch(error){
-    // Erro inesperado do próprio teste: não prova nada sobre os dados, então não pausa o sync.
     const elapsed=Math.round(performance.now()-started);
     window.__aProfeciaStressReport={status:'inconclusive',build:version,targetUsers:15,virtualClients,cycles,scaleTests,serverReads,serverProbeType:'authenticated-read-only',endToEndValidated:false,serverFailures,serverMaxInFlight,serverLatency:summarizeLatency(serverLatencyMs),message:String(error?.message||error),elapsed,at:Date.now()};
     log('warn',`Teste de estresse não concluiu: ${String(error?.message||error)}`);

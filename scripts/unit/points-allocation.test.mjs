@@ -1,4 +1,3 @@
-// Contagem de pontos: chaves órfãs não gastam pontos e rascunho velho não sobrepõe os pontos reais.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';

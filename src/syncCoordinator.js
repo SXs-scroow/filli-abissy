@@ -25,7 +25,6 @@ function persistPending(value) {
   const s = storage();
   const saved = value ? writeStoredJson(PENDING_KEY, value, s) : removeStoredValue(PENDING_KEY, s);
   if (!saved) {
-    // Mantém o item em memória e avisa: sem persistência local, uma recarga pode perder esta fila.
     try { console.warn('Não foi possível persistir a fila de sincronização no navegador.'); } catch {}
     notify('storage-error', { reason: 'PENDING_QUEUE_NOT_DURABLE' });
   }
@@ -51,8 +50,6 @@ export function configureSyncCoordinator(push) {
 export function enqueueGlobalSnapshot(payload) {
   if (!payload || typeof payload !== 'object') return Promise.reject(new Error('SNAPSHOT_INVALIDO'));
   const item = { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, createdAt: Date.now(), payload };
-  // A global payload is a complete snapshot: newer snapshots include earlier local edits.
-  // Replacing an unsent snapshot avoids replaying stale whole-state writes out of order.
   persistPending(item);
   notify('pending', { createdAt: item.createdAt });
   const promise = new Promise((resolve, reject) => waiters.push({ id: item.id, resolve, reject }));
@@ -78,7 +75,6 @@ export async function flushPending() {
         scheduleRetry();
         throw error;
       }
-      // Do not clear a newer snapshot enqueued while this request was in flight.
       if (readPending()?.id === current.id) persistPending(null);
       attempts = 0;
       notify('saved', { id: current.id, updatedAt: result?.updated_at || null });

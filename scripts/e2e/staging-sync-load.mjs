@@ -133,10 +133,8 @@ async function main() {
   }
   if (!/^https:\/\//i.test(url)) throw new Error('ASHEN_TEST_SUPABASE_URL precisa usar HTTPS.');
 
-  // Import only after the staging guard and all required inputs pass.
   ({ createClient } = await import('@supabase/supabase-js'));
 
-  // Isolated clients approximate independent browser sessions, not just 15 Promise.all calls on one client.
   const users = [];
   const subscriptions = [];
   let masterClient = null;
@@ -161,9 +159,6 @@ async function main() {
     for (let i = 0; i < users.length; i++) subscriptions.push(attachRealtime(users[i], i));
     await waitUntil(() => subscriptions.every(sub => sub.isSubscribed()), 20000, 'as 15 sessões Realtime ficarem SUBSCRIBED');
 
-    // SUBSCRIBED confirma a entrada no canal WebSocket, mas não garante que a
-    // replicação lógica de realtime.messages já esteja pronta num projeto frio.
-    // Damos uma janela de estabilização antes de iniciar as escritas do teste.
     await sleep(REALTIME_STARTUP_GRACE_MS);
 
     const baseNow = Date.now();
@@ -192,7 +187,6 @@ async function main() {
     }));
     const concurrentWriteMs = performance.now() - concurrentStart;
 
-    // Each token verifies its own saved row through the same restricted RPC used by the application.
     const readResults = await Promise.allSettled(probes.map(async probe => {
       const rows = unwrap(await probe.user.client.rpc('a_profecia_get_players_by_ids', {
         p_token: probe.user.token, p_ids: [probe.user.id]
@@ -203,7 +197,6 @@ async function main() {
     }));
     readResults.forEach((result, index) => { if (result.status === 'rejected') failures.push(`Leitura pós-gravação #${index + 1}: ${String(result.reason?.message || result.reason)}`); });
 
-    // The master reads the complete roster after all independent users write concurrently.
     const masterRoster = unwrap(await masterClient.rpc('a_profecia_list_players', { p_token: masterToken }), 'Leitura final do roster pelo Mestre');
     const masterById = new Map((Array.isArray(masterRoster) ? masterRoster : []).map(row => [String(row.id), row]));
     for (const probe of probes) {
@@ -245,8 +238,6 @@ async function main() {
     console.log(JSON.stringify(result, null, 2));
     if (!result.pass) process.exitCode = 1;
   } finally {
-    // Always attempt to put each disposable staging ficha's original HP back.
-    // A cleanup failure is surfaced as a test failure; it is never hidden.
     if (writesStarted) {
       const settled = await Promise.allSettled(users.map(async (user, index) => {
         const probe = user ? users[index] : null;

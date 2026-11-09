@@ -1,4 +1,3 @@
-// Garante que pontos (atributos/perícias) salvos pelo Player não somem quando chega uma cópia remota.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';

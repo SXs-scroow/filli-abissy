@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 
 const index = readFileSync('index.html','utf8');
 const main = readFileSync('src/main.js','utf8');
-// V1.5.2: lógica de Players está em src/players.js; as verificações olham app.js + players.js juntos.
 const app = readFileSync('app.js','utf8') + '\n' + readFileSync('src/players.js','utf8');
 const store = readFileSync('src/playerStore.js','utf8');
 const sync = readFileSync('src/globalSync.js','utf8');

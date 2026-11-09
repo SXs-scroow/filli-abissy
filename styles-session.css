@@ -1,0 +1,819 @@
+/* =====================================================================
+   MODO SESSÃO — "A Vigília"
+   Tela que o jogador deixa aberta durante a mesa. Leitura rápida entre turnos:
+   1) de quem é a vez  2) minha Vida e Sanidade  3) o que sei fazer  4) o que carrego.
+   O único ponto de destaque é a brasa âmbar da "Sua vez"; o resto é frio e quieto.
+   Carregado depois de styles.css e styles-bloodborne.css (por isso os !important:
+   as camadas antigas usam !important no mesmo seletor).
+   ===================================================================== */
+
+.immersive.player-personalized {
+  --s-panel: rgba(8, 15, 20, .84);
+  --s-well: rgba(4, 9, 13, .62);
+  --s-line: rgba(122, 160, 176, .24);
+  --s-line-soft: rgba(122, 160, 176, .14);
+  --s-text: #d4d7d1;
+  --s-strong: #eceae2;
+  --s-dim: #8393a0;
+  --s-faint: #566870;
+  --s-gold: #b79c6d;
+  --s-gold-hi: #e0c892;
+  --s-ember: #e6a54a;
+  --s-blood-a: #6d1219;
+  --s-blood-b: #c4404a;
+  --s-pale-a: #2c4a6b;
+  --s-pale-b: #93bad8;
+
+  max-width: 1180px !important;
+  padding: clamp(14px, 3vw, 30px) clamp(12px, 3vw, 28px) calc(56px + env(safe-area-inset-bottom)) !important;
+  font-family: var(--bb-serif, "Spectral", Georgia, serif);
+  color: var(--s-text);
+  /* overflow:hidden das camadas antigas impediria o "sticky" das abas e da coluna lateral */
+  overflow-x: clip !important;
+  overflow-y: visible !important;
+}
+
+.immersive.player-personalized button:focus-visible,
+.immersive.player-personalized a:focus-visible {
+  outline: 2px solid var(--s-gold-hi);
+  outline-offset: 2px;
+}
+
+/* ---------- Cabeçalho: título da sessão, cena e situação ---------- */
+.immersive.player-personalized .imm-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  grid-template-areas: "title exit" "player player" !important;
+  gap: 16px 20px !important;
+  align-items: start !important;
+  min-height: 0 !important;
+  margin: 0 0 14px !important;
+  padding: 0 0 18px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+}
+.immersive.player-personalized .imm-head::before,
+.immersive.player-personalized .imm-head::after { display: none !important; }
+
+.immersive.player-personalized .imm-session-title { grid-area: title; min-width: 0; }
+.immersive.player-personalized .imm-session-title .section-kicker {
+  color: var(--s-gold) !important;
+  font-size: 12px;
+  letter-spacing: .14em;
+}
+.immersive.player-personalized .imm-session-title h1 {
+  margin: .12em 0 .18em;
+  font-family: var(--bb-display, "Cormorant Garamond", Georgia, serif) !important;
+  font-size: clamp(2rem, 6vw, 3.4rem) !important;
+  font-weight: 600;
+  line-height: 1.04;
+  letter-spacing: .01em !important;
+  color: var(--s-strong) !important;
+  text-shadow: none !important;
+  overflow-wrap: anywhere;
+}
+.immersive.player-personalized .imm-session-title p {
+  max-width: 62ch;
+  margin: 0;
+  font-size: 1.02rem !important;
+  font-style: italic;
+  line-height: 1.6;
+  color: var(--s-dim) !important;
+}
+.immersive.player-personalized .imm-session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 0;
+  margin-top: 14px;
+}
+.immersive.player-personalized .imm-session-meta span {
+  padding: 0 14px;
+  border: 0 !important;
+  background: none !important;
+  font-size: 12.5px;
+  letter-spacing: .08em;
+  color: var(--s-dim) !important;
+}
+.immersive.player-personalized .imm-session-meta span:first-child { padding-left: 0; }
+.immersive.player-personalized .imm-session-meta span + span { border-left: 1px solid var(--s-line) !important; }
+.immersive.player-personalized .imm-session-meta .imm-session-live.active { color: var(--s-ember) !important; }
+
+.immersive.player-personalized .imm-exit {
+  grid-area: exit;
+  align-self: start;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 9px;
+  width: auto !important;
+  min-height: 0 !important;
+  padding: 10px 16px !important;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #c9ced0 !important;
+  font: 500 14px/1.2 var(--bb-serif, Georgia, serif);
+  letter-spacing: .04em;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.immersive.player-personalized .imm-exit:hover { color: var(--s-gold-hi) !important; border-color: var(--s-gold) !important; }
+
+/* Identidade + de quem é a vez */
+.immersive.player-personalized .imm-head-player {
+  grid-area: player !important;
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 12px;
+  width: 100%;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  justify-self: stretch !important;
+}
+.immersive.player-personalized .imm-head-player .sess-card {
+  flex: 1 1 290px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 18px;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: var(--s-panel) !important;
+  box-shadow: none !important;
+}
+.immersive.player-personalized .imm-head-player .sess-diamond { animation: none !important; filter: none !important; border-color: var(--s-gold) !important; }
+.immersive.player-personalized .imm-head-player .sess-name {
+  font-family: var(--bb-display, Georgia, serif);
+  font-size: 1.45rem;
+  font-weight: 600;
+  color: var(--s-strong);
+  overflow-wrap: anywhere;
+}
+.immersive.player-personalized .imm-head-player .sess-det { color: var(--s-dim); }
+.immersive.player-personalized .imm-head-player .sess-det b {
+  font-family: var(--bb-display, Georgia, serif);
+  font-size: 1.7rem;
+  color: var(--s-gold-hi);
+  font-variant-numeric: lining-nums;
+}
+/* o estado da vez já aparece grande ao lado; aqui seria repetição */
+.immersive.player-personalized .imm-head-player .sess-turn-state { display: none; }
+.immersive.player-personalized .imm-head-player .det-btn {
+  width: 34px; height: 34px;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--s-text);
+  cursor: pointer;
+}
+.immersive.player-personalized .imm-head-player .det-btn:hover { border-color: var(--s-gold) !important; color: var(--s-gold-hi); }
+
+.immersive.player-personalized .imm-turn-pill {
+  flex: 1 1 230px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 12px 20px;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: var(--s-panel) !important;
+  box-shadow: none !important;
+}
+.immersive.player-personalized .imm-turn-pill span {
+  font-family: var(--bb-display, Georgia, serif);
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: .05em;
+  color: #c3c9c9;
+}
+.immersive.player-personalized .imm-turn-pill small { font-size: .98rem; color: var(--s-dim); }
+.immersive.player-personalized .imm-turn-pill.my-turn {
+  border-color: var(--s-ember) !important;
+  background: linear-gradient(90deg, rgba(230, 165, 74, .16), var(--s-panel)) !important;
+  animation: sessionEmber 3.4s ease-in-out infinite;
+}
+.immersive.player-personalized .imm-turn-pill.my-turn span { color: var(--s-ember); }
+@keyframes sessionEmber {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(230, 165, 74, .30), 0 0 16px rgba(230, 165, 74, .10); }
+  50%      { box-shadow: 0 0 0 1px rgba(230, 165, 74, .70), 0 0 34px rgba(230, 165, 74, .30); }
+}
+
+/* ---------- Seletor de visão e atalhos ---------- */
+.immersive.player-personalized .imm-view-switch {
+  display: inline-flex !important;
+  margin: 0 0 10px;
+  padding: 0 !important;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: var(--s-well) !important;
+}
+.immersive.player-personalized .imm-view-switch button {
+  padding: 10px 18px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+  color: var(--s-dim) !important;
+  font: 500 14px/1.2 var(--bb-serif, Georgia, serif);
+  cursor: pointer;
+}
+.immersive.player-personalized .imm-view-switch button.active {
+  color: var(--s-gold-hi) !important;
+  background: rgba(183, 156, 109, .10) !important;
+  box-shadow: inset 0 -2px var(--s-gold) !important;
+}
+.immersive.player-personalized .imm-quicknav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 0 0 20px;
+}
+.immersive.player-personalized .imm-quicknav button {
+  padding: 6px 14px;
+  border: 0 !important;
+  border-right: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: none !important;
+  color: var(--s-dim) !important;
+  font: 400 14px/1.2 var(--bb-serif, Georgia, serif);
+  cursor: pointer;
+}
+.immersive.player-personalized .imm-quicknav button:first-child { padding-left: 0; }
+.immersive.player-personalized .imm-quicknav button:last-child { border-right: 0 !important; }
+.immersive.player-personalized .imm-quicknav button:hover { color: var(--s-gold-hi) !important; }
+
+/* ---------- Disposição: coluna lateral (estado) + coluna principal (abas) ---------- */
+.immersive.player-personalized .imm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.immersive.player-personalized .imm-rail { display: grid; gap: 14px; min-width: 0; }
+.immersive.player-personalized .imm-main { min-width: 0; }
+
+@media (min-width: 1000px) {
+  .immersive.player-personalized .imm-layout { grid-template-columns: minmax(320px, 380px) minmax(0, 1fr); gap: 28px; }
+  .immersive.player-personalized .imm-rail {
+    position: sticky;
+    top: 18px;
+    max-height: calc(100vh - 36px);
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: #2c3f49 transparent;
+  }
+}
+
+/* ---------- Vida e Sanidade: medidores ---------- */
+.immersive.player-personalized .imm-stats {
+  display: grid !important;
+  gap: 18px;
+  margin: 0 !important;
+  padding: 18px !important;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: var(--s-panel) !important;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), 0 0 28px rgba(74, 128, 156, .08) !important;
+}
+.immersive.player-personalized .imm-stats .horror-resource {
+  padding: 0 !important;
+  border: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+}
+.immersive.player-personalized .imm-stats .horror-resource::before,
+.immersive.player-personalized .imm-stats .horror-resource::after { display: none !important; }
+.immersive.player-personalized .imm-stats .horror-resource-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.immersive.player-personalized .imm-stats .horror-resource-head span {
+  font-size: 13px;
+  letter-spacing: .14em;
+  color: var(--s-dim) !important;
+}
+.immersive.player-personalized .imm-stats .horror-resource-head span::before { display: none !important; }
+.immersive.player-personalized .imm-stats .horror-resource-head strong {
+  font-family: var(--bb-display, Georgia, serif);
+  font-size: 2.4rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--s-strong) !important;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.immersive.player-personalized .imm-stats .horror-resource-head strong small {
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: var(--s-dim) !important;
+}
+.immersive.player-personalized .imm-stats .horror-bar-track {
+  position: relative;
+  height: 12px !important;
+  overflow: hidden;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: #0a1116 !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .7) !important;
+}
+/* marcas a cada 10%, por cima do preenchimento, como a régua de um medidor */
+.immersive.player-personalized .imm-stats .horror-bar-track::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(255, 255, 255, .09) calc(10% - 1px) 10%);
+}
+.immersive.player-personalized .imm-stats .horror-bar-track::after,
+.immersive.player-personalized .imm-stats .horror-bar-gloss,
+.immersive.player-personalized .imm-stats .horror-bar-fill::before,
+.immersive.player-personalized .imm-stats .horror-bar-fill::after,
+.immersive.player-personalized .imm-stats .drip { display: none !important; }
+.immersive.player-personalized .imm-stats .horror-bar-fill {
+  height: 100%;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transition: width .6s cubic-bezier(.22, .8, .3, 1);
+}
+.immersive.player-personalized .imm-stats .blood-bar .horror-bar-fill { background: linear-gradient(90deg, var(--s-blood-a), var(--s-blood-b)) !important; }
+.immersive.player-personalized .imm-stats .sanity-bar .horror-bar-fill { background: linear-gradient(90deg, var(--s-pale-a), var(--s-pale-b)) !important; }
+.immersive.player-personalized .imm-stats .horror-resource-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  font-size: 13px;
+  color: var(--s-faint) !important;
+}
+
+/* Ataque e defesa */
+.immersive.player-personalized .imm-combat {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: none !important;
+}
+.immersive.player-personalized .imm-combat span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: var(--s-well) !important;
+  font-size: 13px;
+  letter-spacing: .14em;
+  color: var(--s-dim) !important;
+}
+.immersive.player-personalized .imm-combat b {
+  font-family: var(--bb-display, Georgia, serif);
+  font-size: 1.9rem;
+  line-height: 1;
+  color: var(--s-gold-hi) !important;
+  font-variant-numeric: lining-nums;
+}
+
+/* ---------- Atributos e perícias treinadas ---------- */
+.immersive.player-personalized .imm-trained {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  margin: 0;
+}
+@media (min-width: 640px) and (max-width: 999px) {
+  .immersive.player-personalized .imm-trained { grid-template-columns: 1fr 1fr; }
+}
+.immersive.player-personalized .imm-trained-col {
+  padding: 14px 16px 16px;
+  border: 1px solid var(--s-line);
+  background: var(--s-panel);
+  box-shadow: none;
+}
+.immersive.player-personalized .imm-trained-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--s-line-soft);
+}
+.immersive.player-personalized .imm-trained-head .section-kicker { color: var(--s-gold) !important; font-size: 12px; letter-spacing: .14em; }
+.immersive.player-personalized .imm-chip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+@media (min-width: 1000px) {
+  .immersive.player-personalized .imm-chip-grid { grid-template-columns: 1fr; gap: 6px; }
+}
+@media (max-width: 460px) {
+  .immersive.player-personalized .imm-chip-grid { grid-template-columns: 1fr 1fr; }
+}
+.immersive.player-personalized .imm-chip {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 13px;
+  border: 1px solid var(--s-line-soft);
+  background: var(--s-well);
+}
+/* barra de nível: proporcional ao máximo possível (atributo 8, perícia 15) */
+.immersive.player-personalized .imm-chip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: var(--w, 0%);
+  background: linear-gradient(90deg, rgba(183, 156, 109, .25), var(--s-gold));
+}
+.immersive.player-personalized .imm-chip-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 15px;
+  color: #d6dad4;
+  overflow-wrap: anywhere;
+}
+.immersive.player-personalized .imm-chip b {
+  min-width: 1.4ch;
+  font-family: var(--bb-display, Georgia, serif);
+  font-size: 1.7rem;
+  line-height: 1;
+  text-align: right;
+  color: var(--s-gold-hi);
+  font-variant-numeric: lining-nums;
+}
+
+/* ---------- Condições ---------- */
+.immersive.player-personalized .imm-conds { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 !important; }
+.immersive.player-personalized .imm-cond {
+  padding: 5px 11px;
+  border: 1px solid rgba(196, 64, 74, .55) !important;
+  border-radius: 0 !important;
+  background: rgba(109, 18, 25, .22) !important;
+  color: #e2a6a9 !important;
+  font-size: 13px;
+}
+.immersive.player-personalized .imm-cond.imm-temp-effect {
+  border-color: rgba(147, 186, 216, .5) !important;
+  background: rgba(44, 74, 107, .22) !important;
+  color: #b9d2e4 !important;
+}
+
+/* ---------- Abas e painel ---------- */
+.immersive.player-personalized .imm-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex !important;
+  gap: 0 !important;
+  margin: 0 !important;
+  padding: env(safe-area-inset-top) 0 0 !important;
+  overflow-x: auto;
+  border: 0 !important;
+  border-bottom: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: rgba(5, 9, 12, .94) !important;
+  backdrop-filter: blur(6px);
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.immersive.player-personalized .imm-tabs::-webkit-scrollbar { display: none; }
+.immersive.player-personalized .imm-tabs button {
+  position: relative;
+  flex: none;
+  padding: 14px 20px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+  color: var(--s-faint) !important;
+  font: 600 1.12rem/1.2 var(--bb-display, Georgia, serif);
+  letter-spacing: .05em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color .15s;
+}
+.immersive.player-personalized .imm-tabs button:hover { color: #b9c4c6 !important; }
+.immersive.player-personalized .imm-tabs button.active { color: var(--s-gold-hi) !important; }
+.immersive.player-personalized .imm-tabs button.active::after {
+  content: "";
+  position: absolute;
+  left: 16%;
+  right: 16%;
+  bottom: -1px;
+  height: 2px;
+  background: var(--s-gold);
+}
+@media (max-width: 760px) {
+  /* a borda direita some em degradê: indica que há mais abas ao deslizar */
+  .immersive.player-personalized .imm-tabs { -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
+}
+
+/* painel com cantos marcados, como a folha de um dossiê */
+.immersive.player-personalized .imm-panel {
+  margin: 0 !important;
+  padding: clamp(16px, 3vw, 26px) !important;
+  border: 1px solid var(--s-line) !important;
+  border-top: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background:
+    linear-gradient(var(--s-gold), var(--s-gold)) left bottom / 16px 1px no-repeat,
+    linear-gradient(var(--s-gold), var(--s-gold)) left bottom / 1px 16px no-repeat,
+    linear-gradient(var(--s-gold), var(--s-gold)) right bottom / 16px 1px no-repeat,
+    linear-gradient(var(--s-gold), var(--s-gold)) right bottom / 1px 16px no-repeat,
+    var(--s-panel) !important;
+}
+.immersive.player-personalized .imm-panel::before,
+.immersive.player-personalized .imm-panel::after { display: none !important; }
+.immersive.player-personalized .imm-panel h2,
+.immersive.player-personalized .imm-panel h3 {
+  font-family: var(--bb-display, Georgia, serif) !important;
+  font-weight: 600;
+  color: var(--s-strong);
+}
+.immersive.player-personalized .imm-item {
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: var(--s-well) !important;
+  transform: none !important;
+  transition: border-color .15s;
+}
+.immersive.player-personalized .imm-item:hover { border-color: var(--s-gold) !important; }
+.immersive.player-personalized .imm-item strong { font-family: var(--bb-display, Georgia, serif); font-size: 1.15rem; color: #e7e6df; }
+.immersive.player-personalized .imm-ability {
+  border: 0 !important;
+  border-left: 2px solid var(--s-gold) !important;
+  border-radius: 0 !important;
+  background: var(--s-well) !important;
+}
+.immersive.player-personalized .imm-ability strong { font-family: var(--bb-display, Georgia, serif); font-size: 1.15rem; color: var(--s-gold-hi); }
+
+/* ---------- Visão do círculo (todos os sobreviventes) ---------- */
+.immersive.player-personalized .imm-shared-hero {
+  margin: 0 0 14px;
+  padding: 22px 24px;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: var(--s-panel) !important;
+  box-shadow: none !important;
+}
+.immersive.player-personalized .imm-shared-hero h2 {
+  margin: .1em 0 .2em;
+  font-family: var(--bb-display, Georgia, serif);
+  font-size: clamp(1.8rem, 5vw, 2.8rem);
+  font-weight: 600;
+  color: var(--s-strong);
+}
+.immersive.player-personalized .imm-shared-hero p,
+.immersive.player-personalized .imm-shared-scene p { color: var(--s-dim); font-style: italic; }
+.immersive.player-personalized .imm-shared-grid { display: grid !important; grid-template-columns: 1fr !important; gap: 8px; margin-bottom: 14px; }
+.immersive.player-personalized .imm-shared-participant {
+  display: grid !important;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: var(--s-panel) !important;
+  box-shadow: none !important;
+}
+.immersive.player-personalized .imm-shared-order {
+  font-family: var(--bb-display, Georgia, serif);
+  font-size: 2rem;
+  line-height: 1;
+  text-align: center;
+  color: var(--s-faint);
+  font-variant-numeric: lining-nums;
+}
+.immersive.player-personalized .imm-shared-main strong { font-family: var(--bb-display, Georgia, serif); font-size: 1.3rem; color: #e7e6df; overflow-wrap: anywhere; }
+.immersive.player-personalized .imm-shared-main small { display: block; color: var(--s-dim); letter-spacing: .08em; }
+.immersive.player-personalized .imm-shared-vitals { color: var(--s-dim); font-size: 13px; letter-spacing: .1em; }
+.immersive.player-personalized .imm-shared-vitals b { font-family: var(--bb-display, Georgia, serif); font-size: 1.35rem; color: var(--s-strong); }
+.immersive.player-personalized .imm-shared-participant.current {
+  border-color: var(--s-ember) !important;
+  background: linear-gradient(90deg, rgba(230, 165, 74, .15), var(--s-panel)) !important;
+  box-shadow: inset 3px 0 var(--s-ember) !important;
+}
+.immersive.player-personalized .imm-shared-participant.current .imm-shared-order { color: var(--s-ember); }
+.immersive.player-personalized .imm-shared-participant.acted { opacity: .55; }
+.immersive.player-personalized .imm-shared-scene {
+  margin: 0;
+  padding: 20px 24px;
+  border: 1px solid var(--s-line) !important;
+  border-radius: 0 !important;
+  background: var(--s-panel) !important;
+}
+
+/* ---------- Celular ---------- */
+@media (max-width: 560px) {
+  .immersive.player-personalized .imm-head { gap: 12px 12px !important; }
+  .immersive.player-personalized .imm-exit { padding: 9px 12px !important; font-size: 13px; }
+  .immersive.player-personalized .imm-session-meta span { padding: 0 10px; }
+  .immersive.player-personalized .imm-stats { padding: 14px !important; }
+  .immersive.player-personalized .imm-stats .horror-resource-head strong { font-size: 2.1rem; }
+  .immersive.player-personalized .imm-shared-participant { grid-template-columns: 36px minmax(0, 1fr); }
+  .immersive.player-personalized .imm-shared-vitals { grid-column: 2; }
+  .immersive.player-personalized .imm-quicknav { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }
+  .immersive.player-personalized .imm-quicknav button { flex: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .immersive.player-personalized .imm-turn-pill.my-turn { animation: none; box-shadow: 0 0 0 1px rgba(230, 165, 74, .6); }
+  .immersive.player-personalized .imm-stats .horror-bar-fill,
+  .immersive.player-personalized .imm-tabs button,
+  .immersive.player-personalized .imm-item { transition: none; }
+}
+
+/* ---------- V1.5.76: cortina fechada no menu, habilidades possuídas, aba Nexus ---------- */
+.nav button.nav-curtain { display: flex; align-items: center; justify-content: center; color: #c8bfa7; }
+.nav button.nav-curtain .curtain-sigil { width: 30px; height: 30px; display: block; transition: transform .25s ease, filter .25s ease; }
+.nav button.nav-curtain:hover .curtain-sigil,
+.nav button.nav-curtain:focus-visible .curtain-sigil { transform: translateY(2px) scaleY(1.06); filter: drop-shadow(0 0 8px rgba(200, 168, 100, .55)); }
+.nav button.nav-curtain.active { color: #e8d4a0; }
+.immersive.player-personalized .imm-abilities {
+  padding: 14px 16px 12px;
+  border: 1px solid var(--s-line, rgba(151, 178, 178, .2));
+  background: rgba(4, 9, 13, .55);
+}
+.immersive.player-personalized .imm-abilities .imm-trained-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.imm-ability-item { border-top: 1px solid rgba(151, 178, 178, .14); }
+.imm-ability-item:first-of-type { border-top: 0; }
+.imm-ability-item > summary { cursor: pointer; list-style: none; padding: 10px 2px; font-size: 15px; color: #d6dad4; display: flex; justify-content: space-between; gap: 10px; }
+.imm-ability-item > summary::-webkit-details-marker { display: none; }
+.imm-ability-item > summary::after { content: "+"; color: var(--s-gold, #b79c6d); }
+.imm-ability-item[open] > summary::after { content: "−"; }
+.imm-ability-item > p { margin: 0 0 10px; padding: 0 2px; font-size: 14px; line-height: 1.5; color: #9aa6a5; white-space: pre-line; }
+.imm-tabs-hint { margin: 10px 2px; font-size: 13px; letter-spacing: .06em; color: #7f8b8a; text-align: center; }
+.imm-nexus-wrap, .imm-nexus-wrap video { min-height: 260px; }
+.imm-tabs button[aria-expanded="true"] { color: var(--s-gold-hi, #e3c98d); }
+.immersive.player-personalized .imm-tabs { justify-content: safe center; }
+
+/* ---------- V1.5.76: painel estilo tela de personagem de jogo ---------- */
+.immersive.player-personalized .imm-head-player { display: flex !important; justify-content: flex-start; }
+.imm-game {
+  margin: 14px 0 18px; padding: 14px;
+  border: 1px solid var(--s-line); border-radius: 18px;
+  background: radial-gradient(120% 90% at 30% 0%, rgba(40, 62, 84, .55), rgba(5, 10, 16, .92) 70%);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .03);
+}
+.imm-game-stats { display: flex; flex-wrap: wrap; justify-content: space-around; gap: 10px 18px; padding: 4px 6px 12px; border-bottom: 1px solid var(--s-line-soft); }
+.imm-gstat { display: grid; grid-template-columns: 22px auto; grid-template-rows: auto auto; column-gap: 8px; align-items: center; min-width: 74px; }
+.imm-gstat svg { grid-row: 1 / 3; width: 22px; height: 22px; fill: none; stroke: #c9d3da; stroke-width: 1.6; }
+.imm-gstat b { font-size: 1.1rem; color: #eef2f4; line-height: 1.1; }
+.imm-gstat small { font-size: .68rem; color: var(--s-dim, #7f8b8a); letter-spacing: .04em; }
+.imm-game-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 18px; padding-top: 14px; }
+.imm-game-title { margin: 0 0 10px; text-align: center; font-size: 1.15rem; font-weight: 500; color: #dfe5e8; letter-spacing: .02em; }
+.imm-game-title small { display: block; font-size: .75rem; color: var(--s-gold, #b79c6d); letter-spacing: .12em; text-transform: uppercase; }
+.imm-game-figure { display: grid; grid-template-columns: 52px minmax(0, 1fr) 52px; gap: 10px; align-items: stretch; }
+.imm-slots-col { display: grid; grid-template-rows: repeat(6, 1fr); gap: 8px; }
+.imm-game-portrait { display: grid; place-items: center; min-width: 0; padding: 4px 0; border-radius: 12px; background: radial-gradient(70% 60% at 50% 60%, rgba(120, 150, 190, .16), transparent 70%); }
+.imm-game-portrait .sess-card { border: 0 !important; background: transparent !important; box-shadow: none !important; flex-direction: column; text-align: center; padding: 0; }
+.imm-slot {
+  position: relative; aspect-ratio: 1; display: grid; place-items: center; min-width: 0;
+  border: 1px solid rgba(190, 205, 215, .28); border-radius: 9px;
+  background: linear-gradient(160deg, rgba(34, 46, 60, .85), rgba(12, 18, 26, .9));
+  color: rgba(190, 205, 215, .35); font-size: 1.1rem; padding: 0;
+}
+.imm-slot-eq svg { width: 62%; height: 62%; fill: currentColor; opacity: .55; }
+.imm-slot-item { cursor: pointer; border-color: rgba(224, 200, 146, .6); color: #e8d9b0; }
+.imm-slot-item:hover, .imm-slot-item:focus-visible { border-color: var(--s-gold-hi); outline: none; box-shadow: 0 0 10px rgba(224, 200, 146, .35); }
+.imm-slot-item img, .imm-slot-item .item-image-icon { width: 70%; height: 70%; object-fit: contain; }
+.imm-slot-item em { position: absolute; right: 3px; bottom: 1px; font-style: normal; font-size: .68rem; color: #fff; text-shadow: 0 0 3px #000; }
+.imm-game-side { display: grid; align-content: space-between; gap: 14px; min-width: 0; }
+.imm-inv { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; align-content: start; }
+.imm-game-menu { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.imm-gbtn {
+  display: grid; justify-items: center; gap: 4px; padding: 10px 4px 8px; cursor: pointer;
+  border: 1px solid rgba(190, 205, 215, .3); border-radius: 9px;
+  background: linear-gradient(160deg, rgba(34, 46, 60, .85), rgba(12, 18, 26, .9)); color: #d8e0e4;
+}
+.imm-gbtn span { font-size: 1.35rem; line-height: 1; display: grid; place-items: center; height: 26px; }
+.imm-gbtn span svg { width: 24px; height: 24px; }
+.imm-gbtn small { font-size: .66rem; letter-spacing: .03em; }
+.imm-gbtn:hover, .imm-gbtn:focus-visible { border-color: var(--s-gold-hi); color: var(--s-gold-hi); outline: none; }
+@media (max-width: 900px) {
+  .imm-game-body { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) {
+  .imm-game { padding: 10px; border-radius: 14px; }
+  .imm-game-figure { grid-template-columns: 40px minmax(0, 1fr) 40px; gap: 6px; }
+  .imm-slots-col { gap: 6px; }
+  .imm-inv { gap: 5px; }
+  .imm-game-menu { gap: 6px; }
+}
+.imm-game-portrait .sess-name { display: none; }
+.immersive.player-personalized .imm-head-player .imm-turn-pill { min-height: 0 !important; height: auto !important; padding: 10px 16px !important; flex: 0 1 auto !important; }
+
+/* ===== Magias: chips de custo/ritual, página do Player e gestão do Mestre ===== */
+.spell-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.spell-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:11px;line-height:1.3;border:1px solid rgba(126,31,39,.5);background:rgba(18,9,10,.9);color:#e8d9d4}
+.spell-chip-san{border-color:rgba(200,154,32,.55);color:#e0b83f}
+.spell-chip-ritual{border-color:rgba(168,42,54,.7);color:#f0a8ad;background:rgba(60,12,16,.7)}
+.spells-hero{position:relative}
+.spells-san{display:inline-flex;align-items:baseline;gap:6px;margin-top:12px;padding:6px 14px;border:1px solid rgba(200,154,32,.45);border-radius:10px;background:rgba(10,7,7,.7)}
+.spells-san span{font-size:10px;letter-spacing:.18em;color:#a99a96}
+.spells-san b{font-size:22px;color:#e0b83f}
+.spells-san small{color:#a99a96}
+.spells-admin .spell-known{display:block;color:#a99a96;line-height:1.4}
+.spells-admin .spell-admin-card .spell-meta{margin:2px 0}
+.spell-check{display:flex;align-items:center;gap:8px;min-height:40px;cursor:pointer;color:#e8d9d4}
+.spell-check input{width:18px;height:18px;flex:none}
+.spell-player-checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:2px 12px;max-height:200px;overflow:auto;padding:6px 8px;border:1px solid rgba(126,31,39,.35);border-radius:10px;background:rgba(8,6,6,.7)}
+#spellAdminModal .modal-card{max-height:92vh;overflow:auto}
+
+/* ===== Painel de pontos do Mestre ===== */
+.points-modal{max-height:92vh;overflow:auto;width:min(860px,96vw)}
+.points-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px;margin:10px 0 12px}
+.points-sum-cell{display:grid;gap:2px;padding:8px 10px;border:1px solid rgba(126,31,39,.35);border-radius:10px;background:rgba(10,7,7,.75);text-align:center}
+.points-sum-cell b{font-size:1.25rem;color:#e0b83f;line-height:1.1}
+.points-sum-cell span{font-size:11px;color:#a99a96;letter-spacing:.03em}
+.points-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:8px}
+.points-chips{display:flex;gap:6px;margin-top:6px}
+.points-chip{min-width:38px;padding:6px 10px;border:1px solid rgba(224,184,63,.4);border-radius:8px;background:rgba(10,7,7,.75);color:#e0b83f;font-weight:700;cursor:pointer}
+.points-chip:hover,.points-chip:focus-visible{border-color:#e0b83f;outline:none;background:rgba(224,184,63,.12)}
+.points-rows{display:grid;gap:8px;margin-top:6px}
+.points-row{display:grid;grid-template-columns:minmax(120px,.7fr) minmax(0,2fr) auto;gap:8px 14px;align-items:center;padding:10px 12px;border:1px solid rgba(126,31,39,.35);border-radius:10px;background:rgba(10,7,7,.75)}
+.points-row.has-warn{border-color:rgba(240,120,130,.6)}
+.points-pick{display:flex;gap:8px;align-items:center;cursor:pointer;min-width:0}
+.points-pick span{display:grid;min-width:0}
+.points-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.points-pick small{font-size:11px;color:#a99a96}
+.points-meters{display:grid;grid-template-columns:1fr 1fr;gap:12px;min-width:0}
+.points-meter-wrap{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;min-width:0}
+.points-meter{display:grid;gap:3px;min-width:0}
+.points-meter-top{display:flex;justify-content:space-between;font-size:12px;color:#c2b7b3}
+.points-meter-top b{color:#e0b83f}
+.points-meter small{font-size:11px;color:#a99a96}
+.points-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
+.points-bar i{display:block;height:100%;background:linear-gradient(90deg,#8a7448,#e0b83f)}
+.points-meter.is-over .points-bar i{background:linear-gradient(90deg,#a3262f,#f0787f)}
+.points-meter.is-over .points-meter-top b,.points-meter.is-over small{color:#f0a8ad}
+.points-step{display:flex;gap:4px}
+.points-step-btn{width:34px;height:34px;border:1px solid rgba(224,184,63,.4);border-radius:8px;background:rgba(10,7,7,.85);color:#e0b83f;font-size:1.1rem;font-weight:700;line-height:1;cursor:pointer}
+.points-step-btn:hover:not(:disabled),.points-step-btn:focus-visible{border-color:#e0b83f;outline:none;background:rgba(224,184,63,.14)}
+.points-step-btn:disabled{opacity:.4;cursor:wait}
+.points-warn{grid-column:1/-1;font-size:12px;color:#f0a8ad}
+.points-apply-bar{position:sticky;bottom:-1px;display:flex;flex-wrap:wrap;gap:8px 14px;justify-content:space-between;align-items:center;margin-top:12px;padding:10px 0 2px;background:linear-gradient(180deg,transparent,rgba(8,5,5,.96) 22%)}
+.points-preview{flex:1 1 220px;font-size:13px;color:#c2b7b3}
+.points-preview b{color:#e0b83f}
+@media(max-width:700px){.points-row{grid-template-columns:1fr}.points-meters{grid-template-columns:1fr}.points-refund{justify-self:start}}
+
+/* ===== Mochila em quadrados (modo sessão) ===== */
+.imm-inv-wrap { display: grid; gap: 6px; min-width: 0; }
+.imm-inv-head { display: flex; justify-content: space-between; align-items: baseline; font-size: .68rem; letter-spacing: .14em; color: var(--s-gold, #b79c6d); }
+.imm-inv-head b { font-size: .8rem; letter-spacing: .04em; color: #e8d9b0; }
+.imm-inv-head b.is-over { color: #f0a8ad; }
+.imm-slot.is-tail { opacity: .8; border-style: dashed; }
+.imm-slot.is-tail > :not(em) { opacity: .35; }
+.imm-slot.is-sel, .imm-bsq.is-sel { border-color: var(--s-gold-hi, #e0c892); box-shadow: 0 0 0 1px var(--s-gold-hi, #e0c892), 0 0 12px rgba(224, 200, 146, .35); }
+.imm-slot.is-over, .imm-bsq.is-over { border-color: rgba(240, 120, 130, .75); }
+.imm-slot-item .bag-mark { position: absolute; left: 3px; top: 1px; font-style: normal; font-size: .6rem; opacity: .9; }
+
+.imm-bag-meter { height: 6px; margin: 4px 0 12px; border-radius: 3px; background: rgba(122, 160, 176, .16); overflow: hidden; }
+.imm-bag-meter > i { display: block; height: 100%; background: linear-gradient(90deg, #8a7448, var(--s-gold-hi, #e0c892)); transition: width .25s; }
+.imm-bag-meter.is-over > i { background: linear-gradient(90deg, #a3262f, #f0787f); }
+.imm-bag-grid { display: grid; grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr)); gap: 8px; max-width: 540px; margin: 0 auto 14px; }
+.imm-bsq {
+  position: relative; aspect-ratio: 1; display: grid; place-items: center; min-width: 0; padding: 0; cursor: pointer;
+  border: 1px solid rgba(224, 200, 146, .55); border-radius: 9px; color: #e8d9b0; font-size: clamp(1.3rem, 5.5vw, 2rem);
+  background: radial-gradient(circle at 30% 25%, rgba(224, 200, 146, .12), transparent 60%), linear-gradient(160deg, rgba(34, 46, 60, .85), rgba(12, 18, 26, .9));
+  transition: border-color .15s, box-shadow .15s, transform .1s;
+}
+.imm-bsq:hover, .imm-bsq:focus-visible { border-color: var(--s-gold-hi, #e0c892); outline: none; }
+.imm-bsq:active { transform: scale(.96); }
+.imm-bsq img, .imm-bsq .item-image-icon { width: 68%; height: 68%; object-fit: contain; }
+.imm-bsq em { position: absolute; right: 4px; top: 3px; min-width: 1.35em; padding: 0 4px; border-radius: 9px; background: rgba(0, 0, 0, .72); font-style: normal; font-size: .62rem; line-height: 1.5; text-align: center; color: #fff; }
+.imm-bsq .bag-mark { position: absolute; left: 4px; bottom: 2px; font-style: normal; font-size: .62rem; }
+.imm-bsq.is-tail { border-style: dashed; border-color: rgba(224, 200, 146, .3); cursor: pointer; }
+.imm-bsq.is-tail > :not(em) { opacity: .3; }
+.imm-bsq.is-empty { cursor: default; border: 1px dashed rgba(190, 205, 215, .2); background: rgba(4, 9, 13, .45); }
+.imm-bag-detail { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--s-line, rgba(122, 160, 176, .24)); border-left: 2px solid var(--s-gold, #b79c6d); background: var(--s-well, rgba(4, 9, 13, .62)); min-height: 64px; }
+.imm-bag-detail-icon { width: 48px; height: 48px; flex: none; display: grid; place-items: center; font-size: 1.7rem; border: 1px solid rgba(224, 200, 146, .45); border-radius: 8px; background: rgba(4, 9, 13, .7); }
+.imm-bag-detail-icon img, .imm-bag-detail-icon .item-image-icon { width: 34px; height: 34px; object-fit: contain; }
+.imm-bag-detail-body { min-width: 0; display: grid; gap: 4px; justify-items: start; }
+.imm-bag-detail-body strong { font-size: 1.05rem; color: #e7e6df; }
+.imm-bag-detail-body small { color: var(--s-dim, #7f8b8a); letter-spacing: .02em; }
+.imm-bag-detail-body p { margin: 2px 0 0; font-size: .85rem; line-height: 1.5; color: #b9c4c6; }
+@media (max-width: 520px) {
+  .imm-bag-grid { gap: 6px; }
+  .imm-bag-detail { padding: 10px; }
+}
+
+/* Descrições de magia com várias linhas */
+.spell-player-copy small { white-space: pre-line; }

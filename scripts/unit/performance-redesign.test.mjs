@@ -36,7 +36,6 @@ test('mapWithConcurrency espera as tarefas em voo antes de propagar falha', asyn
 test('gravação em lote usa concorrência limitada e preserva ordem por jogador', async () => {
   const source = await readFile(new URL('../../src/playerStore.js', import.meta.url), 'utf8');
   assert.match(source, /mapWithConcurrency\(groups,\s*4/);
-  assert.match(source, /Same-player writes remain ordered/);
   assert.match(source, /queuePlayerRows\(players\)/);
   assert.match(source, /delete row\.source\.newPassword/);
 });

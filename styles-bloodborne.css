@@ -354,7 +354,7 @@ body{min-width:320px;overflow-x:clip;background:var(--ashen-bg);color:var(--ashe
 .nav button{min-height:40px}
 .btn,button{touch-action:manipulation}
 .panel-tabs{display:flex;gap:6px;max-width:100%;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:#623940 #10090b}
-.panel-tabs>button,.master-more-tabs>summary{flex:0 0 auto;white-space:nowrap}
+.panel-tabs>button,.master-more-btn{flex:0 0 auto;white-space:nowrap}
 .master-player-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,430px),1fr));align-items:stretch;gap:14px}
 .master-player-card{min-width:0;grid-template-columns:clamp(96px,12vw,170px) minmax(0,1fr);gap:14px}
 .master-player-info,.master-player-info .row{min-width:0}
@@ -385,7 +385,7 @@ input,select,textarea{min-width:0}
   .master-player-card{grid-template-columns:88px minmax(0,1fr);padding:12px;gap:12px}
   .master-player-info .row .btn{flex:1 1 100%}
   .panel-tabs{padding:2px 0 7px}
-  .panel-tabs>button,.master-more-tabs>summary{min-height:40px}
+  .panel-tabs>button,.master-more-btn{min-height:40px}
 }
 @media(hover:none){
   .card:hover,.sheet-card:hover,.master-player-card:hover{transform:none;box-shadow:0 12px 32px rgba(0,0,0,.22),inset 0 1px rgba(255,255,255,.018)}
@@ -452,7 +452,7 @@ h1,h2,h3,.hero h1,.main h1,.card h2,.card h3,.sheet-card h2,.sheet-card h3,.sect
 
 /* Abas = "Environment · Controls · Brightness": texto, filete e dourado no ativo */
 .panel-tabs,.imm-tabs{border-top:1px solid var(--bb-line);border-bottom:1px solid var(--bb-line);padding:0!important;gap:0!important;justify-content:center;background:rgba(4,9,13,.5)}
-.panel-tabs button,.panel-tabs>button,.master-more-tabs>summary,.imm-tabs button,.main-sheet .imm-tabs button{background:none!important;border:0!important;border-radius:0!important;box-shadow:none!important;color:var(--bb-faint)!important;font-family:var(--bb-display);font-weight:600;font-size:16px;letter-spacing:.08em;padding:14px 22px;position:relative}
+.panel-tabs button,.panel-tabs>button,.master-more-btn,.imm-tabs button,.main-sheet .imm-tabs button{background:none!important;border:0!important;border-radius:0!important;box-shadow:none!important;color:var(--bb-faint)!important;font-family:var(--bb-display);font-weight:600;font-size:16px;letter-spacing:.08em;padding:14px 22px;position:relative}
 .panel-tabs button:hover,.imm-tabs button:hover{color:#b9c4c6!important}
 .panel-tabs button.active,.imm-tabs button.active,.main-sheet .imm-tabs button.active{color:var(--bb-gold-hi)!important;background:none!important}
 .panel-tabs button.active:after,.imm-tabs button.active:after{content:"";position:absolute;left:18%;right:18%;bottom:-1px;height:1px;background:var(--bb-gold)}
@@ -513,7 +513,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:15px;background:var(--bb-go
 
 /* Barra de dicas no rodapé (estilo "Select / Back"), só em telas grandes */
 @media(min-width:981px){
-  .main:after{content:"◯ Voltar   ✕ Selecionar   ◁ ▷ Alterar";display:block;position:fixed;right:34px;bottom:14px;z-index:5;pointer-events:none;color:var(--bb-faint);font:500 12px var(--bb-serif);letter-spacing:.14em}
+  .main:after{content:"Esc  Fechar janela";display:block;position:fixed;right:34px;bottom:14px;z-index:5;pointer-events:none;color:var(--bb-faint);font:500 12px var(--bb-serif);letter-spacing:.14em}
 }
 @media(max-width:980px){
   .topbar{background:rgba(5,10,14,.94)!important;border-right:0!important;border-bottom:1px solid var(--bb-line-soft)!important}
@@ -522,3 +522,77 @@ input[type=range]::-moz-range-thumb{width:9px;height:15px;background:var(--bb-go
   .panel-tabs,.imm-tabs{justify-content:flex-start}
   .panel-tabs button{padding:12px 16px}
 }
+
+/* V1.5.65 — "Mais ferramentas" do Mestre: o menu era cortado pelo overflow das abas. */
+.panel-tabs{justify-content:safe center}
+
+/* V1.5.67 — Ferramentas do Mestre como painel de cartões (ícone + nome + descrição) */
+.tool-ico{display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--bb-line);color:var(--bb-gold);font-size:18px;line-height:1}
+.tool-txt{display:grid;gap:2px;min-width:0}
+.tool-txt b{font-family:var(--bb-display);font-size:17px;letter-spacing:.04em;color:#e3e5df;font-weight:600}
+.tool-txt small{color:var(--bb-dim);font-size:12.5px;letter-spacing:.02em;line-height:1.3;white-space:normal}
+
+/* V1.5.68 — editor de monstros */
+.monster-optional{margin-top:14px;border:1px solid var(--bb-line-soft);padding:0 14px 14px}
+.monster-optional>summary{cursor:pointer;padding:12px 0;color:var(--bb-gold);font-family:var(--bb-display);font-weight:600;letter-spacing:.08em;list-style:none}
+.monster-optional>summary::-webkit-details-marker{display:none}
+.monster-optional>summary:after{content:"⌄";margin-left:8px;color:var(--bb-dim)}
+.monster-optional[open]>summary{border-bottom:1px solid var(--bb-line-soft);margin-bottom:12px}
+.monster-bank-card .tiny{margin:6px 0 0}
+
+/* V1.5.70 — Modo Sessão como tela inicial: atributos e perícias treinadas em destaque */
+.curtain-fx.instant .cf-l,.curtain-fx.instant .cf-r,.curtain-fx.instant .cf-icon{transition:none!important}
+.imm-trained{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
+.imm-trained-col{background:var(--bb-panel);border:1px solid var(--bb-line);box-shadow:var(--bb-glow);padding:14px 16px}
+.imm-trained-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bb-line-soft);padding-bottom:8px;margin-bottom:12px}
+.imm-chip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.imm-chip{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;background:rgba(4,9,13,.6);border:1px solid var(--bb-line-soft)}
+.imm-chip-name{font-size:15px;color:#d6dad4;display:flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
+.imm-chip b{font-family:var(--bb-display);font-size:26px;line-height:1;color:var(--bb-gold-hi);min-width:1.4ch;text-align:right}
+.imm-quicknav{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
+.imm-quicknav button{background:none;border:1px solid var(--bb-line-soft);color:#b9c4c6;padding:8px 14px;font-family:var(--bb-serif);font-size:14px;letter-spacing:.06em;cursor:pointer;transition:color .15s,border-color .15s}
+.imm-quicknav button:hover,.imm-quicknav button:focus-visible{color:var(--bb-gold-hi);border-color:var(--bb-gold);outline:none}
+@media(max-width:760px){
+  .imm-trained{grid-template-columns:1fr}
+  .imm-chip-grid{grid-template-columns:1fr 1fr}
+  .imm-chip b{font-size:24px}
+  .imm-quicknav{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px}
+  .imm-quicknav button{flex:none}
+}
+
+/* V1.5.73 — Lixeira do Mestre e aviso com "Desfazer" */
+.toast-undo{display:flex;align-items:center;gap:14px;pointer-events:auto}
+.toast-undo .btn{flex:none}
+.trash-list{display:grid;gap:8px;margin:14px 0}
+.trash-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--bb-line-soft);background:rgba(4,9,13,.55)}
+.trash-info{display:grid;gap:2px;min-width:0}
+.trash-info strong{color:#e3e5df;font-family:var(--bb-display);font-size:17px;overflow-wrap:anywhere}
+.trash-info small{color:var(--bb-dim)}
+
+/* V1.5.75 — Nova sessão: seletor com foto e tela do Mestre só com os escolhidos */
+.combat-session-player-option{display:flex;align-items:center;gap:12px}
+.combat-session-player-avatar{flex:none;width:44px;height:44px;object-fit:cover;border:1px solid var(--bb-line);filter:saturate(.8)}
+.combat-no-session{display:grid;gap:10px;justify-items:start;padding:22px;border:1px dashed var(--bb-line)}
+.combat-no-session strong{font-family:var(--bb-display);font-size:1.4rem;color:#e3e5df}
+.combat-no-session p{margin:0;max-width:56ch;color:var(--bb-dim)}
+.combat-outside{margin-top:18px;border:1px solid var(--bb-line-soft)}
+.combat-outside>summary{cursor:pointer;padding:12px 16px;color:var(--bb-dim);font-family:var(--bb-display);font-size:1.05rem;list-style:none}
+.combat-outside>summary::-webkit-details-marker{display:none}
+.combat-outside>summary:after{content:"⌄";margin-left:8px}
+.combat-outside[open]>summary{border-bottom:1px solid var(--bb-line-soft);color:var(--bb-gold)}
+.combat-outside .combat-player-grid{padding:14px;opacity:.85}
+
+
+/* V1.5.76 — "Mais ferramentas" do Mestre: botão + painel próprio no <body> (não depende de <details>, overflow nem posição) */
+.master-more-btn{cursor:pointer;display:block}
+.master-more-btn span{margin-left:6px;color:var(--bb-dim)}
+.master-more-btn.has-active,.master-more-btn[aria-expanded="true"]{color:var(--bb-gold-hi)!important}
+.master-tools-overlay{position:fixed;inset:0;z-index:100000;display:grid;place-items:center;padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))}
+.master-tools-backdrop{position:absolute;inset:0;background:rgba(2,5,8,.78);backdrop-filter:blur(2px)}
+.master-tools-panel{position:relative;width:min(680px,100%);max-height:min(86dvh,86vh);display:flex;flex-direction:column;background:var(--bb-panel-solid,#0a1216);border:1px solid var(--bb-line-hot,#7b5560);box-shadow:0 24px 60px rgba(0,0,0,.7),var(--bb-glow,none)}
+.master-tools-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--bb-line-soft,#2b3a3c);font-family:var(--bb-display,Cinzel,serif);letter-spacing:.06em;color:var(--bb-gold-hi,#e3c98d)}
+.master-tools-x{background:none;border:1px solid var(--bb-line-soft,#2b3a3c);color:#b9c4c6;width:38px;height:38px;font-size:22px;line-height:1;cursor:pointer}
+.master-tools-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.master-tools-grid button{display:grid;grid-template-columns:34px 1fr;align-items:center;gap:12px;padding:12px 14px;text-align:left;background:rgba(8,15,20,.7);border:1px solid var(--bb-line-soft,#2b3a3c);color:#b9c4c6;font-family:var(--bb-serif,serif);cursor:pointer;min-height:56px}
+.master-tools-grid button:hover,.master-tools-grid button:focus-visible,.master-tools-grid button.active{border-color:var(--bb-gold,#b79c6d);background:rgba(183,156,109,.1);outline:none}
+@media(max-width:700px){.master-tools-grid{grid-template-columns:1fr}.master-tools-overlay{place-items:end center;padding:0}.master-tools-panel{width:100%;max-height:82dvh}}

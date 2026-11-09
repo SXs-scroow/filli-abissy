@@ -1,4 +1,3 @@
-// Testes que EXECUTAM funções reais do app.js (extraídas), sem procurar texto no código.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -7,7 +6,6 @@ import { extractFunction } from '../chaos/extract-app.mjs';
 
 const src = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
 const names = ['esc', 'safeHref', 'safeImgSrc', 'spotifyResource', 'isSpotifyShortLink'];
-// Funções de uma linha só (com regex cheia de aspas) são extraídas por linha; as demais pelo delimitador de chaves.
 function grab(name) {
   const line = src.split('\n').find(l => l.startsWith(`function ${name}(`) && l.trimEnd().endsWith('}'));
   return line ?? extractFunction(src, name);
@@ -23,7 +21,7 @@ test('esc neutraliza HTML e aspas de atributo', () => {
   assert.equal(esc("' onfocus='x"), '&#39; onfocus=&#39;x');
   assert.equal(esc('a&b'), 'a&amp;b');
   assert.equal(esc(undefined), '');
-  assert.equal(esc(null), 'null'); // documenta o comportamento atual
+  assert.equal(esc(null), 'null');
   assert.equal(esc(42), '42');
 });
 
@@ -42,7 +40,7 @@ test('safeImgSrc bloqueia esquemas perigosos', () => {
 test('safeImgSrc nunca devolve URL protocolo-relativa (//host) que apontaria para outro domínio', () => {
   const out = safeImgSrc('//evil.com/x.png', 'F');
   assert.ok(!out.startsWith('//'), `saída perigosa: ${out}`);
-  assert.equal(out, '/evil.com/x.png'); // vira caminho do próprio site
+  assert.equal(out, '/evil.com/x.png');
 });
 
 test('safeImgSrc aceita fontes legítimas', () => {

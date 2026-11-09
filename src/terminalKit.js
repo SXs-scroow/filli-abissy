@@ -1,6 +1,3 @@
-// Ashen Testimony V1.5.34 — kit do terminal imersivo.
-// Reúne: motor de áudio (Web Audio), boot sincronizado, navegação de pastas estilo eDEX-UI,
-// arquivos corrompidos e player de gravações. Sem dependências: pode ser testado em Node.
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
@@ -45,7 +42,6 @@ function hexNoise(lines, r) {
   }
   return out.join('\n');
 }
-// Determinístico: o mesmo texto + semente gera sempre a mesma corrupção.
 export function corruptText(text, level = 'partial', seed = 'x') {
   const src = String(text ?? '');
   level = normalizeLevel(level);
@@ -80,7 +76,6 @@ export function corruptionStats(key, level = 'partial') {
   const hex4 = () => Math.floor(r() * 65536).toString(16).toUpperCase().padStart(4, '0');
   return { total, bad, code: `0x${(0x80070000 + Math.floor(r() * 0xFFFF)).toString(16).toUpperCase()}`, expected: hex4(), found: hex4() };
 }
-// Texto a ser salvo/exibido. Mantém `shown` salvo quando nada mudou.
 export function buildCorruption(content, level, seed) { return corruptText(content, level, seed); }
 
 function corruptHtml(shown) {
@@ -317,7 +312,6 @@ export function playBootSound(model, label) {
     bootGain = c.createGain(); bootGain.gain.value = 1; bootGain.connect(bus);
     const reg = n => { bootNodes.push(n); return n; };
     const env = (g, pts) => { g.gain.setValueAtTime(0.0001, T0); pts.forEach(([t, v]) => g.gain.linearRampToValueAtTime(Math.max(0.0001, v), T0 + t)); };
-    // acorde de fundo (MP3 do projeto), decodificado uma vez
     if (!bootBufPromise) bootBufPromise = fetch('/terminal-startup.mp3').then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error('mp3')))).then(b => c.decodeAudioData(b)).catch(() => null);
     bootBufPromise.then(buf => {
       if (!buf || !bootGain) return;
@@ -325,23 +319,18 @@ export function playBootSound(model, label) {
       if (off >= buf.duration) return;
       const s = reg(c.createBufferSource()); s.buffer = buf; const g = c.createGain(); g.gain.value = 0.5; s.connect(g); g.connect(bootGain); s.start(0, off);
     });
-    // hum grave
     const hum = c.createGain(); const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220; hum.connect(lp); lp.connect(bootGain);
     [[48, 'sawtooth', 1], [96.4, 'square', 0.35]].forEach(([f, ty, m]) => { const o = reg(c.createOscillator()); o.type = ty; o.frequency.value = f; const og = c.createGain(); og.gain.value = m; o.connect(og); og.connect(hum); o.start(T0); o.stop(T0 + tl.logoAt / 1000 + 0.6); });
     env(hum, [[0.5, 0.05], [tl.logoAt / 1000 - 0.3, 0.04], [tl.logoAt / 1000 + 0.5, 0.0001]]);
-    // relé + thump
     noise(0.07, { gain: 0.11, freq: 320, q: 0.7, to: bootGain });
     tone(72, { dur: 0.3, gain: 0.13, slide: 38, to: bootGain });
-    // ticks por linha
     tl.times.forEach((t, i) => {
       const k = lines[i]?.k;
       noise(0.012, { t: t / 1000, gain: k === 'head' ? 0.03 : 0.017, freq: 3600 + ((i * 331) % 2400), q: 3, to: bootGain });
       if (k === 'ok' && i % 2 === 0) tone(2300 + ((i * 97) % 500), { t: t / 1000, dur: 0.018, gain: 0.007, to: bootGain });
       if (k === 'warn') tone(220, { t: t / 1000, dur: 0.12, type: 'square', gain: 0.02, to: bootGain });
     });
-    // seeks de disco
     [0.9, 1.7, 2.45].forEach(base => { for (let j = 0; j < 7; j++) noise(0.022, { t: base + j * 0.035, gain: 0.024, freq: 1500 + ((j * 613) % 1400), q: 5, to: bootGain }); });
-    // sweep ascendente durante o logo + chime de acesso
     tone(180, { t: tl.logoAt / 1000, dur: (tl.grantAt - tl.logoAt) / 1000, type: 'sine', gain: 0.03, slide: 1500, to: bootGain });
     [659.25, 830.61, 987.77, 1318.51].forEach((f, i) => tone(f, { t: tl.grantAt / 1000 + i * 0.09, dur: i === 3 ? 0.9 : 0.22, type: 'sine', gain: i === 3 ? 0.055 : 0.04, to: bootGain }));
   };
@@ -436,7 +425,6 @@ export function bindAudioPlayers(root, resolve) {
     vol.oninput = () => setTermVolume(Number(vol.value) / 100);
     mute.onclick = () => { if (prefs.muted || prefs.volume === 0) { if (prefs.volume === 0) prefs.volume = 0.7; setTermMuted(false); } else setTermMuted(true); };
     volumeListeners.add(syncVol);
-    // visualizador
     cancelAnimationFrame(e.raf);
     const g = cv.getContext('2d'), accent = box.classList.contains('is-glitch') ? '#e0a46a' : '#aacfd1';
     const bins = new Uint8Array(64);

@@ -1,4 +1,3 @@
-// Exercita o módulo de carga isolado contra o applyPlayerRows REAL do app.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';

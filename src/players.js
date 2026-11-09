@@ -1,14 +1,6 @@
-// ===== Players: sincronização, mesclagem e cache da lista de Players =====
-// Separado do app.js (V1.5.2). Aqui fica tudo o que decide COMO a ficha de um Player é guardada, comparada e mesclada
-// com a do servidor: carimbos por campo/pontos, roster confirmado, hydrate, sync e reconciliação.
-// As TELAS de Players (admin, ficha, lixeira) continuam no app.js e chamam as funções exportadas daqui.
-//
-// Estado mutável compartilhado: antes eram `let playerDbXxx` soltos no app.js; agora ficam no objeto `ps`
-// (ex.: playerDbReadOnly -> ps.readOnly) para poderem ser lidos/alterados também fora deste arquivo.
 import { nextStamp, observePlayerStamps } from './stampClock.js';
 import { playerStoreEnabled, fetchPlayers as fetchPlayerRows, fetchPlayersByIds, upsertPlayers, upsertPlayerTombstones, subscribePlayers } from './playerStore.js';
 
-// O app.js entrega aqui o que este arquivo precisa dele (estado atual, storage, helpers). Isso evita import circular.
 const host={};
 let clone,storageGet,storageSet,KEY,serializeState,sameGlobalValue,normalize,imageValue,persistCriticalCache,persistSessionCache,refreshMasterPlayersAdminView,cryptoRandomId;
 export function initPlayers(deps){
@@ -19,15 +11,10 @@ export function initPlayers(deps){
 export const ps={
   timer:null,hydrated:false,applying:false,hydrating:false,hydratePromise:null,lastSyncAt:0,
   unsubscribe:null,syncBusy:false,syncPromise:null,
-  // Circuit breaker reservado a falhas reais confirmadas da sincronização.
-  // O teste de carga usa dados artificiais e nunca deve abrir esta proteção.
   circuitOpen:false,
   readOnly:false,
   lastSnapshot:[]
 };
-// V67: cache separado do roster CONFIRMADO pelo servidor. O cache geral do app
-// pode conter Players antigos; este cache só é atualizado depois de uma leitura
-// bem-sucedida do armazenamento dedicado de Players.
 const PLAYER_ROSTER_CACHE_KEY='a_profecia_server_roster_v1';
 function saveConfirmedPlayerRoster(rows){
   if(host.state.session?.role!=='master'||!Array.isArray(rows))return;
@@ -70,9 +57,6 @@ function isEmptySheetValue(value){
   return false;
 }
 function preserveLocalSheetAgainstReset(remoteData,localPlayer){
-  // Uma ficha remota pode ter carimbo geral novo porque só UM campo mudou,
-  // mas ainda conter valores vazios de uma gravação parcial/antiga. Não deixe
-  // essa cópia resetar campos preenchidos sem um carimbo específico mais novo.
   if(!remoteData||!localPlayer)return false;
   const skip=new Set(['id','login','password','newPassword','secretLovedEffect','secretClues','rolls','_syncUpdatedAt','_pointsAt','_keyAt','_pendingCreate']);
   const localKeys=localPlayer._keyAt&&typeof localPlayer._keyAt==='object'?localPlayer._keyAt:{};
@@ -80,11 +64,9 @@ function preserveLocalSheetAgainstReset(remoteData,localPlayer){
   let kept=false;
   for(const key of Object.keys(localPlayer)){
     if(skip.has(key)||key.startsWith('_'))continue;
-    // Pontos têm carimbo próprio (_pointsAt): se o remoto é mais novo, zerar/reduzir é intencional (ex.: Mestre resetou).
     if((key==='attrs'||key==='skills')&&(Number(remoteData._pointsAt)||0)>(Number(localPlayer._pointsAt)||0))continue;
     const localValue=localPlayer[key],remoteValue=remoteData[key];
     if(isEmptySheetValue(localValue)||!isEmptySheetValue(remoteValue))continue;
-    // Se o remoto marcou explicitamente esse campo depois do local, a limpeza é intencional.
     if((Number(remoteKeys[key])||0)>(Number(localKeys[key])||0))continue;
     remoteData[key]=clone(localValue);
     kept=true;
@@ -93,8 +75,6 @@ function preserveLocalSheetAgainstReset(remoteData,localPlayer){
 }
 function keepNewerLocalPoints(remoteData,localPlayer){
   const SKIP=new Set(['attrs','skills','rolls','secretClues','password','newPassword','secretLovedEffect','id','login']);
-  // Mantém do aparelho tudo que for MAIS NOVO que a cópia remota (pontos e cada campo com carimbo próprio).
-  // Retorna true se manteve algo (quem chamou deve reenviar ao servidor).
   if(!remoteData||!localPlayer)return false;
   let kept=false;
   const lp=Number(localPlayer._pointsAt)||0,rp=Number(remoteData._pointsAt)||0;
@@ -117,8 +97,6 @@ function keepNewerLocalPoints(remoteData,localPlayer){
   return kept;
 }
 function adoptPlayerInPlace(localObj,next){
-  // Mantém o MESMO objeto da ficha: as telas abertas guardam a referência antiga e, se ela fosse trocada,
-  // o botão "Salvar" gravaria numa cópia que já não está em state.players (os pontos "sumiam").
   if(!localObj||localObj===next)return next;
   for(const k of Object.keys(localObj))delete localObj[k];
   Object.assign(localObj,next);
@@ -138,10 +116,7 @@ function markLocalPlayerChanges(){
     if(tomb)continue;
     const old=previous.get(key);
     if(!old||!sameGlobalValue({...old,_syncUpdatedAt:0},{...p,_syncUpdatedAt:0})) p._syncUpdatedAt=Math.max(Number(p._syncUpdatedAt)||0,now);
-    // Ashen Testimony: os pontos (atributos/perícias) têm carimbo PRÓPRIO. Assim uma cópia antiga de outro
-    // aparelho (ex.: Mestre mexendo na vida) nunca apaga pontos que o Player acabou de salvar.
     if(old&&!sameGlobalValue({a:old.attrs,s:old.skills},{a:p.attrs,s:p.skills})) p._pointsAt=Math.max((Number(p._pointsAt)||0)+1,now);
-    // Carimbo por CAMPO (V1.4.7): vida, notas, mochila, etc. também não são apagados por uma cópia antiga.
     if(old){
       const ks=p._keyAt&&typeof p._keyAt==='object'&&!Array.isArray(p._keyAt)?{...p._keyAt}:{};let kc=false;
       for(const k of new Set([...Object.keys(p),...Object.keys(old)])){
@@ -183,10 +158,6 @@ function mergePlayersRemote(remotePlayers,remoteTombstones){
 }
 function playerRowStamp(row){return Math.max(Date.parse(row?.updated_at||'')||0,Number(row?.data?._syncUpdatedAt)||0)}
 function playerRowDeletedStamp(row){const raw=row?.deleted_at;if(raw===true||String(raw||'').trim().toLowerCase()==='deleted')return nextStamp();return Date.parse(raw||'')||0}
-// V67 Stability Patch: uma leitura vazia do roster de Players pode ser uma falha
-// transitória de rede/replicação, não uma confirmação real de que os Players
-// sumiram. Antes de tratar isso como autoritativo (e apagar fichas locais),
-// confirmamos com uma segunda leitura.
 async function fetchPlayerRowsConfirmed(ids=null){
   const targeted=Array.isArray(ids)?[...new Set(ids.map(id=>String(id||'').trim()).filter(Boolean))].slice(0,50):null;
   const read=()=>targeted?.length?fetchPlayersByIds(targeted):fetchPlayerRows();
@@ -194,9 +165,6 @@ async function fetchPlayerRowsConfirmed(ids=null){
   observePlayerStamps(first);
   if(first.length)return first;
   await new Promise(r=>setTimeout(r,600));
-  // Uma segunda leitura que falha não confirma que o roster está vazio.
-  // Propaga o erro para a sincronização entrar em modo seguro e preservar
-  // fichas, snapshot e tombstones locais.
   const second=await read();observePlayerStamps(second);return second;
 }
 function applyPlayerRows(rows,{initial=false,authoritative=false}={}){
@@ -218,13 +186,14 @@ function applyPlayerRows(rows,{initial=false,authoritative=false}={}){
     }
     if(row?.data&&typeof row.data==='object'&&(!localPlayer||stamp>localStamp)){
       const p=clone(row.data);
+      let rowNeedsPush=false;
       if(localPlayer){
         for(const k of ['photo','soulPhoto','homeWallpaper'])if(!imageValue(p[k])&&imageValue(localPlayer[k]))p[k]=localPlayer[k];
         p.rolls=mergeRollHistory(p.rolls||[],localPlayer.rolls||[]);
         p.secretClues=mergeSecretClues(p.secretClues,localPlayer.secretClues);
-        if(preserveLocalSheetAgainstReset(p,localPlayer))pointsNeedPush=true;
-        if(keepNewerLocalPoints(p,localPlayer))pointsNeedPush=true;
-        if(pointsNeedPush)p._syncUpdatedAt=nextStamp();
+        if(preserveLocalSheetAgainstReset(p,localPlayer))rowNeedsPush=true;
+        if(keepNewerLocalPoints(p,localPlayer))rowNeedsPush=true;
+        if(rowNeedsPush){p._syncUpdatedAt=nextStamp();pointsNeedPush=true}
       }
       p._syncUpdatedAt=Math.max(Number(p._syncUpdatedAt)||0,stamp);byId.set(key,localPlayer?adoptPlayerInPlace(localPlayer,p):p);delete tomb[key];
     }else if(localPlayer&&row?.data&&typeof row.data==='object'&&Array.isArray(row.data.secretClues)&&row.data.secretClues.length){
@@ -232,25 +201,12 @@ function applyPlayerRows(rows,{initial=false,authoritative=false}={}){
       if(merged.length!==(Array.isArray(localPlayer.secretClues)?localPlayer.secretClues.length:0))localPlayer.secretClues=merged;
     }
   }
-  // Quando o Mestre usa o armazenamento dedicado, o roster remoto é autoritativo.
-  // Uma ficha local ausente do servidor só permanece se foi criada explicitamente
-  // neste aparelho e ainda está marcada como _pendingCreate. Isso impede que um
-  // cache antigo do celular ressuscite fichas que já não existem no banco.
   if(authoritative&&host.state.session?.role==='master' && playerStoreEnabled && Array.isArray(rows)){
     const remoteIds=new Set(rows.map(r=>String(r?.id||'').trim()).filter(Boolean));
     for(const [key,p] of [...byId.entries()]){
       if(!remoteIds.has(key) && !p?._pendingCreate)byId.delete(key);
     }
   }else if(authoritative&&host.state.session?.role==='player' && playerStoreEnabled && Array.isArray(rows)){
-    // A Player device never owns the roster. If the server does not return the
-    // cached row, the local copy must not be treated as a new record.
-    // V67: uma leitura confirmada (fetchPlayerRowsConfirmed) já descartou o caso
-    // mais comum de falha transitória. Mesmo assim, NUNCA apagamos a própria
-    // ficha (nem o snapshot de fallback) só por uma ausência aqui — isso já
-    // aconteceu de derrubar fichas que continuavam existindo no servidor. A
-    // exclusão real de uma ficha própria só é aplicada pelo fluxo explícito de
-    // confirmação (ver o handler de subscribePlayers, que pede confirmação ao
-    // usuário quando o servidor sinaliza deleted_at de verdade).
     const activeId=String(host.state.session?.playerId||'').trim();
     const remoteIds=new Set(rows.map(r=>String(r?.id||'').trim()).filter(Boolean));
     for(const [key] of [...byId.entries()]){
@@ -285,11 +241,6 @@ async function hydratePlayersDb(){
       ps.applying=false;
       persistCriticalCache();persistSessionCache();storageSet(KEY,serializeState());
     }else{
-      // Um roster remoto vazio é uma resposta válida: NÃO podemos tratá-lo como
-      // um convite para reenviar o cache antigo do aparelho, pois isso ressuscita
-      // Players que o Mestre excluiu. A migração do formato legado fica explícita
-      // e só pode acontecer uma única vez, antes de o armazenamento dedicado ter
-      // sido inicializado neste navegador.
       const migrationKey='a_profecia_players_legacy_migrated_v2';
       const migrated=storageGet(migrationKey)==='1';
       const tomb=host.state.playerTombstones&&typeof host.state.playerTombstones==='object'?host.state.playerTombstones:{};
@@ -297,7 +248,6 @@ async function hydratePlayersDb(){
         const list=(Array.isArray(host.state.players)?host.state.players:[]).filter(p=>{
           const k=playerSyncKey(p);return k&&!tomb[k]&&p?._pendingCreate===true;
         });
-        // Only explicitly pending local creations may cross an empty remote roster.
         if(list.length){
           list.forEach(p=>{if(!p._syncUpdatedAt)p._syncUpdatedAt=nextStamp()});
           await upsertPlayers(list);
@@ -305,15 +255,6 @@ async function hydratePlayersDb(){
         }
         storageSet(migrationKey,'1');
       }
-      // The server remains authoritative for the Mestre's roster. Any other
-      // local-only Players are removed from the active roster and are never
-      // uploaded merely because the response happened to be empty.
-      // V67: para um Player, mesmo uma leitura vazia CONFIRMADA (duas tentativas,
-      // ver fetchPlayerRowsConfirmed) não apaga mais a própria ficha nem o
-      // snapshot de fallback aqui — isso já causou 'Personagem não encontrado'
-      // e fichas zeradas por causa de uma simples falha transitória de rede ou
-      // celular em segundo plano. A exclusão real só é aplicada pelo fluxo
-      // explícito de confirmação (ver subscribePlayers / confirmPlayerDeletion).
       const isMaster=host.state.session?.role==='master';
       if(isMaster){
         const keep=new Map();
@@ -330,9 +271,6 @@ async function hydratePlayersDb(){
     ps.hydrated=true;
   }catch(e){
     ps.readOnly=true;
-    // Nunca renderizar o roster geral antigo do localStorage no Mestre quando
-    // a leitura do banco dedicado falhar. Preferimos o último roster confirmado
-    // pelo servidor; se não existir, a lista fica vazia até a conexão voltar.
     if(host.state.session?.role==='master')applyConfirmedPlayerRosterFallback();
     ps.hydrated=true;
     console.warn('Banco de Players indisponível; usando somente o último roster confirmado pelo servidor.',e);
@@ -347,8 +285,6 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
   if(manual)ps.circuitOpen=false;
   if(typeof navigator!=='undefined'&&navigator.onLine===false){ps.readOnly=true;return false;}
   if(ps.syncBusy){
-    // Sync em voo foi montado com uma foto ANTERIOR do roster. Quem acabou de salvar algo (fresh/manual) não pode
-    // aceitar esse resultado como "salvo": espera terminar e roda outra rodada com o estado atual.
     if(!(fresh||manual))return ps.syncPromise||false;
     try{await ps.syncPromise}catch{}
     if(ps.syncBusy)return ps.syncPromise||false;
@@ -356,9 +292,6 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
   ps.syncBusy=true;
   ps.syncPromise=(async()=>{try{
     const beforeRoster=JSON.stringify(host.state.players||[]);
-    // Determine the authenticated role BEFORE reconciling the local roster.
-    // This must be available to the missing-row rule below; declaring it later
-    // creates a temporal-dead-zone ReferenceError and aborts the entire sync.
     const syncRole=host.state.session?.role;
     const syncActiveId=String(host.state.session?.playerId||'');
     const rows=await fetchPlayerRowsConfirmed(syncRole==='player'&&syncActiveId?[syncActiveId]:null);
@@ -367,18 +300,9 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
     saveConfirmedPlayerRoster(rows);
     const remoteById=new Map(rows.map(r=>[String(r.id),r]));
     const localById=new Map((host.state.players||[]).map(p=>[playerSyncKey(p),p]));
-    const startKeys=new Set(localById.keys()); // o que existia quando a foto foi tirada (para detectar mudanças durante os awaits)
-    // Exclusões confirmadas pelo servidor não podem ser reintroduzidas pela foto local
-    // capturada antes do await. startKeys distingue mudanças concorrentes, mas não
-    // distingue uma remoção autoritativa feita durante esta própria reconciliação.
+    const startKeys=new Set(localById.keys());
     const confirmedDeletedKeys=new Set();
 
-    // V66.7: o servidor é a fonte de verdade para descobrir Players novos.
-    // Antes, esta rotina só percorria o estado local; por isso um Mestre que já
-    // estava com a página aberta podia nunca incorporar uma ficha criada em
-    // outro aparelho (Realtime pode falhar/ser bloqueado no celular).
-    // Adicionamos aqui os registros remotos que ainda não existem localmente,
-    // respeitando tombstones e sem substituir uma ficha local mais recente.
     for(const row of rows){
       const k=String(row?.id||'').trim(); if(!k)continue;
       const remoteStamp=playerRowStamp(row);
@@ -420,26 +344,11 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
         host.state.playerTombstones[k]=Math.max(Number(host.state.playerTombstones[k])||0,remoteStamp||nextStamp());
       }else if(!remote){
         const tomb=Number(host.state.playerTombstones?.[k])||0;
-        // A ausência numa leitura completa (já confirmada por duas tentativas em
-        // fetchPlayerRowsConfirmed) é suficiente para remover a cópia local de
-        // Players que NÃO são o próprio usuário, mas NÃO é suficiente para criar
-        // uma nova tombstone. Antes isso convertia qualquer resposta
-        // transitória/antiga do servidor em uma 'exclusão' local e podia gerar
-        // ciclos de sincronização. Só uma exclusão explícita do Mestre (ou
-        // deleted_at vindo do servidor) cria tombstones.
         if(tomb){localById.delete(k);continue;}
         if(syncRole==='player'){
-          // V67: um Player nunca remove a PRÓPRIA ficha local por uma ausência
-          // isolada na leitura — isso já causou 'Personagem não encontrado' e
-          // fichas zeradas por falhas transitórias de rede/celular. A exclusão
-          // real chega pelo fluxo explícito de confirmação (subscribePlayers).
           if(k!==syncActiveId)localById.delete(k);
           continue;
         }
-        // Mestre: ausência no servidor significa que a ficha não faz parte do
-        // roster oficial. Só uma criação explicitamente pendente pode atravessar
-        // essa fronteira (e ela PERMANECE na lista: antes era removida daqui e só
-        // voltava no sync seguinte). Fichas antigas/copiadas nunca são recriadas.
         if(syncRole==='master'&&p._pendingCreate){p._syncUpdatedAt=localStamp||nextStamp();toUpsert.push(p);continue}
         localById.delete(k);
         if(syncRole==='master')continue;
@@ -453,8 +362,6 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
           p._syncUpdatedAt=localStamp||nextStamp();
           toUpsert.push(p);
         }else if(localStamp===remoteStamp && !sameGlobalValue(localComparable,remoteComparable)){
-          // Equal timestamps are resolved in favor of the local copy only when it is
-          // actually different; advance the stamp so the server can order the change.
           p._syncUpdatedAt=nextStamp();
           toUpsert.push(p);
         }else if(remoteStamp>localStamp){
@@ -470,20 +377,12 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
         }
       }
     }
-    // V65.9: um Player só grava a PRÓPRIA ficha. Antes, cada aparelho reenviava cópias (possivelmente velhas) das
-    // fichas de todos os outros Players; o Mestre continua podendo gravar todas.
     const canWriteRow=k=>syncRole==='master'||(syncRole==='player'&&!!syncActiveId&&String(k)===syncActiveId);
     const writable=toUpsert.filter(x=>canWriteRow(playerSyncKey(x)));
     if(writable.length){
       await upsertPlayers(writable);
       for(const p of writable)delete p._pendingCreate;
     }
-    // Local tombstones are explicit deletion intents from the Mestre. If an
-    // older browser version left one behind while the server still has the row
-    // active, converge the server to the deletion instead of letting the active
-    // row resurrect on the next F5. We intentionally do this regardless of the
-    // remote timestamp: the Player id is immutable/random and a later edit of an
-    // already-deleted id must never restore it.
     if(host.state.session?.role==='master'){
       const pendingDeletes={};
       for(const [k,t] of Object.entries(host.state.playerTombstones||{})){
@@ -493,17 +392,15 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
       if(Object.keys(pendingDeletes).length)await upsertPlayerTombstones(pendingDeletes);
     }
     const before=JSON.stringify(host.state.players||[]);
-    // Durante os awaits acima (upsert/tombstones) o Realtime ou o Mestre podem ter criado, atualizado ou excluído
-    // fichas. Sobrescrever state.players com a foto antiga fazia essas fichas sumirem ou voltarem no tempo.
     {
       const cur=new Map((host.state.players||[]).map(p=>[playerSyncKey(p),p]));
       const merged=new Map();
       for(const [k,p] of localById){
         const c=cur.get(k);
-        if(!c){if(!startKeys.has(k))merged.set(k,p);continue}          // removida durante o await: respeita a remoção
-        merged.set(k,(Number(c._syncUpdatedAt)||0)>=(Number(p._syncUpdatedAt)||0)?c:p); // versão mais nova vence
+        if(!c){if(!startKeys.has(k))merged.set(k,p);continue}
+        merged.set(k,(Number(c._syncUpdatedAt)||0)>=(Number(p._syncUpdatedAt)||0)?c:p);
       }
-      for(const [k,c] of cur){if(confirmedDeletedKeys.has(k))continue;if(!merged.has(k)&&!startKeys.has(k))merged.set(k,c)}      // criada durante o await: mantém, exceto exclusão confirmada pelo servidor
+      for(const [k,c] of cur){if(confirmedDeletedKeys.has(k))continue;if(!merged.has(k)&&!startKeys.has(k))merged.set(k,c)}
       for(const [k,tm] of Object.entries(host.state.playerTombstones||{})){const p=merged.get(k);if(p&&Number(tm)>=(Number(p._syncUpdatedAt)||0))merged.delete(k)}
       host.state.players=[...merged.values()];
     }
@@ -511,22 +408,16 @@ async function syncPlayersDbNow(manual=false,{fresh=false}={}){
     const rosterChanged=before!==JSON.stringify(host.state.players||[]) || beforeRoster!==JSON.stringify(host.state.players||[]);
     if(rosterChanged)storageSet(KEY,serializeState());
     if(rosterChanged)refreshMasterPlayersAdminView();
-    // Never log the player out merely because a transient sync response omitted a row.
-    // A confirmed deletion is handled by the realtime/delete confirmation path.
     return true;
   }catch(e){
     const msg=String(e?.message||e||'');
     const normalized=msg.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,'_').toUpperCase();
     if(/SESSAO_INVALIDA|P0001.*SESSAO_INVALIDA/.test(normalized)){
       ps.readOnly=true;
-      // Não apaga Players nem tenta gravar com token inválido. O evento de
-      // autenticação dispara o fluxo normal de entrada novamente.
       console.warn('Sessão do navegador não foi aceita pelo servidor; sincronização pausada até novo login.');
       return false;
     }
     ps.readOnly=true;
-    // Em falha de rede, não permitimos que o estado local antigo seja reenviado
-    // nem tratado como roster oficial. A próxima tentativa online reconcilia.
     console.warn('Falha ao sincronizar Players; modo somente-leitura ativado:',e);
     return false
   }
@@ -537,10 +428,6 @@ function queuePlayerDbSave(){
   if(!playerStoreEnabled||!ps.hydrated||ps.applying)return;
   clearTimeout(ps.timer);ps.timer=setTimeout(()=>syncPlayersDbNow().catch(()=>{}),700);
 }
-// V5 Stability Patch: server-authoritative Player deletion + safe reconciliation.
-// Realtime é apenas um acelerador. A reconciliação periódica
-// garante que Players novos, exclusões e alterações cheguem mesmo quando o
-// navegador perde o canal Realtime (comum em celulares/abas em segundo plano).
 async function reconcilePlayersStability(){
   if(ps.circuitOpen)return;
   if(!playerStoreEnabled||!ps.hydrated||ps.applying||document.hidden)return;
@@ -551,7 +438,6 @@ async function reconcilePlayersStability(){
   }
 }
 function mergeSecretClues(...lists){
-  // União por id: pistas enviadas pelo Mestre nunca podem sumir só porque outra versão da ficha ganhou no carimbo.
   const seen=new Set(),out=[];
   for(const list of lists){
     for(const c of (Array.isArray(list)?list:[])){

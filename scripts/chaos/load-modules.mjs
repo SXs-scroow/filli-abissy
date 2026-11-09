@@ -1,5 +1,3 @@
-// Carrega o playerStore.js REAL fora do Vite: copia src/*.js para .chaos-build/,
-// troca import.meta.env (só existe no Vite) e aponta o Supabase para o proxy de teste.
 import { mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -17,9 +15,6 @@ export async function loadRealStore(supabaseUrl) {
   writeFileSync(resolve(out, 'supabaseConfig.js'),
     `export const SUPABASE_URL = ${JSON.stringify(supabaseUrl)};\nexport const SUPABASE_PUBLISHABLE_KEY = 'chaos-test-key';\n`);
   let sync = readFileSync(resolve(root, 'src/globalSync.js'), 'utf8').replaceAll('import.meta.env', '({})');
-  // A suíte deve conseguir rodar também em ambientes isolados, sem npm install.
-  // Quando o SDK real está instalado, ele continua sendo usado; o fallback abaixo
-  // implementa apenas o transporte RPC necessário contra o servidor Supabase falso.
   try {
     await import.meta.resolve('@supabase/supabase-js');
   } catch {

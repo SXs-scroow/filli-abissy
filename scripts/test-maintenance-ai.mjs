@@ -53,7 +53,6 @@ try {
   assert.equal(providerRequest.url, 'https://ai-gateway.vercel.sh/v1/chat/completions');
   assert.equal(JSON.parse(providerRequest.options.body).model, 'openai/gpt-5-mini');
 
-  // Anthropic direto
   process.env.AI_GATEWAY_API_KEY = '';
   process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
   globalThis.fetch = async (url, options = {}) => {
@@ -75,7 +74,6 @@ try {
   assert.equal(providerRequest.options.headers['x-api-key'], 'test-anthropic-key');
   assert.equal(JSON.parse(providerRequest.options.body).messages[0].role, 'user');
 
-  // Chave personalizada 'filiabissy' com detecção por prefixo
   process.env.ANTHROPIC_API_KEY = '';
   for (const [key, expected] of [['vck_abc', 'https://ai-gateway.vercel.sh/v1/chat/completions'], ['sk-ant-abc', 'https://api.anthropic.com/v1/messages'], ['sk-abc', 'https://api.openai.com/v1/chat/completions']]) {
     process.env.filiabissy = key;

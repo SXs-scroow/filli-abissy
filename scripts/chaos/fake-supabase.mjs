@@ -1,19 +1,12 @@
-// Servidor de teste que imita as RPCs de Players do Supabase (PostgREST).
-//
-// ATENÇÃO: é um MODELO do contrato das RPCs usadas pelo front-end
-// (a_profecia_list_players / _player_save / _player_delete), não o Postgres real.
-// Ele existe para exercitar o código do navegador contra falhas de rede reais
-// (sockets cortados de verdade). As regras de SQL em si continuam sendo validadas
-// no banco (veja supabase/migrations/20260930000000_*.sql).
 import http from 'node:http';
 
 export function createFakeSupabase() {
   const db = {
-    players: new Map(),   // id -> {id, login, data, updated_at, deleted_at}
-    sessions: new Map(),  // token -> {role, player_id}   (sessões VIVAS)
-    revoked: new Map(),   // token -> player_id  (sessão de Player excluído: só lê a própria tombstone)
-    calls: [],            // {rpc, applied, id}
-    glitchEmptyReads: 0   // próximas N leituras devolvem [] (resposta 200 vazia)
+    players: new Map(),
+    sessions: new Map(),
+    revoked: new Map(),
+    calls: [],
+    glitchEmptyReads: 0
   };
 
   const fail = (message) => Object.assign(new Error(message), { rpcMessage: message });
@@ -28,8 +21,6 @@ export function createFakeSupabase() {
 
   const rpcs = {
     a_profecia_list_players({ p_token }) {
-      // Espelha a migration 20260930000000: token revogado de Player excluído
-      // serve SOMENTE para ler a própria tombstone.
       if (!db.sessions.has(String(p_token || ''))) {
         const pid = db.revoked.get(String(p_token || ''));
         const row = pid ? db.players.get(pid) : null;
@@ -44,7 +35,6 @@ export function createFakeSupabase() {
         updated_at: p.updated_at, deleted_at: p.deleted_at
       });
       if (s.role === 'master') return [...db.players.values()].map(shape);
-      // Player: SEMPRE a própria linha, inclusive quando excluída.
       const own = db.players.get(s.player_id);
       return own ? [shape(own)] : [];
     },
@@ -54,7 +44,6 @@ export function createFakeSupabase() {
       const requested = [...new Set((Array.isArray(p_ids) ? p_ids : []).map(id => String(id || '').trim()).filter(Boolean))].slice(0, 50);
       if (!requested.length) return [];
 
-      // A revoked Player session may only read its own explicit deletion marker.
       if (!db.sessions.has(token)) {
         const ownId = db.revoked.get(token);
         const own = ownId && db.players.get(ownId);
@@ -86,7 +75,7 @@ export function createFakeSupabase() {
       const existing = db.players.get(p_id);
       if (existing?.deleted_at && !p_deleted_at) throw fail('PLAYER_EXCLUIDO');
       const stamp = Number(p_sync_updated_at) || 0;
-      if (existing && stampOf(existing) > stamp) {   // last-write-wins por carimbo
+      if (existing && stampOf(existing) > stamp) {
         db.calls.push({ rpc: 'save', id: p_id, applied: false });
         return { id: p_id, updated_at: existing.updated_at, sync_updated_at: stampOf(existing), stale: true };
       }
@@ -113,7 +102,6 @@ export function createFakeSupabase() {
       row.deleted_at = ts.toISOString();
       row.updated_at = row.deleted_at;
       row.data = { ...row.data, _syncUpdatedAt: ts.getTime() };
-      // sessões do Player são APAGADAS (como no banco real); o token vira "revogado"
       for (const [tok, sess] of [...db.sessions]) {
         if (sess.role === 'player' && sess.player_id === row.id) { db.sessions.delete(tok); db.revoked.set(tok, row.id); }
       }

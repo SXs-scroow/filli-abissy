@@ -1,11 +1,8 @@
-// Proxy HTTP que corta a conexão de verdade (socket destruído) em pontos
-// escolhidos: no meio do envio do corpo, no meio da resposta, ou depois que o
-// servidor já aplicou a operação (resposta perdida).
 import http from 'node:http';
 
 export function createChaosProxy(targetPort) {
-  const rules = [];   // {match, mode, bytes, times}
-  const log = [];     // {rpc, mode}
+  const rules = [];
+  const log = [];
   const rpcOf = url => (url || '').split('?')[0].split('/').pop();
 
   function nextRule(name) {
@@ -27,7 +24,6 @@ export function createChaosProxy(targetPort) {
       headers: { ...req.headers, connection: 'close' }
     }, up => {
       if (mode === 'drop-response') {
-        // o servidor já respondeu (= aplicou); o cliente nunca fica sabendo
         up.resume();
         up.on('end', () => req.socket.destroy());
         return;
@@ -54,8 +50,8 @@ export function createChaosProxy(targetPort) {
       seen += chunk.length;
       if (mode === 'cut-request' && seen >= (rule.bytes ?? 1024)) {
         cut = true;
-        upstream.destroy();       // o servidor nunca recebe o corpo completo
-        req.socket.destroy();     // o cliente vê a conexão cair no meio do envio
+        upstream.destroy();
+        req.socket.destroy();
         return;
       }
       upstream.write(chunk);

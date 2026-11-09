@@ -10,10 +10,6 @@ const DEFAULT_REGIONS = [
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const markerId = () => `mark-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
 
-// Mapas são guardados no estado sincronizado da campanha. Aceitar um arquivo de
-// 10 MiB sem otimização transformava-o em ~13,3 MiB de Base64 e podia travar o
-// salvamento global. Mantemos o limite de entrada, mas normalizamos a imagem antes
-// de colocá-la no estado, preservando transparência quando WebP estiver disponível.
 const MAX_IMPORTED_MAP_DATA_URL_LENGTH = 2 * 1024 * 1024;
 function blobAsDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -190,8 +186,6 @@ export function bindCampaignMap({state,isMaster,currentPlayer,save,saveGlobal,to
       const reference=document.getElementById('mapShapeReference')?.value.trim();
       if(!reference){toast('Digite um lugar de referência primeiro.');return}
       if(!confirm(`Gerar um novo terreno-base inspirado em “${reference}”? O formato das regiões será substituído. Assets já colocados e marcadores dos jogadores serão preservados.`))return;
-      // Gera uma planta urbana procedural: bairros contíguos, avenidas, anéis e quadras.
-      // A referência orienta a semente e características gerais (ex.: porto/costa), não copia ruas reais.
       const generated=generateTownLayout(reference,regions,{includeRoads:document.getElementById('mapGenerateRoads')?.checked===true,includeWater:document.getElementById('mapGenerateWater')?.checked===true,includeSquares:document.getElementById('mapGenerateSquares')?.checked===true});
       generated.cartography.assets=Array.isArray(state.campaignMap?.cartography?.assets)?state.campaignMap.cartography.assets:[];
       const candidate=generated.regions;

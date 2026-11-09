@@ -59,8 +59,6 @@ function createHarness(sharedDb) {
           return this;
         },
         subscribe(callback) {
-          // Supabase serializes broadcast bindings as part of the channel join.
-          // Bindings added after this point must not be considered server-side.
           this.serverBindings = [...this.bindings];
           this.statusCallback = callback;
           bus.channels.add(this);
@@ -96,7 +94,6 @@ function createHarness(sharedDb) {
     }
   };
 
-  // Annotate channels with their owning client so the mock can support cleanup.
   const originalChannel = client.channel.bind(client);
   client.channel = (topic, config) => {
     const channel = originalChannel(topic, config);

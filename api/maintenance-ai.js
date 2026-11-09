@@ -6,7 +6,6 @@ const DEFAULT_OPENAI_BASE = 'https://api.openai.com';
 const DEFAULT_GATEWAY_BASE = 'https://ai-gateway.vercel.sh';
 const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
-// Modelos de raciocínio (gpt-5*) gastam parte do limite pensando; 1200 deixava a resposta vazia.
 const MAX_OUTPUT_TOKENS = 4000;
 const MAX_MESSAGES = 12;
 const MAX_CONTENT = 12000;
@@ -25,8 +24,6 @@ async function requireMaster(req) {
     headers: {
       'content-type': 'application/json',
       apikey: SUPABASE_PUBLISHABLE_KEY,
-      // The RPC receives the app session token as p_token. The publishable key
-      // remains the Supabase API credential for this public RPC call.
       authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`
     },
     body: JSON.stringify({ p_token: token })
@@ -45,25 +42,21 @@ function cleanMessages(messages) {
     role: m?.role === 'assistant' ? 'assistant' : 'user',
     content: String(m?.content || '').slice(0, MAX_CONTENT)
   })).filter((m) => m.content.trim());
-  // Alguns provedores exigem que a conversa comece com 'user'.
   while (cleaned.length && cleaned[0].role !== 'user') cleaned.shift();
   return cleaned;
 }
 
-// Aceita a base com ou sem '/v1' no final (ex.: OPENAI_BASE_URL vindo de gateways).
 function normalizeBase(value, fallback) {
   const base = String(value || fallback).trim().replace(/\/+$/, '');
   return base.replace(/\/v1$/, '');
 }
 
-// Nomes aceitos para a chave personalizada do projeto (o Vercel diferencia maiúsculas de minúsculas).
 const CUSTOM_KEY_NAMES = ['filiabissy', 'FILIABISSY', 'Filiabissy'];
 
 function customConfig() {
   const name = CUSTOM_KEY_NAMES.find((n) => String(process.env[n] || '').trim());
   if (!name) return null;
   const key = String(process.env[name]).trim();
-  // Detecta o provedor pelo formato da chave; AI_PROVIDER (openai | gateway | anthropic) força a escolha.
   const forced = String(process.env.AI_PROVIDER || '').trim().toLowerCase();
   const provider = forced || (key.startsWith('sk-ant-') ? 'anthropic' : key.startsWith('vck_') ? 'gateway' : 'openai');
   if (provider === 'anthropic') {
@@ -76,7 +69,6 @@ function customConfig() {
 }
 
 function aiConfig() {
-  // Ordem: chave personalizada (filiabissy), OpenAI direto, Vercel AI Gateway, Anthropic direto.
   const custom = customConfig();
   if (custom) return custom;
   const directKey = String(process.env.OPENAI_API_KEY || '').trim();
@@ -130,7 +122,6 @@ async function callProvider(config, system, messages) {
     return { response, data, text, model: data?.model || config.model };
   }
 
-  // Sem 'temperature': os modelos gpt-5* só aceitam o valor padrão e devolvem erro 400 se ele for enviado.
   const response = await fetch(`${config.base}/v1/chat/completions`, {
     method: 'POST',
     headers: {

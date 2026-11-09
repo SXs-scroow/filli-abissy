@@ -1,0 +1,41 @@
+name: Release check
+
+# Roda TODA a verificação do projeto (sintaxe, escopo, estabilidade, sincronização, XSS,
+# testes unitários, caos de rede, agente de manutenção e a build do Vite) a cada alteração.
+# Se algo falhar, o commit/PR fica marcado em vermelho e NÃO deve ser publicado.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-check:
+    name: release-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      # Sem package-lock.json no projeto, usamos npm install (as versões já estão fixas no package.json).
+      # Se um package-lock.json for adicionado, troque por: npm ci
+      - name: Instalar dependências
+        run: npm install --no-audit --no-fund
+
+      - name: Verificação completa (release:check)
+        run: npm run release:check
+
+      - name: Conferir que a build gerou os arquivos
+        run: |
+          test -f dist/index.html
+          ls -la dist | head -20

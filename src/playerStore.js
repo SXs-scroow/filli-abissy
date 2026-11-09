@@ -9,8 +9,6 @@ const RPC = 'a_profecia_player_save';
 
 export const playerStoreEnabled = Boolean(supabase);
 
-// V66 (desempenho): antes, cada sincronização baixava TODAS as fichas por inteiro. Agora baixa só uma lista leve
-// (id + carimbo) e busca por inteiro apenas as fichas que mudaram desde a última vez.
 let rowCache = new Map();
 let fetchCount = 0;
 let rosterRequestInFlight = null;
@@ -20,22 +18,13 @@ async function fetchPlayersUnshared() {
   if (!supabase) return [];
   if (++fetchCount % 20 === 0) rowCache = new Map();
 
-  // V1.4.3: nunca chama o RPC de roster sem um token. Isso evitava um 400
-  // silencioso quando o cache da sessão sobrevivia ao token da aba.
   let token = getAuthToken();
   if (!token) {
-    // Sem sessão não há motivo para consultar o RPC nem para transformar a
-    // ausência normal de autenticação em erro de sincronização. O fluxo de
-    // login é responsável por iniciar uma nova leitura.
     return [];
   }
 
   let result = await supabase.rpc('a_profecia_list_players', { p_token: token });
   if (result.error) {
-    // Se o endpoint responder 400 por sessão inválida, confirma a sessão uma
-    // única vez antes de entrar em modo somente-leitura. Assim não ficamos
-    // repetindo requests com token morto e também não tratamos um 400 de
-    // autenticação como falha genérica de banco.
     const errText = String(result.error?.message || '');
     const normalized = errText.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,'_').toUpperCase();
     if (/SESSAO_INVALIDA|P0001.*SESSAO_INVALIDA/.test(normalized)) {
@@ -49,8 +38,6 @@ async function fetchPlayersUnshared() {
         handleAuthError(e);
         throw e;
       }
-      // Token ainda é válido segundo o servidor: repete uma única vez para
-      // absorver uma falha transitória do PostgREST.
       token = getAuthToken();
       result = await supabase.rpc('a_profecia_list_players', { p_token: token });
     } catch (checkError) {
@@ -79,9 +66,6 @@ async function fetchPlayersUnshared() {
 }
 
 
-// Coalesce leituras idênticas disparadas quase ao mesmo tempo dentro da mesma aba.
-// Isso evita rajadas duplicadas em reconexões/visibilidade sem esconder gravações:
-// cada reconciliação continua recebendo o resultado completo do servidor.
 export function fetchPlayers() {
   if (rosterRequestInFlight) return rosterRequestInFlight;
   const request = fetchPlayersUnshared();
@@ -93,7 +77,6 @@ export function fetchPlayers() {
 async function fetchPlayersByIdsUnshared(clean, token) {
   const rows = [];
   for (let offset = 0; offset < clean.length; offset += 50) {
-    // Não iniciar outro lote se a sessão mudou enquanto o anterior estava em voo.
     if (getAuthToken() !== token) throw new Error('SESSAO_INVALIDA');
     const batch = clean.slice(offset, offset + 50);
     const { data, error } = await supabase.rpc('a_profecia_get_players_by_ids', {
@@ -137,11 +120,8 @@ async function rpcUpsert(row) {
   if (!supabase) return null;
   if (!getAuthToken()) { const e = new Error('SESSAO_INVALIDA'); handleAuthError(e); throw e; }
   const data = { ...(row.data || {}) };
-  // Authentication secrets are managed only by the dedicated password RPC.
-  // Never send plaintext password fields through the normal Player sync path.
   delete data.password;
   delete data.newPassword;
-  // Segredo exclusivo do Mestre: nunca entra no JSON da ficha do Player.
   delete data.secretLovedEffect;
   const { data: saved, error } = await supabase.rpc(RPC, {
     p_token: getAuthToken(),
@@ -175,7 +155,6 @@ export async function restorePlayerServer(player) {
   return restored;
 }
 
-// V1.4.7 — histórico de versões no servidor (somente o Mestre).
 export async function fetchPlayerHistory(playerId, limit = 80) {
   if (!supabase) throw new Error('Supabase não configurado');
   const token = getAuthToken();
@@ -215,10 +194,6 @@ export async function upsertPlayers(players) {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) { syncMarkOffline(); throw new Error('OFFLINE'); }
   syncMarkSyncing();
 
-  // Um lote do Mestre costuma conter vários Players independentes. Enviá-los
-  // um a um somava uma ida completa à rede para cada ficha. Agora usamos até
-  // quatro gravações em paralelo e mantemos ordem para alterações repetidas do
-  // mesmo ID, sem abrir uma rajada ilimitada contra o Supabase.
   const rows = [];
   players.forEach((source) => {
     const id = String(source?.id || '').trim();
@@ -241,12 +216,9 @@ export async function upsertPlayers(players) {
 
   try {
     await mapWithConcurrency(groups, 4, async (group) => {
-      // Same-player writes remain ordered; only distinct Player rows run in parallel.
       for (const row of group) {
         try {
           saved[row.resultIndex] = await rpcUpsert(row);
-          // A senha definida pelo Mestre já foi enviada como hash; retire o texto
-          // apenas do objeto de origem cujo salvamento foi confirmado.
           try { delete row.source.newPassword; } catch {}
         } catch (error) {
           failures.push(error);
@@ -258,9 +230,6 @@ export async function upsertPlayers(players) {
     syncMarkSuccess();
     return saved;
   } catch (error) {
-    // Alguns itens podem já ter sido confirmados. Reenfileirar o lote inteiro é
-    // seguro: os carimbos e o RPC do servidor impedem que uma resposta antiga
-    // sobrescreva uma alteração mais nova.
     queuePlayerRows(players);
     if (/OFFLINE/.test(String(error?.message||''))) syncMarkOffline();
     else syncMarkError('Alteração do Player pendente',pendingPlayerSyncCount());
@@ -271,10 +240,6 @@ export async function upsertPlayers(players) {
 export async function upsertPlayerTombstones(tombstones, playerIndex = {}) {
   if (!supabase || !tombstones || typeof tombstones !== 'object') return [];
   const saved = [];
-  // Deletion is a terminal server operation. Never use the normal save RPC to
-  // recreate a deleted row with a deleted_at timestamp: a late save from another
-  // device could otherwise race with it. The dedicated RPC is idempotent and
-  // serializes the deletion on the database row.
   for (const [id, deletedAt] of Object.entries(tombstones)) {
     const key = String(id || '').trim();
     if (!key) continue;
@@ -284,7 +249,6 @@ export async function upsertPlayerTombstones(tombstones, playerIndex = {}) {
 }
 
 
-// V1.2.1 — fila durável, liderança entre abas e reconciliação.
 const PLAYER_QUEUE_KEY_BASE='a_profecia_player_sync_queue_v2';
 const PLAYER_LEADER_KEY_BASE='a_profecia_player_sync_leader_v2';
 const PLAYER_TAB_ID=(globalThis.crypto?.randomUUID?.()||`tab-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -296,11 +260,6 @@ let presenceTimer=0;
 const localQueue=new Map();
 let activeQueueScope='';
 
-// A fila de sincronização é específica da sessão. Sem esse isolamento, um
-// Player que saísse da conta no mesmo navegador poderia deixar uma alteração
-// pendente e essa alteração ser enviada posteriormente usando o token de outra
-// conta. Tokens são aleatórios, então usamos um fingerprint estável do token
-// somente como namespace de armazenamento; o token nunca é salvo na fila.
 function queueScope(){
   const token=String(getAuthToken()||'');
   if(!token)return 'none';
@@ -312,7 +271,6 @@ function queueKey(){return `${PLAYER_QUEUE_KEY_BASE}:${queueScope()}`;}
 function leaderKey(){return `${PLAYER_LEADER_KEY_BASE}:${queueScope()}`;}
 function readQueue(){
   const scope=queueScope();
-  // Nunca reutiliza itens em memória de outra sessão, mesmo sem recarregar a página.
   if(scope!==activeQueueScope){localQueue.clear();activeQueueScope=scope;}
   const raw=readStoredJson(queueKey(), [], getBrowserStorage());
   const merged=mergePlayerQueueItems([...localQueue.values()], Array.isArray(raw) ? raw : []);
@@ -321,8 +279,6 @@ function readQueue(){
   return [...localQueue.values()];
 }
 function writeQueue(){
-  // Não truncar a fila: descartar os itens mais antigos aqui causaria perda de
-  // alterações pendentes após recarregar a página. Se exceder a quota, avisamos.
   const ok=writeStoredJson(queueKey(),serializePlayerQueue([...localQueue.values()]),getBrowserStorage());
   if(!ok){
     syncMarkError('Fila de sincronização não pôde ser salva neste dispositivo',localQueue.size);
@@ -338,7 +294,6 @@ function queuePlayerRows(players){
     const old=localQueue.get(id);
     const base=rowCache.get(id)?.data || old?.baseData || null;
     const safeBase=base&&typeof base==='object'?sanitizePlayerQueueItem({id,data:base})?.data:null;
-    // A fila em memória também é sanitizada: não basta retirar segredos apenas na escrita.
     localQueue.set(id,{id,login:String(safePlayer.login||''),data:safePlayer.data,baseData:safeBase,queuedAt:old?.queuedAt||Date.now(),attempts:Number(old?.attempts)||0});
   }
   writeQueue();
@@ -347,9 +302,6 @@ function queuePlayerRows(players){
 function removeQueued(id){localQueue.delete(String(id));writeQueue()}
 function isLeader(){
   const now=Date.now();
-  // A liderança entre abas é uma otimização, não pode bloquear a sincronização.
-  // Em navegadores que bloqueiam localStorage, a fila fica isolada em memória
-  // por aba; permitir o flush local evita deixar alterações pendentes para sempre.
   const storage=getBrowserStorage();
   if(!storage)return true;
   try{
@@ -360,8 +312,6 @@ function isLeader(){
     }
     return false;
   }catch{
-    // Falha no lease não deve desativar a gravação no servidor. Quando o
-    // armazenamento falha, a fila local não é compartilhada entre abas.
     return true;
   }
 }
@@ -379,7 +329,6 @@ async function flushPlayerQueue(){
   queueBusy=true;
   try{
     for(const item of [...localQueue.values()]){
-      // Conta/token mudou durante a execução? Interrompe antes de tocar em outra fila.
       if(queueScope()!==flushScope||String(getAuthToken()||'')!==flushToken){
         localQueue.clear();activeQueueScope=queueScope();
         return false;
@@ -408,8 +357,6 @@ async function flushPlayerQueue(){
           merged._syncUpdatedAt=nextStamp();
           await rpcUpsert({id:item.id,login:item.login,data:merged,deleted_at:null});
         }
-        // O servidor devolveu a ficha SEM os pontos que enviamos (carimbo perdeu a disputa)? Não dá a edição
-        // como salva: renova os carimbos acima de tudo que já vimos e deixa na fila para a próxima rodada.
         const localPts=Number(item.data?._pointsAt)||0,savedPts=Number(saved?.data?._pointsAt)||0;
         if(saved?.data&&localPts>0&&savedPts<localPts&&
            (JSON.stringify(saved.data.attrs||{})!==JSON.stringify(item.data?.attrs||{})||JSON.stringify(saved.data.skills||{})!==JSON.stringify(item.data?.skills||{}))){
@@ -425,7 +372,6 @@ async function flushPlayerQueue(){
         }
         item.attempts=(Number(item.attempts)||0)+1; localQueue.set(item.id,item); writeQueue();
         if(/SESSAO_INVALIDA|NAO_AUTORIZADO/.test(String(e?.message||''))){
-          // Falha de autenticação é terminal para esta tentativa; não martela o RPC.
           break;
         }
       }
@@ -445,10 +391,7 @@ export function startPlayerSyncInfrastructure(){
   return ()=>{clearInterval(leaderTimer);leaderTimer=0}
 }
 
-// Start only after module-scoped queue state has been initialized.
 const stopStartedPlayerSyncInfrastructure = startPlayerSyncInfrastructure();
-// Encerra o intervalo do leader lease iniciado acima. O navegador não precisa disso (o timer vive com a página),
-// mas processos Node (suíte de caos) ficariam pendurados para sempre com o setInterval ativo.
 export function stopPlayerSyncInfrastructure(){stopStartedPlayerSyncInfrastructure()}
 
 export function subscribePlayerPresence(sessionId, playerId, callback){
@@ -473,9 +416,6 @@ export function subscribePlayers(callback) {
   let hasSubscribedOnce = false;
   const pendingOps = new Map();
 
-  // Broadcasts are an acceleration path, not the only source of truth. After a
-  // reconnect, browser resume, or network recovery, reconcile against the
-  // server roster so an event missed while disconnected cannot leave stale UI.
   const refreshRoster = async () => {
     if (disposed || !getAuthToken() || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
     try {
@@ -520,8 +460,6 @@ export function subscribePlayers(callback) {
         const byId = new Map(rows.map(item => [String(item.id), item]));
         const missingDeletes = ids.filter(id => !byId.has(id) && batch.get(id)?.op === 'delete');
         if (missingDeletes.length) {
-          // Só considerar exclusão física após duas leituras bem-sucedidas.
-          // Erro na segunda leitura não é evidência de que a ficha foi apagada.
           await new Promise(resolve => setTimeout(resolve, 220));
           const confirmRows = await fetchPlayersByIds(missingDeletes);
           if (disposed) return;
@@ -531,8 +469,6 @@ export function subscribePlayers(callback) {
           const found = byId.get(id);
           if (found) callback(found);
           else if (batch.get(id)?.op === 'delete' && missingDeletes.includes(id)) callback({ id, deleted_at: 'deleted' });
-          // Comparar a identidade do evento, não só o tipo: um UPDATE/DELETE novo
-          // pode chegar enquanto a leitura está em andamento.
           if (pendingOps.get(id) === batch.get(id)) pendingOps.delete(id);
         }
         flushAttempt = 0;
@@ -541,8 +477,6 @@ export function subscribePlayers(callback) {
         if (!/SESSAO_INVALIDA/.test(String(error?.message || ''))) {
           console.warn('Falha ao atualizar Players em tempo real; evento será repetido:', error);
           flushAttempt = Math.min(flushAttempt + 1, 6);
-          // Mantém os eventos na fila e usa backoff exponencial com limite para
-          // não perder atualizações em falhas transitórias nem martelar o servidor.
           scheduleFlush(Math.min(1000 * (2 ** (flushAttempt - 1)), 30000));
         }
       }
@@ -551,8 +485,6 @@ export function subscribePlayers(callback) {
   const attach = () => {
     if (disposed) return;
     channel = supabase
-      // O trigger SQL publica neste tópico fixo. Um tópico com Date.now() nunca
-      // receberia os eventos do banco, deixando os clientes dependentes do polling.
       .channel('a-profecia-players-events')
       .on('broadcast', { event: 'player-changed' }, payload => {
         if (disposed) return;
@@ -566,8 +498,6 @@ export function subscribePlayers(callback) {
       .subscribe(status => {
         if (status === 'SUBSCRIBED') {
           clearTimeout(reconnectTimer); reconnectTimer = null;
-          // Initial login already performs hydration. On a later subscribe the
-          // WebSocket may have missed writes while disconnected: fetch truth.
           if (hasSubscribedOnce) scheduleRosterRefresh(0);
           hasSubscribedOnce = true;
           return;

@@ -1,5 +1,3 @@
-// Executa o refreshMasterPlayersAdminView REAL com um DOM falso para garantir que a aba Players
-// só é reconstruída quando algo mudou de verdade (e não a cada sincronização).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';

@@ -1,4 +1,3 @@
-// Celular com a hora ERRADA não pode perder a disputa de pontos contra o servidor (V1.5.3).
 import test, { beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -13,7 +12,7 @@ test('sem nada visto, o carimbo é a hora do aparelho', () => {
 });
 
 test('relógio ATRASADO: carimbo novo fica acima do que o servidor já tem', () => {
-  mock.method(Date, 'now', () => 1_000_000);               // celular atrasado
+  mock.method(Date, 'now', () => 1_000_000);
   observePlayerStamps([{ data: { _syncUpdatedAt: 9_000_000, _pointsAt: 8_000_000, _keyAt: { hp: 9_500_000 } }, updated_at: new Date(9_100_000).toISOString() }]);
   assert.ok(nextStamp() > 9_500_000);
 });
@@ -38,8 +37,8 @@ test('observePlayerStamps aceita linha do servidor, ficha solta e entrada invál
 test('caso real: celular atrasado salva pontos e eles vencem a cópia do servidor', () => {
   const src = readAppSources();
   const NEEDED = ['imageValue', 'clone', 'sameGlobalValue', 'playerSyncKey', 'keepNewerLocalPoints', 'markLocalPlayerChanges'];
-  const SERVER = 2_000_000_000_000;                         // carimbo que o servidor já tem
-  const PHONE_NOW = SERVER - 86_400_000;                    // celular com a hora 1 dia atrasada
+  const SERVER = 2_000_000_000_000;
+  const PHONE_NOW = SERVER - 86_400_000;
   const snapshot = JSON.stringify([{ id: 'p1', login: 'ana', attrs: { Corpo: 1 }, skills: {}, _pointsAt: 100 }]);
   const ctx = vm.createContext({ JSON, Math, Map, Set, Object, Array, String, Number, console,
     Date: { now: () => PHONE_NOW, parse: Date.parse },
@@ -50,8 +49,8 @@ test('caso real: celular atrasado salva pontos e eles vencem a cópia do servido
     state.players=[{id:'p1',login:'ana',attrs:{Corpo:5},skills:{},_pointsAt:100}];
     globalThis.seen=()=>observePlayerStamps([{id:'p1',_pointsAt:${SERVER},_syncUpdatedAt:${SERVER}}]);
     globalThis.run=()=>{markLocalPlayerChanges();return state.players[0]};`, ctx);
-  ctx.seen();                                               // o aparelho leu o servidor
-  const p = ctx.run();                                      // e o jogador gastou pontos
+  ctx.seen();
+  const p = ctx.run();
   assert.ok(p._pointsAt > SERVER, `pontos editados (${p._pointsAt}) precisam ser mais novos que o servidor (${SERVER})`);
 });
 

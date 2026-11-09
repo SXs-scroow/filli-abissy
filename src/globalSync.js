@@ -2,8 +2,6 @@ import { readStoredJson, writeStoredJson } from './persistence/browserStorage.js
 import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './supabaseConfig.js';
 
-// VITE_* continua tendo prioridade, mas o projeto também funciona imediatamente
-// após o deploy porque existe uma configuração pública de fallback.
 const url = import.meta.env.VITE_SUPABASE_URL || SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || SUPABASE_PUBLISHABLE_KEY;
 
@@ -13,7 +11,6 @@ export const supabase = remoteEnabled
   : null;
 
 
-// Health da sincronização: apenas estado operacional, sem conteúdo de fichas.
 const SYNC_HEALTH_KEY='a_profecia_sync_health_v1';
 let syncHealthState={state:'idle',message:'Aguardando sincronização',lastSuccessAt:0,lastErrorAt:0,pending:false,attempts:0};
 function readSyncHealth(){const x=readStoredJson(SYNC_HEALTH_KEY,null);if(x&&typeof x==='object')syncHealthState={...syncHealthState,...x};return {...syncHealthState}}
@@ -33,8 +30,6 @@ export function publicUrl(path) {
   return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl || '';
 }
 
-// ===================== V66: autenticação no servidor =====================
-// Login, senhas (hash bcrypt) e sessões vivem no Supabase (funções a_profecia_*). O navegador só guarda um token aleatório.
 const TOKEN_KEY = 'a_profecia_auth_token_v1';
 export function getAuthToken() {
   try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
@@ -73,8 +68,6 @@ function sessionPuzzleSchemaError() {
 }
 async function rpc(name, args) {
   if (!supabase) throw new Error('Supabase não configurado');
-  // Se uma RPC da migração de puzzles der PGRST202/404, não repetir o mesmo
-  // pedido a cada render. O estado é válido até recarregar o site após aplicar SQL.
   if (SESSION_PUZZLE_RPCS.has(name) && sessionPuzzleSchemaUnavailable) throw sessionPuzzleSchemaError();
   const { data, error } = await supabase.rpc(name, args);
   if (error) {
@@ -129,8 +122,6 @@ export async function savePlayerMasterSecret(playerId, secretLovedEffect) {
   return await rpc('a_profecia_player_master_secret_save', { p_token: getAuthToken(), p_player_id: String(playerId || ''), p_secret_loved_effect: String(secretLovedEffect || '') });
 }
 
-// V1.5.25: puzzles de sessão usam RPCs privadas. Credenciais e conteúdo dos arquivos
-// nunca são adicionados ao JSON global entregue aos jogadores.
 export async function listSessionPuzzles(sessionId) {
   return await rpc('a_profecia_session_puzzles_list', { p_token: getAuthToken(), p_session_id: String(sessionId || '') });
 }
@@ -161,16 +152,11 @@ export async function authLogout() {
   setAuthToken('');
   if (token && supabase) { try { await supabase.rpc('a_profecia_logout', { p_token: token }); } catch {} }
 }
-// Retorna {role, player_id} se a sessão é válida, null se não é; lança erro só quando não há rede.
 export async function authCheck() {
   const token = getAuthToken();
   if (!token || !supabase) return null;
   const { data, error } = await supabase.rpc('a_profecia_whoami', { p_token: token });
   if (error) throw handleAuthError(error);
-  // `a_profecia_whoami` returns NULL for an expired/revoked token instead of
-  // raising an RPC error. Treat that exactly like an invalid session so every
-  // caller follows the same recovery path and the app does not remain stuck
-  // in Player read-only mode with a dead token.
   if (!data) {
     const e = new Error('SESSAO_INVALIDA');
     handleAuthError(e);
@@ -181,7 +167,6 @@ export async function authCheck() {
 export async function changeMasterPassword(oldPassword, newPassword) {
   return await rpc('a_profecia_change_master_password', { p_token: getAuthToken(), p_old: String(oldPassword || ''), p_new: String(newPassword || '') });
 }
-// =========================================================================
 
 export async function fetchGlobal() {
   if (!supabase) return null;
@@ -217,12 +202,8 @@ export async function pushGlobal(data) {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      // V66: só o Mestre autenticado grava; o servidor devolve apenas o carimbo (antes devolvia o estado inteiro de volta).
       const result = await rpc('a_profecia_push_global', { p_token: getAuthToken(), p_data: data });
       syncMarkSuccess();
-      // A confirmação do banco é a fonte de verdade. A notificação Realtime é
-      // apenas um acelerador; se o canal estiver indisponível, o polling continua
-      // sendo a via de recuperação e a gravação já confirmada não deve falhar.
       Promise.resolve(broadcastLive('global-changed', { updated_at: result?.updated_at || null }))
         .catch(error => console.warn('Estado global salvo; aviso Realtime não enviado:', error));
       return { updated_at: result?.updated_at, verified: true };
@@ -236,8 +217,6 @@ export async function pushGlobal(data) {
   throw lastError || new Error('Falha ao salvar o estado global.');
 }
 
-// O supabase-js devolve só "non-2xx status code" quando a função responde erro.
-// Lê o corpo da resposta para mostrar o motivo real (formato, tamanho, limite do Storage).
 async function explainUploadError(error) {
   let code = '', detail = '';
   try {
@@ -261,6 +240,40 @@ async function explainUploadError(error) {
   return handleAuthError(error);
 }
 
+async function uploadDirectToStorage(safePath, file, contentType) {
+  let signed;
+  try {
+    const { data, error } = await supabase.functions.invoke('upload-asset', {
+      headers: {
+        Authorization: `Bearer ${getAuthToken()}`,
+        'x-asset-path': safePath,
+        'x-asset-content-type': contentType,
+        'x-asset-mode': 'sign',
+        'x-asset-size': String(file.size)
+      }
+    });
+    if (error) {
+      const known = await explainUploadError(error);
+      if (/Formato não suportado|excede o limite|Sessão|SESSAO|permissão/i.test(String(known?.message || known))) throw known;
+      return '';
+    }
+    signed = data;
+  } catch (err) {
+    if (/Formato não suportado|excede o limite|Sessão|SESSAO|permissão/i.test(String(err?.message || err))) throw err;
+    return '';
+  }
+  if (!signed?.token || signed.mode !== 'sign') return '';
+  const { error: upError } = await supabase.storage.from(BUCKET).uploadToSignedUrl(
+    signed.path || safePath, signed.token, file, { contentType: signed.contentType || contentType, upsert: true }
+  );
+  if (upError) {
+    const msg = String(upError.message || upError);
+    if (/exceed|size|large|payload/i.test(msg)) throw new Error('O arquivo passa do limite de tamanho configurado no Storage do Supabase (Storage → Settings → Upload file size limit).');
+    throw new Error('Falha ao enviar o arquivo ao Storage: ' + msg.slice(0, 160));
+  }
+  const base = signed.url || publicUrl(signed.path || safePath);
+  return base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : '';
+}
 export async function uploadGlobalFile(path, file) {
   if (!supabase) throw new Error('Supabase não configurado');
   if (!getAuthToken()) throw new Error('SESSAO_INVALIDA');
@@ -272,6 +285,10 @@ export async function uploadGlobalFile(path, file) {
   const maxBytes = 200 * 1024 * 1024;
   if (file.size <= 0 || file.size > maxBytes) throw new Error('ARQUIVO_GRANDE');
   const contentType = file.type || 'application/octet-stream';
+  if (file.size > 4 * 1024 * 1024) {
+    const direct = await uploadDirectToStorage(safePath, file, contentType);
+    if (direct) return direct;
+  }
   const { data, error } = await supabase.functions.invoke('upload-asset', {
     body: file,
     headers: {
@@ -289,9 +306,6 @@ export async function uploadGlobalFile(path, file) {
 export function subscribeGlobal(callback) {
   if (!supabase || typeof callback !== 'function') return () => {};
   let disposed = false, timer = null;
-  // Reusa o mesmo canal Realtime da sessão para evitar um tópico aleatório por
-  // aba. O emissor publica em `a-profecia-live-v2`, então todos os inscritos
-  // precisam escutar exatamente esse tópico.
   const unsubscribe = subscribeLive(msg => {
     if (disposed || msg?.event !== 'global-changed') return;
     clearTimeout(timer);
@@ -321,7 +335,6 @@ let liveReconnectTimer = null;
 
 function dispatchLiveMessage(event, message) {
   const normalized = { event, payload: message?.payload || {} };
-  // A faulty UI callback must not prevent other subscribers from receiving the event.
   for (const callback of [...liveSubscribers.values()]) {
     try { callback(normalized); }
     catch (error) { console.warn('Falha em assinante Realtime:', error); }
@@ -357,9 +370,6 @@ async function ensureLiveChannel() {
   const channel = supabase.channel('a-profecia-live-v2', {
     config: { broadcast: { self: false } }
   });
-  // IMPORTANT: Supabase sends broadcast bindings to the server when subscribe()
-  // joins the channel. Register every event before subscribe; adding .on() after
-  // the join can update only local bindings and silently miss server broadcasts.
   for (const event of LIVE_EVENTS) {
     channel.on('broadcast', { event }, message => dispatchLiveMessage(event, message));
   }

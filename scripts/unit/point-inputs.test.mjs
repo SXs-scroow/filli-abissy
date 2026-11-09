@@ -1,5 +1,3 @@
-// Campos de pontos no celular (V1.5.3): digitar sobre valor já preenchido, campo vazio, botões − / + e limites.
-// Usa as funções REAIS do app.js com um DOM de mentira (só o que bindPointInputs toca).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -15,7 +13,6 @@ class El {
   fire(t, e = {}) { (this.l[t] || []).forEach(f => f({ preventDefault() {}, ...e })); }
   closest() { return this.parent; }
   select() {} setSelectionRange() {} blur() { this.fire('blur'); }
-  // Simula o jogador: toca no campo (seleciona tudo ou não) e digita
   type(text, { appendToExisting = false } = {}) { this.fire('focus'); this.value = (appendToExisting ? this.value : '') + text; this.fire('input'); }
 }
 function ctl(input, minus, plus) {

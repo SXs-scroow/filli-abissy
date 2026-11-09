@@ -6,7 +6,7 @@ export const BUILD_ID = typeof __ASHEN_BUILD_ID__ !== 'undefined'
   ? String(__ASHEN_BUILD_ID__)
   : 'build-id-unavailable';
 
-export const APP_RELEASE = 'V1.5.61';
+export const APP_RELEASE = 'V1.5.76';
 
 try {
   window.__ASHEN_BUILD_INFO__ = Object.freeze({
@@ -16,5 +16,4 @@ try {
   });
   console.info('[Ashen Testimony] build info:', window.__ASHEN_BUILD_INFO__);
 } catch {
-  // Permite importar este módulo em ambientes de teste sem window.
 }

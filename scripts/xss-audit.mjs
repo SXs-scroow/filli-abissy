@@ -1,17 +1,13 @@
-// Auditoria de XSS: procura interpolações ${...} dentro de template literals que montam HTML
-// e sinaliza as que NÃO passam por um escapador conhecido. Executa de verdade sobre o app.js.
 import { readFileSync } from 'node:fs';
 
 const file = process.argv.slice(2).find(a => !a.startsWith('--')) || 'app.js';
 const src = readFileSync(file, 'utf8');
 
-// Escapadores / conversores considerados seguros
 const SAFE_CALL = /^(esc|escAttr|pointField|safeImgSrc|safeUrl|safeMediaSrc|imageValue|Number|parseInt|parseFloat|Math\.\w+|String\(\s*Number|encodeURIComponent|JSON\.stringify)\s*\(/;
 const NUMERIC = /^[\d\s+\-*/().%]+$/;
 const SAFE_IDENT = /^(i|j|k|n|idx|index|page|pages|round|total|count|len|pct|percent|max|min|val|num|hp|san|hpMax|sanMax|level|lvl)$/;
 
 function skipString(s, i, q) { i++; while (i < s.length && s[i] !== q) { if (s[i] === '\\') i++; i++; } return i; }
-// varre uma expressão ${ ... } respeitando strings/templates aninhados; devolve índice do '}' final
 function scanExpr(s, i) {
   let depth = 1;
   for (; i < s.length; i++) {
@@ -23,7 +19,6 @@ function scanExpr(s, i) {
   }
   return s.length;
 }
-// varre template literal a partir da crase; devolve {end, parts:[{text}], exprs:[{code,pos}]}
 function scanTemplate(s, i) {
   const start = i; i++;
   const exprs = []; let text = '';
@@ -51,7 +46,6 @@ const NUMERIC_CALL = /^(clamp|effectiveAttr|effectiveSkill|derivedMax|spellCost|
 function isSafeExpr(code) {
   const c = code.trim();
   if (!c) return true;
-  // template literal inteiro ou literal de texto sem interpolação: o conteúdo é auditado como template próprio
   if (/^`/.test(c) && scanTemplate(c, 0).end === c.length - 1) return true;
   if (/^(['"])(?:(?!\1)[^\\]|\\.)*\1$/.test(c)) return true;
   const plus = splitPlus(c);
@@ -59,19 +53,17 @@ function isSafeExpr(code) {
   if (/\.length$/.test(c) || /^[\w.$]+\.length\s*[-+*]?\s*\d*$/.test(c)) return true;
   if (/^\w+\s*[+\-*/%]\s*\d+$/.test(c)) return true;
   if (NUMERIC_CALL.test(c) && closesAtEnd(c)) return true;
-  if (/^(!?[\w.$\[\]'"]+\s*(===|!==|==|!=|>=|<=|>|<)\s*[\w.$'"\[\]]+)$/.test(c)) return true; // comparação -> booleano/rótulo controlado
+  if (/^(!?[\w.$\[\]'"]+\s*(===|!==|==|!=|>=|<=|>|<)\s*[\w.$'"\[\]]+)$/.test(c)) return true;
   if (SAFE_CALL.test(c) && closesAtEnd(c)) return true;
   if (NUMERIC.test(c) || SAFE_IDENT.test(c)) return true;
-  if (/^['"`][^'"`$\\<>&]*['"`]$/.test(c)) return true;      // literal simples
-  // ternário/&&/|| : todos os ramos precisam ser seguros
+  if (/^['"`][^'"`$\\<>&]*['"`]$/.test(c)) return true;
   const t = splitTop(c);
   if (t) return t.every(isSafeExpr);
-  // .map(...).join('') -> depende do template interno (auditado à parte, pois é template próprio)
   if (/\.map\(/.test(c) && /\.join\(/.test(c)) return true;
-  if (/^[a-zA-Z_$][\w$]*\(.*\)$/.test(c) && /^(render|.*(Markup|Html|HTML|Card|Row|Tile|Badge|Icon|Options|Buttons|Section|Block|Panel|List|Grid|View)\w*)\(/.test(c)) return true; // helpers que devolvem HTML já escapado
+  if (/^[a-zA-Z_$][\w$]*\(.*\)$/.test(c) && /^(render|.*(Markup|Html|HTML|Card|Row|Tile|Badge|Icon|Options|Buttons|Section|Block|Panel|List|Grid|View)\w*)\(/.test(c)) return true;
   return false;
 }
-function splitPlus(c) { // divide concatenação 'a'+esc(b)+'c' no nível superior (sem confundir com soma numérica)
+function splitPlus(c) {
   let d = 0, last = 0; const parts = [];
   for (let i = 0; i < c.length; i++) {
     const ch = c[i];
@@ -84,7 +76,7 @@ function splitPlus(c) { // divide concatenação 'a'+esc(b)+'c' no nível superi
   parts.push(c.slice(last));
   return parts;
 }
-function closesAtEnd(c) { // "esc(x) + y" não é seguro: confere que o parêntese inicial fecha no fim
+function closesAtEnd(c) {
   let d = 0, started = false;
   for (let i = 0; i < c.length; i++) {
     const ch = c[i];
@@ -94,7 +86,6 @@ function closesAtEnd(c) { // "esc(x) + y" não é seguro: confere que o parênte
   }
   return true;
 }
-// divide "a ? b : c", "a && b", "a || b" no nível superior; devolve os ramos que produzem valor
 function splitTop(c) {
   let d = 0; const q = [];
   for (let i = 0; i < c.length; i++) {
@@ -116,7 +107,7 @@ function splitTop(c) {
     return [c.slice(qi + 1, ci), c.slice(ci + 1)];
   }
   const cut = q[q.length - 1][1];
-  return [c.slice(cut + 2)]; // em "a && b" / "a || b" só o último ramo pode ser renderizado
+  return [c.slice(cut + 2)];
 }
 
 const findings = [];
@@ -128,8 +119,6 @@ let templates = 0, htmlTemplates = 0, interpolations = 0;
     if (c === '/' && src[i + 1] === '*') {
       const end = src.indexOf('*/', i + 2);
       if (end >= 0) { i = end + 1; continue; }
-      // Nunca use indexOf(...)+1 sem validar: -1 reiniciava a varredura em zero.
-      // Sem terminador, avance como código normal; `npm run check` avalia a sintaxe.
     }
     if (c === "'" || c === '"') { i = skipString(src, i, c); continue; }
     if (c === '`') {
@@ -141,7 +130,6 @@ let templates = 0, htmlTemplates = 0, interpolations = 0;
           if (!isSafeExpr(e.code)) findings.push({ line: lineOf(t.start + 1 + e.pos - t.start), code: e.code.trim().slice(0, 140), ctx: e.textBefore.slice(-40).replace(/\s+/g, ' ') });
         }
       }
-      // percorre também os templates aninhados dentro das expressões
       for (const e of t.exprs) {
         const inner = e.code;
         for (let j = 0; j < inner.length; j++) {

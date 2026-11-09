@@ -1,4 +1,3 @@
-// Resolve links curtos do Spotify (spotify.link, spoti.fi, open.spotify.com/s/...) para o link final.
 const ALLOWED_INPUT = /^https?:\/\/(open\.spotify\.com\/s\/|spotify\.link\/|spoti\.fi\/)/i;
 const ALLOWED_FINAL = /^https:\/\/open\.spotify\.com\//i;
 

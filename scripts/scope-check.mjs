@@ -1,5 +1,3 @@
-// Detecta identificadores indefinidos / fora de escopo (ex.: const declarado dentro de um if e usado depois).
-// Usa o compilador do TypeScript só como analisador estático; não altera nenhum arquivo.
 import { spawnSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,8 +15,6 @@ if (!tsc) { console.log('scope-check: typescript não encontrado (npm i -D types
 
 const dir = mkdtempSync(join(tmpdir(), 'scope-'));
 const cfg = join(dir, 'tsconfig.json');
-// Vite substitui esse identificador em build; declare-o para o analisador estático
-// não confundir a constante de compilação com um bug de variável fora de escopo.
 const viteDefine = join(dir, 'vite-defines.d.ts');
 writeFileSync(viteDefine, 'declare const __ASHEN_BUILD_ID__: string;\n');
 writeFileSync(cfg, JSON.stringify({
@@ -27,7 +23,6 @@ writeFileSync(cfg, JSON.stringify({
   files: [viteDefine, resolve('app.js'), ...['src/globalSync.js','src/playerStore.js','src/players.js','src/supabaseConfig.js','src/main.js'].map(f => resolve(f)).filter(existsSync)]
 }));
 const r = spawnSync('node', [tsc, '-p', cfg], { encoding: 'utf8' });
-// TS2304 = não encontrou o nome | TS2448/TS2454 = usado antes de declarar/atribuir
 const bad = (r.stdout || '').split('\n').filter(l => /error TS(2304|2448|2454):/.test(l));
 if (bad.length) { console.error(`scope-check FALHOU: ${bad.length} identificador(es) fora de escopo:`); bad.forEach(l => console.error('  ' + l.replace(resolve('.') + '/', ''))); process.exit(1); }
 console.log('scope-check OK: nenhum identificador fora de escopo.');

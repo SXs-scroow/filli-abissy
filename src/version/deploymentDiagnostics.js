@@ -34,8 +34,11 @@ export async function runDeploymentCacheCheck({
     add('HTML de entrada responde', response.ok, `HTTP ${response.status}`);
     add('HTML identifica o Ashen Testimony e aponta para o JavaScript', shellLooksValid,
       shellLooksValid ? 'estrutura de entrada reconhecida' : 'título ou referência principal não reconhecidos');
-    add('HTML configurado para não ficar preso em cache', /no-store/i.test(cacheControl) && /no-cache/i.test(cacheControl),
-      cacheControl || 'cabeçalho Cache-Control ausente');
+    const isLocalDev=/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(String(locationObj.hostname||''));
+    const cacheOk=(/no-store/i.test(cacheControl) && /no-cache/i.test(cacheControl))
+      || (isLocalDev && /no-store|no-cache|max-age=0/i.test(cacheControl));
+    add('HTML configurado para não ficar preso em cache', cacheOk,
+      (cacheControl || 'cabeçalho Cache-Control ausente')+(isLocalDev&&cacheOk?' (servidor local; em produção o vercel.json aplica no-store)':''));
   } catch (error) {
     add('Leitura atualizada do HTML', false, String(error?.message || error));
   }

@@ -1,4 +1,3 @@
-// Executa o applyPlayerRows REAL do app.js para garantir que pistas secretas não somem.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -17,7 +16,7 @@ function makeSandbox(localPlayers, role = 'player', activeId = 'p1') {
     globalThis.api={apply:(rows,o)=>applyPlayerRows(rows,o),merge:(...a)=>mergeSecretClues(...a),get players(){return state.players}};`, ctx);
   return ctx.api;
 }
-const ids = xs => Array.from(xs, c => c.id); // Array.from evita o protótipo de outro realm (vm)
+const ids = xs => Array.from(xs, c => c.id);
 const clue = (id, t = 1) => ({ id, title: id, message: 'm', receivedAt: t });
 const row = (data, stamp) => ({ id: 'p1', login: 'ana', data: { id: 'p1', login: 'ana', ...data, _syncUpdatedAt: stamp }, updated_at: new Date(stamp).toISOString(), deleted_at: null });
 
