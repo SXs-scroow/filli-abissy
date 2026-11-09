@@ -32,7 +32,12 @@ const deps = [
   id => ITEMS[id], i => i.weight, () => 6, esc, i => i.icon, i => i.category === 'Armas', () => '1d4',
   () => ({ attrs: 0, skills: 0 }), () => {}, () => ({ attrPoints: 0, skillPoints: 0 }), () => ({ attrs: 0, skills: 0 }), () => [],
 ];
-const bag = load(['bagBookItem', 'bagLayout', 'bagCellsMarkup', 'bagDetailMarkup'])(...deps);
+const rarityExtra = `let immBagPrevIds=null,immBagFlashIdx=-1;
+const IMM_RARITY={'comum':['common','Comum'],'raro':['rare','Raro'],'épico':['epic','Épico'],'lendário':['legendary','Lendário']};
+function renderCustomIcon(v){return String(v)}
+function sessionTheme(){return {emptySlot:'·'}}`;
+const bag = load(['bagBookItem', 'bagLayout', 'immRarity', 'immBagCells', 'bagDetailMarkup', 'bagMoveEntry'], rarityExtra)(...deps);
+const theme = { emptySlot: '·' };
 
 test('mochila: cada item ocupa peso × quantidade quadrados e o total acompanha a capacidade', () => {
   const p = { backpack: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }] };
@@ -40,9 +45,9 @@ test('mochila: cada item ocupa peso × quantidade quadrados e o total acompanha 
   assert.equal(L.used, 4);
   assert.equal(L.cap, 6);
   assert.equal(L.total, 6);
-  const html = bag.bagCellsMarkup(p, L.total, 'sq', 'data-pick', '<i class="empty"></i>', 0);
+  const html = bag.immBagCells(p, L, L.total, 0, theme);
   assert.equal((html.match(/<button/g) || []).length, 4);
-  assert.equal((html.match(/class="empty"/g) || []).length, 2);
+  assert.equal((html.match(/is-empty/g) || []).length, 2);
   assert.equal((html.match(/is-lead/g) || []).length, 2);
   assert.equal((html.match(/is-tail/g) || []).length, 2);
   assert.match(html, /<em>2<\/em>/);
@@ -54,7 +59,7 @@ test('mochila: excesso de peso aumenta o grid e marca quadrados fora da capacida
   const L = bag.bagLayout(p);
   assert.equal(L.used, 8);
   assert.equal(L.total, 8);
-  const html = bag.bagCellsMarkup(p, L.total, 'sq', 'data-pick', '', -1);
+  const html = bag.immBagCells(p, L, L.total, -1, theme);
   assert.equal((html.match(/is-over/g) || []).length, 2);
 });
 
@@ -65,7 +70,7 @@ test('mochila: itens removidos do catálogo são ignorados e o detalhe escapa HT
   const detail = bag.bagDetailMarkup(p, 1);
   assert.match(detail, /Diário &lt;b&gt;/);
   assert.match(detail, /data-read-book="3"/);
-  assert.match(bag.bagDetailMarkup(p, 0), /Toque em um quadrado/);
+  assert.match(bag.bagDetailMarkup(p, 0), /Selecione um item/);
 });
 
 test('pontos do Mestre: medidor mostra livres, excesso e bônus concedido', () => {
@@ -87,7 +92,27 @@ test('pontos do Mestre: medidor mostra livres, excesso e bônus concedido', () =
 test('modo sessão: aba Mochila e painel usam quadrados e o seletor de item', () => {
   assert.match(app, /imm-bag-grid/);
   assert.match(app, /data-bag-pick/);
-  assert.match(app, /data-imm-inv/);
+  assert.match(app, /data-bag-drop/);
+  assert.doesNotMatch(app, /data-session-slot=/);
   assert.match(app, /data-points-step/);
   assert.match(app, /id="ptPreview"/);
+});
+
+test('mochila: mover reordena sem perder itens nem quantidades', () => {
+  const p = { backpack: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }, { id: 3, qty: 1 }] };
+  assert.equal(bag.bagMoveEntry(p, 0, 'end'), 2);
+  assert.deepEqual(p.backpack.map(b => b.id), [2, 3, 1]);
+  assert.equal(p.backpack.find(b => b.id === 1).qty, 2);
+  assert.equal(bag.bagMoveEntry(p, 2, '0'), 0);
+  assert.deepEqual(p.backpack.map(b => b.id), [1, 2, 3]);
+  assert.equal(bag.bagMoveEntry(p, 1, 1), -1);
+  assert.equal(bag.bagMoveEntry(p, 9, 0), -1);
+  assert.equal(p.backpack.length, 3);
+});
+
+test('modo sessão: slots rápidos removidos e símbolos do Mestre sincronizam sessionTheme', () => {
+  assert.doesNotMatch(app, /IMM_SESSION_SLOTS/);
+  assert.equal((app.match(/'sessionSlots','sessionTheme'/g) || []).length, 3);
+  assert.match(app, /bindSessionThemeEditor\(\)/);
+  assert.match(app, /sessionSlots/); // dados legados continuam sendo preservados na sincronização
 });

@@ -25,6 +25,7 @@ const WEAKENED_PENALTY=2;
 const DET_DEFAULT_MAX=12;
 let immersiveTab='';
 let immBagSel=-1;
+let immBagMoveArmed=false,immBagPrevIds=null,immBagIntro=false,immBagFlashIdx=-1;
 let immersiveViewMode='personal';
 let immersivePuzzleCache=[];
 let immersivePuzzleStatus='idle';
@@ -112,7 +113,69 @@ const INITIAL_SPELLS=[
 const SEEDED_SPELL_IDS=['miasma','chamas-do-caos','decadencia','ciclo-da-existencia'];
 function uiAttrIcon(name){const v=state?.uiIcons?.attrs?.[name]||DEFAULT_ATTR_ICONS[name]||'◇';return renderCustomIcon(v)}
 function uiSkillIcon(name){const v=state?.uiIcons?.skills?.[name]||DEFAULT_SKILL_ICONS[name]||'◆';return renderCustomIcon(v)}
-function renderCustomIcon(v){const x=String(v||'').trim();if(/^data:image\//i.test(x)||/^https?:\/\//i.test(x)||/^\.\/?/.test(x)||x.startsWith('assets/'))return `<img src="${esc(x)}" alt="" class="ui-symbol-image">`;return esc(x||'◇')}
+function renderCustomIcon(v){const x=String(v||'').trim();if(x.startsWith('sym:'))return customGlyphHtml(x.slice(4));if(x.startsWith('lib:')&&Object.prototype.hasOwnProperty.call(SESSION_GLYPHS,x.slice(4)))return sessGlyphSvg(SESSION_GLYPHS[x.slice(4)]);if(/^data:image\//i.test(x)||/^https?:\/\//i.test(x)||/^\.\/?/.test(x)||x.startsWith('assets/'))return `<img src="${esc(x)}" alt="" class="ui-symbol-image">`;return esc(x||'◇')}
+const SESSION_GLYPH_GROUPS=['Runas','Selos rituais','Olhos','Sóis e luas','Alquimia','Sacrifício','Glifos de Ashen'];
+const SESSION_GLYPH_LIST=[
+['rune-fehu','Fehu',0,'<path d="M8 3v18M8 8l8-5M8 13l8-5"/>'],
+['rune-algiz','Algiz',0,'<path d="M12 3v18M12 12L5 5M12 12l7-7"/>'],
+['rune-othala','Othala',0,'<path d="M12 3L6 9l6 6 6-6zM8 21l4-6 4 6"/>'],
+['rune-sowilo','Sowilo',0,'<path d="M15 3L9 11l6 3-6 7"/>'],
+['rune-thurisaz','Thurisaz',0,'<path d="M9 3v18M9 8l7 4-7 4"/>'],
+['rune-ehwaz','Ehwaz',0,'<path d="M6 21V3l6 8 6-8v18"/>'],
+['seal-circle','Selo circular',1,'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 3v18M3 12h18"/>'],
+['seal-pentagram','Pentagrama',1,'<circle cx="12" cy="12" r="9"/><path d="M12 3l5.3 16.3L3.4 9.2h17.2L6.7 19.3z"/>'],
+['seal-hexagram','Hexagrama',1,'<circle cx="12" cy="12" r="9"/><path d="M12 5l5.2 9H6.8zM12 19L6.8 10h10.4z"/>'],
+['seal-gate','Portal',1,'<path d="M5 21V10a7 7 0 0114 0v11M9 21v-8a3 3 0 016 0v8"/>'],
+['seal-cross','Selo cruzado',1,'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M6 12h12"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/>'],
+['eye-open','Olho aberto',2,'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'],
+['eye-closed','Olho fechado',2,'<path d="M3 10c3 5 15 5 18 0M7 14l-2 3M12 16v3M17 14l2 3"/>'],
+['eye-triangle','Olho no triângulo',2,'<path d="M12 3l10 17H2z"/><circle cx="12" cy="14" r="2.3"/><path d="M7.5 15s2-3 4.5-3 4.5 3 4.5 3"/>'],
+['eye-weeping','Olho que chora',2,'<path d="M2 8s4-6 10-6 10 6 10 6-4 6-10 6S2 8 2 8z"/><circle cx="12" cy="8" r="2.5"/><path d="M12 16c-1.500 2-2.500 3-2.500 4a2.500 2.500 0 005 0c0-1-1-2-2.500-4z"/>'],
+['moon-crescent','Lua minguante',3,'<path d="M20 14.500A8.500 8.500 0 019.500 4 8.500 8.500 0 1020 14.500z"/>'],
+['moon-half','Meia lua',3,'<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 010 18z" fill="currentColor"/>'],
+['sun-rays','Sol',3,'<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.900 4.900L7 7M17 17l2.100 2.100M4.900 19.100L7 17M17 7l2.100-2.100"/>'],
+['sun-eclipse','Eclipse',3,'<circle cx="12" cy="12" r="6"/><circle cx="14" cy="11" r="5" fill="currentColor"/><path d="M12 1v2M12 21v2M1 12h2M21 12h2"/>'],
+['sun-moon','Sol e lua',3,'<circle cx="9" cy="12" r="5"/><path d="M19 7a6 6 0 010 10 4.500 4.500 0 000-10z"/>'],
+['alch-fire','Fogo',4,'<path d="M12 4l8 15H4z"/>'],
+['alch-water','Água',4,'<path d="M12 20L4 5h16z"/>'],
+['alch-air','Ar',4,'<path d="M12 4l8 15H4zM7 14h10"/>'],
+['alch-earth','Terra',4,'<path d="M12 20L4 5h16zM7 10h10"/>'],
+['alch-mercury','Mercúrio',4,'<circle cx="12" cy="9" r="4"/><path d="M8 3a4 3 0 008 0M12 13v8M8 18h8"/>'],
+['alch-sulfur','Enxofre',4,'<path d="M12 3l7 11H5zM12 14v8M9 19h6"/>'],
+['mark-tally','Contagem',5,'<path d="M6 4v16M10 4v16M14 4v16M18 4v16M4 17L20 7"/>'],
+['mark-dagger','Adaga ritual',5,'<path d="M12 2l2.500 12h-5zM7 14h10M12 14v8"/>'],
+['mark-drop','Gota de sangue',5,'<path d="M12 3c4 5 6 8 6 11a6 6 0 01-12 0c0-3 2-6 6-11z"/>'],
+['mark-chalice','Cálice',5,'<path d="M6 4h12c0 6-2 9-6 9s-6-3-6-9zM12 13v6M8 21h8"/>'],
+['mark-skull','Caveira',5,'<path d="M5 11a7 7 0 0114 0c0 3-1 4-2 5v3H7v-3c-1-1-2-2-2-5z"/><circle cx="9.500" cy="11" r="1.500"/><circle cx="14.500" cy="11" r="1.500"/><path d="M10 19v-2M14 19v-2"/>'],
+['mark-cross-out','Marca riscada',5,'<path d="M5 5l14 14M19 5L5 19"/><circle cx="12" cy="12" r="9"/>'],
+['ash-testimony','Testemunho',6,'<circle cx="12" cy="12" r="9"/><path d="M7 12c1.500-3 3-4 5-4s3.500 1 5 4c-1.500 3-3 4-5 4s-3.500-1-5-4z"/><path d="M12 8V3M12 21v-5"/>'],
+['ash-ember','Brasa',6,'<path d="M12 3c1 4 6 6 6 11a6 6 0 01-12 0c0-3 2-4 3-6 1 1 1 2 2 2 0-3 0-5 1-7z"/>'],
+['ash-vigil','Vigília',6,'<path d="M12 3c1.500 2 2 3 0 5-2-2-1.500-3 0-5zM9 10h6v11H9zM7 21h10"/>'],
+['ash-thorn-crown','Coroa de espinhos',6,'<path d="M3 17l2-9 4 5 3-7 3 7 4-5 2 9zM3 21h18"/>'],
+['ash-lattice','Treliça',6,'<path d="M12 2l9 5v10l-9 5-9-5V7zM12 2v20M3 7l18 10M21 7L3 17"/>'],
+['glyph-mark','Marca discreta',6,'<path d="M12 8l4 4-4 4-4-4z"/>'],
+['glyph-corner','Canto gótico',6,'<path d="M3 21V9a6 6 0 016-6h12M3 14h5M14 3v5"/>']
+];
+const SESSION_GLYPHS=Object.fromEntries(SESSION_GLYPH_LIST.map(g=>[g[0],g]));
+function sessGlyphSvg(g){return `<svg class="ash-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${g[3]}</svg>`}
+const SESSION_THEME_DEFAULTS={emptySlot:'lib:glyph-mark',bagSeal:'lib:seal-circle',ornCorner:'lib:glyph-corner',ornDivider:'lib:moon-crescent',portraitSigil:'lib:ash-testimony',ornTone:'gold',slotStyle:'plate'};
+const SESSION_TONES=[['gold','Ouro velho'],['blood','Sangue'],['wine','Vinho'],['silver','Prata fria']];
+const SESSION_SLOT_STYLES=[['plate','Placa metálica'],['engraved','Gravado']];
+const SESSION_THEME_TARGETS=[['emptySlot','Slot vazio','Símbolo exibido em cada espaço livre da mochila.'],['bagSeal','Selo da mochila','Selo no cabeçalho da mochila.'],['ornCorner','Canto da moldura','Ornamento nos quatro cantos das molduras.'],['ornDivider','Divisor','Ornamento central das linhas divisórias.'],['portraitSigil','Sigilo do retrato','Marca discreta atrás do personagem.']];
+function sessionTheme(){const t=(typeof state!=='undefined'&&state?.uiIcons?.sessionTheme)||{},o={...SESSION_THEME_DEFAULTS};for(const k of Object.keys(o)){const v=imageValue(t[k]);if(v)o[k]=v}if(!SESSION_TONES.some(x=>x[0]===o.ornTone))o.ornTone='gold';if(!SESSION_SLOT_STYLES.some(x=>x[0]===o.slotStyle))o.slotStyle='plate';return o}
+function sessionThemeAttrs(t){return ` data-tone="${esc(t.ornTone)}" data-slot-style="${esc(t.slotStyle)}"`}
+function safeGlyphPath(d){const x=String(d||'').slice(0,2000).trim();return /^[MmLlHhVvCcSsQqTtAaZz0-9eE+\-.,\s]*$/.test(x)?x:''}
+function parseCustomGlyph(raw){try{const o=JSON.parse(raw);if(!o||o.deleted||!['path','text','image'].includes(o.type))return null;return{name:String(o.name||'Símbolo').slice(0,40),type:o.type,value:String(o.value||'').slice(0,o.type==='path'?2000:2048),stroke:Math.min(3,Math.max(1,Number(o.stroke)||1.4)),fill:!!o.fill}}catch{return null}}
+function customGlyphList(){const g=(typeof state!=='undefined'&&state?.uiIcons?.sessionGlyphs)||{};return Object.keys(g).map(id=>{const o=parseCustomGlyph(g[id]);return o?{id,...o}:null}).filter(Boolean)}
+function customGlyphHtml(id){
+  const g=state?.uiIcons?.sessionGlyphs,raw=g&&Object.prototype.hasOwnProperty.call(g,id)?g[id]:'',o=parseCustomGlyph(raw);
+  return o?customGlyphRender(o):'◇';
+}
+function customGlyphRender(o){
+  if(o.type==='path'){const d=safeGlyphPath(o.value);return d?`<svg class="ash-glyph" viewBox="0 0 24 24" fill="${o.fill?'currentColor':'none'}" stroke="currentColor" stroke-width="${esc(String(o.stroke))}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="${esc(d)}"/></svg>`:'◇'}
+  return renderCustomIcon(o.value);
+}
+
 
 const CONDITION_DEFS=[
  {id:'bleeding',name:'Sangramento (Bleed)',icon:'╱╲',image:'/condition-icons/condition-01.webp',hint:'Perda de sangue.',effect:'Sofre 2 de dano ao fim de cada rodada.',damage:2},
@@ -406,7 +469,7 @@ function defaultTvScreen(){return {active:false,kind:'black',url:'',title:'',loo
 function normalizeTvScreen(){state.tvScreen={...defaultTvScreen(),...(state.tvScreen||{})};}
 function normalizeTerrorMode(){state.terrorMode={...defaultTerrorMode(),...(state.terrorMode||{})}}
 
-const DEFAULT={version:1.0,siteBrand:{name:'Ashen Testimony',image:'runa-gold.png'},session:null,characterRules:clone(DEFAULT_RULES),classBonuses:clone(CLASS_BONUSES_DEFAULTS_V107),music:{type:'',url:'',title:'',kind:'url',mediaId:''},musicLibrary:[],slasherIntroMusic:{url:'',title:'',kind:'url'},sounds:[],players:[],creatures:[],items:DEFAULT_ITEMS,spells:INITIAL_SPELLS,uiIcons:{attrs:{...DEFAULT_ATTR_ICONS},skills:{...DEFAULT_SKILL_ICONS},conditions:{}},backgrounds:{},customContent:{attrs:[],skills:[],conditions:[],deities:[]},combatSession:defaultCombatSession(),terrorMode:defaultTerrorMode(),nexus:{active:false,title:'Nexus Tabletop',url:'',updatedAt:0},tvScreen:defaultTvScreen(),tvScenes:[],soundboard:{volume:0.85,enabled:true},secretClues:[],rulesBook:{title:'Livro de Regras',url:'',kind:'url'}};
+const DEFAULT={version:1.0,siteBrand:{name:'Ashen Testimony',image:'runa-gold.png'},session:null,characterRules:clone(DEFAULT_RULES),classBonuses:clone(CLASS_BONUSES_DEFAULTS_V107),music:{type:'',url:'',title:'',kind:'url',mediaId:''},musicLibrary:[],slasherIntroMusic:{url:'',title:'',kind:'url'},sounds:[],players:[],creatures:[],items:DEFAULT_ITEMS,spells:INITIAL_SPELLS,uiIcons:{attrs:{...DEFAULT_ATTR_ICONS},skills:{...DEFAULT_SKILL_ICONS},conditions:{},sessionSlots:{main:'⚔',off:'◈',consumable:'✦',tool:'⚒',relic:'☽',free:'◇'}},backgrounds:{},customContent:{attrs:[],skills:[],conditions:[],deities:[]},combatSession:defaultCombatSession(),terrorMode:defaultTerrorMode(),nexus:{active:false,title:'Nexus Tabletop',url:'',updatedAt:0},tvScreen:defaultTvScreen(),tvScenes:[],soundboard:{volume:0.85,enabled:true},secretClues:[],rulesBook:{title:'Livro de Regras',url:'',kind:'url'}};
 let memoryStore={};
 let bgObjectUrls={};
 function bgOpen(){return new Promise((resolve,reject)=>{try{const r=indexedDB.open(BG_DB_NAME,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(BG_STORE))r.result.createObjectStore(BG_STORE);};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('IndexedDB indisponível'));}catch(e){reject(e)}})}
@@ -494,10 +557,10 @@ function viewCacheGet(){try{return sessionStorage.getItem(VIEW_CACHE_KEY)||''}ca
 function viewCacheSet(view){try{sessionStorage.setItem(VIEW_CACHE_KEY,String(view||''))}catch{}}
 function imageValue(v){return typeof v==='string'&&v.trim()?v.trim():''}
 function criticalMediaSnapshot(s){
-  const out={siteBrand:{image:imageValue(s?.siteBrand?.image)},backgrounds:{},spells:{},uiIcons:{attrs:{},skills:{},conditions:{}},deities:{},players:{}};
+  const out={siteBrand:{image:imageValue(s?.siteBrand?.image)},backgrounds:{},spells:{},uiIcons:{attrs:{},skills:{},conditions:{},sessionSlots:{},sessionTheme:{},sessionGlyphs:{}},deities:{},players:{}};
   for(const [k,v] of Object.entries(s?.backgrounds||{})) if(v) out.backgrounds[k]={...v,url:imageValue(v.url),mediaId:v.mediaId||'',updatedAt:Number(v.updatedAt)||0};
   for(const sp of (Array.isArray(s?.spells)?s.spells:[])) if(sp?.id) out.spells[String(sp.id)]={image:imageValue(sp.image)};
-  for(const group of ['attrs','skills','conditions']) for(const [k,v] of Object.entries(s?.uiIcons?.[group]||{})) if(imageValue(v)) out.uiIcons[group][k]=v;
+  for(const group of ['attrs','skills','conditions','sessionSlots','sessionTheme','sessionGlyphs']) for(const [k,v] of Object.entries(s?.uiIcons?.[group]||{})) if(imageValue(v)) out.uiIcons[group][k]=v;
   for(const d of (s?.customContent?.deities||[])) if(d?.id&&imageValue(d.image)) out.deities[String(d.id)]={image:d.image};
   for(const pl of (s?.players||[])) if(pl?.id) out.players[String(pl.id)]={photo:imageValue(pl.photo),soulPhoto:imageValue(pl.soulPhoto),homeWallpaper:imageValue(pl.homeWallpaper)};
   return out;
@@ -510,7 +573,7 @@ function mergeCriticalCacheIntoState(cache,target=state){
   state.siteBrand=state.siteBrand||{}; if(!imageValue(state.siteBrand.image)&&imageValue(cache.siteBrand?.image)){state.siteBrand.image=cache.siteBrand.image;changed=true}
   state.backgrounds=state.backgrounds||{}; for(const [k,v] of Object.entries(cache.backgrounds||{})){const cur=state.backgrounds[k]||{};if(!imageValue(cur.url)&&imageValue(v?.url)){cur.url=v.url;changed=true}if(!cur.mediaId&&v?.mediaId){cur.mediaId=v.mediaId;changed=true}if(!cur.name&&v?.name){cur.name=v.name;changed=true}state.backgrounds[k]=cur}
   state.spells=Array.isArray(state.spells)?state.spells:[];for(const sp of state.spells){const c=cache.spells?.[String(sp.id)];if(c&&!imageValue(sp.image)&&imageValue(c.image)){sp.image=c.image;changed=true}}
-  state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};for(const g of ['attrs','skills','conditions']){state.uiIcons[g]=state.uiIcons[g]||{};for(const [k,v] of Object.entries(cache.uiIcons?.[g]||{}))if(!imageValue(state.uiIcons[g][k])&&imageValue(v)){state.uiIcons[g][k]=v;changed=true}}
+  state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};for(const g of ['attrs','skills','conditions','sessionSlots','sessionTheme','sessionGlyphs']){state.uiIcons[g]=state.uiIcons[g]||{};for(const [k,v] of Object.entries(cache.uiIcons?.[g]||{}))if(!imageValue(state.uiIcons[g][k])&&imageValue(v)){state.uiIcons[g][k]=v;changed=true}}
   state.customContent=state.customContent||{attrs:[],skills:[],conditions:[],deities:[]};state.customContent.deities=Array.isArray(state.customContent.deities)?state.customContent.deities:[];for(const d of state.customContent.deities){const c=cache.deities?.[String(d.id)];if(c&&!imageValue(d.image)&&imageValue(c.image)){d.image=c.image;changed=true}}
   for(const pl of (state.players||[])){const c=cache.players?.[String(pl.id)];if(!c)continue;for(const k of ['photo','soulPhoto','homeWallpaper'])if(!imageValue(pl[k])&&imageValue(c[k])){pl[k]=c[k];changed=true}}
   return changed;
@@ -520,7 +583,7 @@ initPlayers({getState:()=>state,clone,storageGet,storageSet,KEY,serializeState,s
 let state=clone(DEFAULT);
 state=load();
 ps.lastSnapshot=clone(state.players||[]);
-function load(){try{const raw=storageGet(KEY)||storageGet('filii_abyssi_state_v10')||storageGet('filii_abyssi_state_v8');const saved=raw?JSON.parse(raw):null;if(!saved){const fresh=clone(DEFAULT);try{const cs=readStoredSession();if(cs?.role)fresh.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{}try{const cm=JSON.parse(storageGet(MEDIA_CACHE_KEY)||'null');mergeCriticalCacheIntoState(cm,fresh)}catch{}return fresh;}try{const tabS=tabSessionGet(),cs=tabS||(!saved.session?readStoredSession():null);if(cs?.role)saved.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{};try{const cachedMedia=storageGet(MEDIA_CACHE_KEY);if(cachedMedia)saved.__criticalMediaCache=JSON.parse(cachedMedia)}catch{};saved.siteBrand={name:'Ashen Testimony',image:'runa-gold.png',...(saved.siteBrand||{})};saved.siteBrand.name=String(saved.siteBrand.name||'Ashen Testimony').trim()||'Ashen Testimony';saved.siteBrand.image=saved.siteBrand.image||'runa-gold.png';saved.characterRules={campaign:{...DEFAULT_RULES.campaign,...(saved.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(saved.characterRules?.slasher||{})}};saved.classBonuses={...clone(CLASS_BONUSES_DEFAULTS_V107),...(saved.classBonuses||{})};saved.items=migrateItems(saved.items);saved.players=Array.isArray(saved.players)?saved.players:[];saved.playerTombstones=saved.playerTombstones&&typeof saved.playerTombstones==='object'?saved.playerTombstones:{};saved.creatures=Array.isArray(saved.creatures)?saved.creatures:[];saved.sounds=Array.isArray(saved.sounds)?saved.sounds:[];saved.musicLibrary=Array.isArray(saved.musicLibrary)?saved.musicLibrary:[];if(saved.music?.url&&!saved.musicLibrary.some(x=>String(x.url)===String(saved.music.url)))saved.musicLibrary.unshift({id:saved.music.mediaId||`music-${Date.now()}`,title:saved.music.title||'Trilha da campanha',url:saved.music.url,kind:saved.music.kind||'url',createdAt:Number(saved.music.commandAt)||Date.now()});saved.spells=Array.isArray(saved.spells)&&saved.spells.length?saved.spells:INITIAL_SPELLS.map(clone);saved.uiIcons=saved.uiIcons||{attrs:{},skills:{}};saved.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(saved.uiIcons.attrs||{})};saved.uiIcons.skills={...DEFAULT_SKILL_ICONS,...(saved.uiIcons.skills||{})};saved.uiIcons.conditions={...(saved.uiIcons.conditions||{})};saved.backgrounds={...(saved.backgrounds||{})};saved.customContent={attrs:[],skills:[],conditions:[],deities:[],...(saved.customContent||{})};saved.combatSession={...defaultCombatSession(),...(saved.combatSession||{})};saved.combatSession.sessionId=String(saved.combatSession.sessionId||'')||cryptoRandomId('combat');saved.combatSession.round=Math.max(1,Number(saved.combatSession.round)||1);saved.combatSession.turn=Math.max(0,Number(saved.combatSession.turn)||0);saved.combatSession.participants=Array.isArray(saved.combatSession.participants)?saved.combatSession.participants:[];saved.combatSession.actedKeys=Array.isArray(saved.combatSession.actedKeys)?saved.combatSession.actedKeys.map(String):[];saved.combatSession.history=Array.isArray(saved.combatSession.history)?saved.combatSession.history:[];saved.terrorMode={...defaultTerrorMode(),...(saved.terrorMode||{})};saved.nexus={active:false,title:'Nexus Tabletop',url:'',...(saved.nexus||{})};saved.tvScreen={...defaultTvScreen(),...(saved.tvScreen||{})};saved.tvScenes=Array.isArray(saved.tvScenes)?saved.tvScenes:[];saved.soundboard={volume:.85,enabled:true,...(saved.soundboard||{})};saved.secretClues=Array.isArray(saved.secretClues)?saved.secretClues:[];saved.rulesBook={title:'Livro de Regras',url:'',kind:'url',...(saved.rulesBook||{})};if(typeof saved.music==='string')saved.music={type:'audio',url:saved.music,title:'Trilha da sessão'};saved.music=saved.music||{type:'',url:'',title:'',kind:'url',mediaId:''};saved.slasherIntroMusic=saved.slasherIntroMusic||{url:'',title:'',kind:'url'};if(typeof saved.music==='object'){saved.music.kind=saved.music.kind||'url';saved.music.mediaId=saved.music.mediaId||''}delete saved.sessionBoard;state=saved;saved.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.secretClues=Array.isArray(p.secretClues)?p.secretClues:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});mergeCriticalCacheIntoState(saved.__criticalMediaCache,saved);delete saved.__criticalMediaCache;saved.version=1.0;return saved}catch(e){console.error('[Ashen Testimony] load() falhou; usando estado padrão:',e);loadFailed=true;try{const raw=storageGet(KEY);if(raw&&!storageGet(KEY+'_backup_loadfail'))storageSet(KEY+'_backup_loadfail',raw)}catch{}return clone(DEFAULT)}}
+function load(){try{const raw=storageGet(KEY)||storageGet('filii_abyssi_state_v10')||storageGet('filii_abyssi_state_v8');const saved=raw?JSON.parse(raw):null;if(!saved){const fresh=clone(DEFAULT);try{const cs=readStoredSession();if(cs?.role)fresh.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{}try{const cm=JSON.parse(storageGet(MEDIA_CACHE_KEY)||'null');mergeCriticalCacheIntoState(cm,fresh)}catch{}return fresh;}try{const tabS=tabSessionGet(),cs=tabS||(!saved.session?readStoredSession():null);if(cs?.role)saved.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{};try{const cachedMedia=storageGet(MEDIA_CACHE_KEY);if(cachedMedia)saved.__criticalMediaCache=JSON.parse(cachedMedia)}catch{};saved.siteBrand={name:'Ashen Testimony',image:'runa-gold.png',...(saved.siteBrand||{})};saved.siteBrand.name=String(saved.siteBrand.name||'Ashen Testimony').trim()||'Ashen Testimony';saved.siteBrand.image=saved.siteBrand.image||'runa-gold.png';saved.characterRules={campaign:{...DEFAULT_RULES.campaign,...(saved.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(saved.characterRules?.slasher||{})}};saved.classBonuses={...clone(CLASS_BONUSES_DEFAULTS_V107),...(saved.classBonuses||{})};saved.items=migrateItems(saved.items);saved.players=Array.isArray(saved.players)?saved.players:[];saved.playerTombstones=saved.playerTombstones&&typeof saved.playerTombstones==='object'?saved.playerTombstones:{};saved.creatures=Array.isArray(saved.creatures)?saved.creatures:[];saved.sounds=Array.isArray(saved.sounds)?saved.sounds:[];saved.musicLibrary=Array.isArray(saved.musicLibrary)?saved.musicLibrary:[];if(saved.music?.url&&!saved.musicLibrary.some(x=>String(x.url)===String(saved.music.url)))saved.musicLibrary.unshift({id:saved.music.mediaId||`music-${Date.now()}`,title:saved.music.title||'Trilha da campanha',url:saved.music.url,kind:saved.music.kind||'url',createdAt:Number(saved.music.commandAt)||Date.now()});saved.spells=Array.isArray(saved.spells)&&saved.spells.length?saved.spells:INITIAL_SPELLS.map(clone);saved.uiIcons=saved.uiIcons||{attrs:{},skills:{}};saved.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(saved.uiIcons.attrs||{})};saved.uiIcons.skills={...DEFAULT_SKILL_ICONS,...(saved.uiIcons.skills||{})};saved.uiIcons.conditions={...(saved.uiIcons.conditions||{})};saved.uiIcons.sessionSlots={main:'⚔',off:'◈',consumable:'✦',tool:'⚒',relic:'☽',free:'◇',...(saved.uiIcons.sessionSlots||{})};saved.backgrounds={...(saved.backgrounds||{})};saved.customContent={attrs:[],skills:[],conditions:[],deities:[],...(saved.customContent||{})};saved.combatSession={...defaultCombatSession(),...(saved.combatSession||{})};saved.combatSession.sessionId=String(saved.combatSession.sessionId||'')||cryptoRandomId('combat');saved.combatSession.round=Math.max(1,Number(saved.combatSession.round)||1);saved.combatSession.turn=Math.max(0,Number(saved.combatSession.turn)||0);saved.combatSession.participants=Array.isArray(saved.combatSession.participants)?saved.combatSession.participants:[];saved.combatSession.actedKeys=Array.isArray(saved.combatSession.actedKeys)?saved.combatSession.actedKeys.map(String):[];saved.combatSession.history=Array.isArray(saved.combatSession.history)?saved.combatSession.history:[];saved.terrorMode={...defaultTerrorMode(),...(saved.terrorMode||{})};saved.nexus={active:false,title:'Nexus Tabletop',url:'',...(saved.nexus||{})};saved.tvScreen={...defaultTvScreen(),...(saved.tvScreen||{})};saved.tvScenes=Array.isArray(saved.tvScenes)?saved.tvScenes:[];saved.soundboard={volume:.85,enabled:true,...(saved.soundboard||{})};saved.secretClues=Array.isArray(saved.secretClues)?saved.secretClues:[];saved.rulesBook={title:'Livro de Regras',url:'',kind:'url',...(saved.rulesBook||{})};if(typeof saved.music==='string')saved.music={type:'audio',url:saved.music,title:'Trilha da sessão'};saved.music=saved.music||{type:'',url:'',title:'',kind:'url',mediaId:''};saved.slasherIntroMusic=saved.slasherIntroMusic||{url:'',title:'',kind:'url'};if(typeof saved.music==='object'){saved.music.kind=saved.music.kind||'url';saved.music.mediaId=saved.music.mediaId||''}delete saved.sessionBoard;state=saved;saved.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.secretClues=Array.isArray(p.secretClues)?p.secretClues:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});mergeCriticalCacheIntoState(saved.__criticalMediaCache,saved);delete saved.__criticalMediaCache;saved.version=1.0;return saved}catch(e){console.error('[Ashen Testimony] load() falhou; usando estado padrão:',e);loadFailed=true;try{const raw=storageGet(KEY);if(raw&&!storageGet(KEY+'_backup_loadfail'))storageSet(KEY+'_backup_loadfail',raw)}catch{}return clone(DEFAULT)}}
 let remoteSaveTimer=null,remoteHydrated=false,remoteApplying=false;
 let remoteRenderFrame=0,remoteRenderQueued=false;
 function queueRemoteRender(view=currentView||'home'){
@@ -572,7 +635,7 @@ function mergeGlobal(remote){
       for(const l of (state.spells||[]))if(!next.some(x=>String(x.id)===String(l.id)))next.push(clone(l));
     }
     if(key==='uiIcons'){
-      next=next||{};const local=state.uiIcons||{};for(const g of ['attrs','skills','conditions']){next[g]={...(next[g]||{})};for(const [k,v] of Object.entries(local[g]||{}))if(!imageValue(next[g][k])&&imageValue(v))next[g][k]=v;}
+      next=next||{};const local=state.uiIcons||{};for(const g of ['attrs','skills','conditions','sessionSlots','sessionTheme','sessionGlyphs']){next[g]={...(next[g]||{})};for(const [k,v] of Object.entries(local[g]||{}))if(!imageValue(next[g][k])&&imageValue(v))next[g][k]=v;}
     }
     if(key==='customContent'){
       next={attrs:[],skills:[],conditions:[],deities:[],...(next||{})};const local=state.customContent||{};const localD=new Map((local.deities||[]).map(x=>[String(x.id),x]));next.deities=(next.deities||[]).map(d=>{const l=localD.get(String(d.id));if(l&&!imageValue(d.image)&&imageValue(l.image))d.image=l.image;return d});for(const l of (local.deities||[]))if(!next.deities.some(d=>String(d.id)===String(l.id)))next.deities.push(clone(l));
@@ -600,7 +663,7 @@ function mergeGlobal(remote){
     state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};
     state.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(state.uiIcons.attrs||{})};
     state.uiIcons.skills={...DEFAULT_SKILL_ICONS,...(state.uiIcons.skills||{})};
-    state.uiIcons.conditions={...(state.uiIcons.conditions||{})};
+    state.uiIcons.conditions={...(state.uiIcons.conditions||{})};state.uiIcons.sessionTheme={...(state.uiIcons.sessionTheme||{})};state.uiIcons.sessionGlyphs={...(state.uiIcons.sessionGlyphs||{})};
     state.backgrounds={...(state.backgrounds||{})};state.tvScreen={...defaultTvScreen(),...(state.tvScreen||{})};state.tvScenes=Array.isArray(state.tvScenes)?state.tvScenes:[];state.slasherIntroMusic=state.slasherIntroMusic||{url:'',title:'',kind:'url'};state.customContent={attrs:[],skills:[],conditions:[],deities:[],...(state.customContent||{})};
     state.characterRules={campaign:{...DEFAULT_RULES.campaign,...(state.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(state.characterRules?.slasher||{})}};state.classBonuses={...clone(CLASS_BONUSES_DEFAULTS_V107),...(state.classBonuses||{})};normalizeCombatSession();normalizeTerrorMode();state.nexus={active:false,title:'Nexus Tabletop',url:'',...(state.nexus||{})};state.soundboard={volume:.85,enabled:true,...(state.soundboard||{})};state.sounds=Array.isArray(state.sounds)?state.sounds:[];
     state.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.secretClues=Array.isArray(p.secretClues)?p.secretClues:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});
@@ -1946,7 +2009,7 @@ async function sendSecretClue(){const target=String(document.getElementById('sec
 
 function soundsAdmin(){return `<div class="card"><div class="row space"><div><h2>Soundboard sincronizado</h2><p class="small muted">Salve seus áudios no armazenamento da campanha. O Mestre dispara um efeito e todos os Players recebem o mesmo som em tempo real.</p></div><button class="btn" id="soundStopMaster">■ Parar sons locais</button></div><div class="sound-upload-panel"><div class="input-grid"><div class="field"><label>Nome</label><input id="soundName" placeholder="Ex.: Porta pesada, passos, grito..."></div><div class="field"><label>Categoria</label><select id="soundCategory"><option>Ambiente</option><option>Impacto</option><option>Terror</option><option>Vozes</option><option>Natureza</option><option>Objetos</option><option>Outros</option></select></div><div class="field"><label>Arquivo de áudio</label><input id="soundFile" type="file" accept="audio/*,.mp3,.wav,.ogg,.oga,.m4a,.aac,.flac,.opus,.webm"></div></div><div class="field"><label>Ou URL direta</label><input id="soundUrl" placeholder="https://.../som.mp3"></div><div class="row"><button class="btn primary" id="addSound">+ Salvar som na biblioteca</button><span class="tiny muted">Arquivos até 25 MB • MP3/WAV/OGG/M4A e formatos compatíveis com o navegador.</span></div></div><div class="sound-library-grid">${state.sounds?.length?state.sounds.map(s=>`<article class="sound-library-card"><div class="sound-library-icon">♪</div><div class="sound-library-meta"><span>${esc(s.category||'Outros')}</span><strong>${esc(s.name)}</strong><small>${s.kind==='file'?'Arquivo local antigo — reenvie para sincronizar':'Áudio global'}</small></div><div class="row"><button class="btn small" data-play-sound="${esc(s.id)}">▶ Testar</button><button class="btn small danger" data-del-sound="${esc(s.id)}">Excluir</button></div></article>`).join(''):'<div class="empty">Sua biblioteca de sons está vazia.</div>'}</div></div>`}
 
-function symbolsAdmin(){return `<div class="card"><div class="row space"><div><h2>Símbolos da ficha</h2><p class="small muted">Somente o Mestre pode alterar os símbolos de atributos, perícias e condições. Você pode usar texto/emoji ou enviar uma imagem; imagens pequenas são otimizadas antes de salvar.</p></div></div><div class="symbol-editor"><div><h3>Atributos</h3>${allAttrs().map(a=>`<div class="symbol-row"><span>${uiAttrIcon(a)} ${esc(a)}</span><div class="symbol-controls"><input class="uiAttrIconInput" data-symbol-attr="${esc(a)}" value="${esc(state.uiIcons?.attrs?.[a]||DEFAULT_ATTR_ICONS[a])}"><label class="btn small">Imagem<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-symbol-file="attr" data-symbol-key="${esc(a)}" hidden></label></div></div>`).join('')}</div><div><h3>Perícias</h3>${allSkills().map(sk=>`<div class="symbol-row"><span>${uiSkillIcon(sk)} ${esc(sk)}</span><div class="symbol-controls"><input class="uiSkillIconInput" data-symbol-skill="${esc(sk)}" value="${esc(state.uiIcons?.skills?.[sk]||DEFAULT_SKILL_ICONS[sk])}"><label class="btn small">Imagem<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-symbol-file="skill" data-symbol-key="${esc(sk)}" hidden></label></div></div>`).join('')}</div></div><div class="divider"></div><h3>Ícones das condições</h3><div class="condition-upload-admin">${CONDITION_DEFS.map(c=>{const img=state.uiIcons?.conditions?.[c.id]||c.image;return `<div class="condition-admin-row"><div>${img?`<img class="condition-admin-icon" src="${esc(img)}" alt="">`:''}<strong>${esc(c.name)}</strong></div><label class="btn small">Alterar<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-condition-image="${esc(c.id)}" hidden></label></div>`}).join('')}</div><div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn primary" id="saveSymbols">Salvar símbolos de texto</button></div></div>`}
+function symbolsAdmin(){return `<div class="card"><div class="row space"><div><h2>Símbolos da ficha</h2><p class="small muted">Somente o Mestre pode alterar os símbolos de atributos, perícias e condições. Você pode usar texto/emoji ou enviar uma imagem; imagens pequenas são otimizadas antes de salvar.</p></div></div><div class="symbol-editor"><div><h3>Atributos</h3>${allAttrs().map(a=>`<div class="symbol-row"><span>${uiAttrIcon(a)} ${esc(a)}</span><div class="symbol-controls"><input class="uiAttrIconInput" data-symbol-attr="${esc(a)}" value="${esc(state.uiIcons?.attrs?.[a]||DEFAULT_ATTR_ICONS[a])}"><label class="btn small">Imagem<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-symbol-file="attr" data-symbol-key="${esc(a)}" hidden></label></div></div>`).join('')}</div><div><h3>Perícias</h3>${allSkills().map(sk=>`<div class="symbol-row"><span>${uiSkillIcon(sk)} ${esc(sk)}</span><div class="symbol-controls"><input class="uiSkillIconInput" data-symbol-skill="${esc(sk)}" value="${esc(state.uiIcons?.skills?.[sk]||DEFAULT_SKILL_ICONS[sk])}"><label class="btn small">Imagem<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-symbol-file="skill" data-symbol-key="${esc(sk)}" hidden></label></div></div>`).join('')}</div></div><div class="divider"></div><h3>Registro de sessão — símbolos e ornamentos</h3><p class="small muted">Personalize os símbolos da mochila e os ornamentos do modo sessão. As mudanças só valem para os Players depois de aplicadas.</p><div id="sessThemeEditor">${sessionThemeEditorMarkup()}</div><div class="divider"></div><h3>Ícones das condições</h3><div class="condition-upload-admin">${CONDITION_DEFS.map(c=>{const img=state.uiIcons?.conditions?.[c.id]||c.image;return `<div class="condition-admin-row"><div>${img?`<img class="condition-admin-icon" src="${esc(img)}" alt="">`:''}<strong>${esc(c.name)}</strong></div><label class="btn small">Alterar<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-condition-image="${esc(c.id)}" hidden></label></div>`}).join('')}</div><div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn primary" id="saveSymbols">Salvar símbolos de texto</button></div></div>`}
 function zeroPlayerPoints(p,kind){
   const names=kind==='attrs'?allAttrs():allSkills();
   p[kind]=p[kind]&&typeof p[kind]==='object'?p[kind]:{};
@@ -2502,7 +2565,7 @@ function bindAdminContent(){bindPerformanceReportExport();if(document.getElement
     console.error(e);toast(`Não foi possível enviar a trilha: ${e?.message||'erro desconhecido'}`);
   }finally{sm.disabled=false;sm.textContent='Enviar / salvar trilha global'}
 };
-const scid=document.getElementById('spotifyClientId');if(scid)scid.onchange=()=>{try{localStorage.setItem(SPOTIFY_CLIENT_KEY,scid.value.trim())}catch{}};const slog=document.getElementById('spotifyLogin');if(slog)slog.onclick=async()=>{try{if(scid?.value.trim())localStorage.setItem(SPOTIFY_CLIENT_KEY,scid.value.trim())}catch{};if(spotifyLogged()){await ensureSpotifyPlayer();syncGlobalMusic()}else await spotifyLogin()};const slout=document.getElementById('spotifyLogout');if(slout)slout.onclick=()=>{spotifyLogout();render('master')};const cm=document.getElementById('clearMusic');if(cm)cm.onclick=async()=>{state.music={type:'audio',url:'',title:'',kind:'url',mediaId:'',playing:false,loop:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();syncGlobalMusic(true);toast('Trilha removida globalmente.');render('master')};document.querySelectorAll('[data-use-global-music]').forEach(b=>b.onclick=async()=>{const t=(state.musicLibrary||[]).find(x=>String(x.id)===String(b.dataset.useGlobalMusic));if(!t)return;state.music={...normalizeMusic(),type:'audio',url:t.url,title:t.title,kind:t.kind||'url',mediaId:t.id,playing:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();syncGlobalMusic(true);toast('Trilha selecionada.');render('master')});document.querySelectorAll('[data-delete-global-music]').forEach(b=>b.onclick=async()=>{const id=String(b.dataset.deleteGlobalMusic),t=(state.musicLibrary||[]).find(x=>String(x.id)===id);if(!t)return;if(!confirm(`Excluir a trilha ${t.title||''} da biblioteca?`))return;state.musicLibrary=state.musicLibrary.filter(x=>String(x.id)!==id);if(String(state.music?.mediaId)===id)state.music={type:'audio',url:'',title:'',kind:'url',mediaId:'',playing:false,loop:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();render('master')});const as=document.getElementById('addSound');if(as)as.onclick=async()=>{const name=document.getElementById('soundName').value.trim(),file=document.getElementById('soundFile').files[0],url=document.getElementById('soundUrl').value.trim(),category=document.getElementById('soundCategory')?.value||'Outros';if(!name){toast('Informe o nome do som.');return}if(!file&&!url){toast('Envie um arquivo ou informe uma URL.');return}if(file&&file.size>25*1024*1024){toast('O arquivo deve ter até 25 MB.');return}try{as.disabled=true;as.textContent='Enviando...';let remoteUrl=url,kind='url';if(file){if(!remoteEnabled){toast('Configure o Supabase para sincronizar arquivos de som com os Players.');return}const ext=(file.name.split('.').pop()||'mp3').toLowerCase().replace(/[^a-z0-9]/g,'')||'mp3';remoteUrl=await uploadGlobalFile(`sounds/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`,file);if(!remoteUrl)throw new Error('URL pública não disponível');kind='url'}const id=`s-${Date.now()}`;state.sounds.push({id,name,kind,url:remoteUrl,category,createdAt:Date.now()});await saveGlobalNow();toast('Som salvo e sincronizado.');render('master')}catch(e){toast(`Não foi possível salvar o som: ${e?.message||'erro'}`)}finally{as.disabled=false;as.textContent='+ Salvar som na biblioteca'}};document.getElementById('soundStopMaster')?.addEventListener('click',stopAllSounds);document.querySelectorAll('[data-play-sound]').forEach(b=>b.onclick=()=>{const sound=state.sounds.find(x=>String(x.id)===String(b.dataset.playSound));if(sound)playSoundEntry(sound)});document.querySelectorAll('[data-del-sound]').forEach(b=>b.onclick=async()=>{const id=b.dataset.delSound;state.sounds=state.sounds.filter(x=>x.id!==id);await saveGlobalNow().catch(()=>{});render('master')});document.querySelectorAll('[data-class-choice]').forEach(b=>b.onclick=()=>{const p=player();if(!p)return;p.class=b.dataset.classChoice;if(!hasMagicClass(p.class))p.initialSpell='';save();const phrase=document.getElementById('destinyPhrase');if(phrase){phrase.classList.remove('show');void phrase.offsetWidth;phrase.classList.add('show')}toast('Seu destino está selado.');render('sheet')});const saveSymbols=document.getElementById('saveSymbols');if(saveSymbols)saveSymbols.onclick=()=>{state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};state.uiIcons.attrs=state.uiIcons.attrs||{};state.uiIcons.skills=state.uiIcons.skills||{};document.querySelectorAll('[data-symbol-attr]').forEach(x=>state.uiIcons.attrs[x.dataset.symbolAttr]=x.value.trim()||DEFAULT_ATTR_ICONS[x.dataset.symbolAttr]);document.querySelectorAll('[data-symbol-skill]').forEach(x=>state.uiIcons.skills[x.dataset.symbolSkill]=x.value.trim()||DEFAULT_SKILL_ICONS[x.dataset.symbolSkill]);save();toast('Símbolos atualizados.');render('master')};document.querySelectorAll('[data-symbol-file]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const kind=inp.dataset.symbolFile,key=inp.dataset.symbolKey;const path=`symbols/${kind}-${key.replace(/[^a-z0-9_-]/gi,'-')}.webp`;const data=await imageFileToRemoteURL(f,path,256,.82);state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};if(kind==='attr')state.uiIcons.attrs[key]=data;else state.uiIcons.skills[key]=data;await saveGlobalNow();toast('Símbolo atualizado e salvo no banco.');document.getElementById('adminContent').innerHTML=symbolsAdmin();bindAdminContent()}catch(err){console.error(err);toast('Não foi possível salvar o símbolo.')}finally{inp.value=''}});document.querySelectorAll('[data-spell-image]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const sp=state.spells.find(x=>x.id===inp.dataset.spellImage);if(!sp)return;const data=await imageFileToRemoteURL(f,`spells/${sp.id}.webp`,900,.82);sp.image=data;await saveGlobalNow();toast('Imagem da magia salva no banco.');render('master')}catch(err){console.error(err);toast('Não foi possível salvar a imagem da magia.')}finally{inp.value=''}});document.querySelectorAll('[data-clear-spell-image]').forEach(b=>b.onclick=async()=>{const sp=state.spells.find(x=>x.id===b.dataset.clearSpellImage);if(sp){sp.image='';await saveGlobalNow().catch(()=>{});toast('Imagem da magia removida.');render('master')}});bindSpellsAdminExtras();document.getElementById('openPointsManager')?.addEventListener('click',openPointsManager);document.querySelectorAll('[data-condition-image]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const key=inp.dataset.conditionImage;const data=await imageFileToRemoteURL(f,`conditions/${key.replace(/[^a-z0-9_-]/gi,'-')}.webp`,512,.82);state.uiIcons=state.uiIcons||{};state.uiIcons.conditions=state.uiIcons.conditions||{};state.uiIcons.conditions[key]=data;await saveGlobalNow();toast('Símbolo da condição salvo no banco.');render('master')}catch(err){console.error(err);toast('Não foi possível salvar a imagem da condição.')}finally{inp.value=''}});if(document.getElementById('itemResults'))renderItems();if(document.querySelector('[data-bg-upload]'))bindBackgrounds()}
+const scid=document.getElementById('spotifyClientId');if(scid)scid.onchange=()=>{try{localStorage.setItem(SPOTIFY_CLIENT_KEY,scid.value.trim())}catch{}};const slog=document.getElementById('spotifyLogin');if(slog)slog.onclick=async()=>{try{if(scid?.value.trim())localStorage.setItem(SPOTIFY_CLIENT_KEY,scid.value.trim())}catch{};if(spotifyLogged()){await ensureSpotifyPlayer();syncGlobalMusic()}else await spotifyLogin()};const slout=document.getElementById('spotifyLogout');if(slout)slout.onclick=()=>{spotifyLogout();render('master')};const cm=document.getElementById('clearMusic');if(cm)cm.onclick=async()=>{state.music={type:'audio',url:'',title:'',kind:'url',mediaId:'',playing:false,loop:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();syncGlobalMusic(true);toast('Trilha removida globalmente.');render('master')};document.querySelectorAll('[data-use-global-music]').forEach(b=>b.onclick=async()=>{const t=(state.musicLibrary||[]).find(x=>String(x.id)===String(b.dataset.useGlobalMusic));if(!t)return;state.music={...normalizeMusic(),type:'audio',url:t.url,title:t.title,kind:t.kind||'url',mediaId:t.id,playing:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();syncGlobalMusic(true);toast('Trilha selecionada.');render('master')});document.querySelectorAll('[data-delete-global-music]').forEach(b=>b.onclick=async()=>{const id=String(b.dataset.deleteGlobalMusic),t=(state.musicLibrary||[]).find(x=>String(x.id)===id);if(!t)return;if(!confirm(`Excluir a trilha ${t.title||''} da biblioteca?`))return;state.musicLibrary=state.musicLibrary.filter(x=>String(x.id)!==id);if(String(state.music?.mediaId)===id)state.music={type:'audio',url:'',title:'',kind:'url',mediaId:'',playing:false,loop:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();render('master')});const as=document.getElementById('addSound');if(as)as.onclick=async()=>{const name=document.getElementById('soundName').value.trim(),file=document.getElementById('soundFile').files[0],url=document.getElementById('soundUrl').value.trim(),category=document.getElementById('soundCategory')?.value||'Outros';if(!name){toast('Informe o nome do som.');return}if(!file&&!url){toast('Envie um arquivo ou informe uma URL.');return}if(file&&file.size>25*1024*1024){toast('O arquivo deve ter até 25 MB.');return}try{as.disabled=true;as.textContent='Enviando...';let remoteUrl=url,kind='url';if(file){if(!remoteEnabled){toast('Configure o Supabase para sincronizar arquivos de som com os Players.');return}const ext=(file.name.split('.').pop()||'mp3').toLowerCase().replace(/[^a-z0-9]/g,'')||'mp3';remoteUrl=await uploadGlobalFile(`sounds/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`,file);if(!remoteUrl)throw new Error('URL pública não disponível');kind='url'}const id=`s-${Date.now()}`;state.sounds.push({id,name,kind,url:remoteUrl,category,createdAt:Date.now()});await saveGlobalNow();toast('Som salvo e sincronizado.');render('master')}catch(e){toast(`Não foi possível salvar o som: ${e?.message||'erro'}`)}finally{as.disabled=false;as.textContent='+ Salvar som na biblioteca'}};document.getElementById('soundStopMaster')?.addEventListener('click',stopAllSounds);document.querySelectorAll('[data-play-sound]').forEach(b=>b.onclick=()=>{const sound=state.sounds.find(x=>String(x.id)===String(b.dataset.playSound));if(sound)playSoundEntry(sound)});document.querySelectorAll('[data-del-sound]').forEach(b=>b.onclick=async()=>{const id=b.dataset.delSound;state.sounds=state.sounds.filter(x=>x.id!==id);await saveGlobalNow().catch(()=>{});render('master')});document.querySelectorAll('[data-class-choice]').forEach(b=>b.onclick=()=>{const p=player();if(!p)return;p.class=b.dataset.classChoice;if(!hasMagicClass(p.class))p.initialSpell='';save();const phrase=document.getElementById('destinyPhrase');if(phrase){phrase.classList.remove('show');void phrase.offsetWidth;phrase.classList.add('show')}toast('Seu destino está selado.');render('sheet')});const saveSymbols=document.getElementById('saveSymbols');if(saveSymbols)saveSymbols.onclick=()=>{state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};state.uiIcons.attrs=state.uiIcons.attrs||{};state.uiIcons.skills=state.uiIcons.skills||{};document.querySelectorAll('[data-symbol-attr]').forEach(x=>state.uiIcons.attrs[x.dataset.symbolAttr]=x.value.trim()||DEFAULT_ATTR_ICONS[x.dataset.symbolAttr]);document.querySelectorAll('[data-symbol-skill]').forEach(x=>state.uiIcons.skills[x.dataset.symbolSkill]=x.value.trim()||DEFAULT_SKILL_ICONS[x.dataset.symbolSkill]);save();toast('Símbolos atualizados.');render('master')};document.querySelectorAll('[data-symbol-file]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const kind=inp.dataset.symbolFile,key=inp.dataset.symbolKey;const path=`symbols/${kind}-${key.replace(/[^a-z0-9_-]/gi,'-')}.webp`;const data=await imageFileToRemoteURL(f,path,256,.82);state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};if(kind==='attr')state.uiIcons.attrs[key]=data;else state.uiIcons.skills[key]=data;await saveGlobalNow();toast('Símbolo atualizado e salvo no banco.');document.getElementById('adminContent').innerHTML=symbolsAdmin();bindAdminContent()}catch(err){console.error(err);toast('Não foi possível salvar o símbolo.')}finally{inp.value=''}});document.querySelectorAll('[data-spell-image]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const sp=state.spells.find(x=>x.id===inp.dataset.spellImage);if(!sp)return;const data=await imageFileToRemoteURL(f,`spells/${sp.id}.webp`,900,.82);sp.image=data;await saveGlobalNow();toast('Imagem da magia salva no banco.');render('master')}catch(err){console.error(err);toast('Não foi possível salvar a imagem da magia.')}finally{inp.value=''}});document.querySelectorAll('[data-clear-spell-image]').forEach(b=>b.onclick=async()=>{const sp=state.spells.find(x=>x.id===b.dataset.clearSpellImage);if(sp){sp.image='';await saveGlobalNow().catch(()=>{});toast('Imagem da magia removida.');render('master')}});bindSpellsAdminExtras();document.getElementById('openPointsManager')?.addEventListener('click',openPointsManager);document.querySelectorAll('[data-condition-image]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const key=inp.dataset.conditionImage;const data=await imageFileToRemoteURL(f,`conditions/${key.replace(/[^a-z0-9_-]/gi,'-')}.webp`,512,.82);state.uiIcons=state.uiIcons||{};state.uiIcons.conditions=state.uiIcons.conditions||{};state.uiIcons.conditions[key]=data;await saveGlobalNow();toast('Símbolo da condição salvo no banco.');render('master')}catch(err){console.error(err);toast('Não foi possível salvar a imagem da condição.')}finally{inp.value=''}});if(document.getElementById('itemResults'))renderItems();if(document.querySelector('[data-bg-upload]'))bindBackgrounds();bindSessionThemeEditor()}
 function openModal(html){const holder=document.createElement('div');holder.innerHTML=html.trim();document.body.appendChild(holder.firstElementChild)}
 function characterRules(type='campaign'){const r=state.characterRules||DEFAULT_RULES;return r[type==='slasher'?'slasher':'campaign']||DEFAULT_RULES.campaign}
 function activeSheetDraft(p){
@@ -2983,8 +3046,6 @@ function immTrainedPanel(p){
 }
 function immPoints(p){try{const t=allocationTotals(p),r=characterRules(p.campaignType);return{attrs:t.attrs,attrMax:(Number(r.attrPoints)||0)+(Number(p.attrBonusPoints)||0),skills:t.skills,skillMax:(Number(r.skillPoints)||0)+(Number(p.skillBonusPoints)||0)}}catch{return null}}
 function immAbilitiesPanel(p){const c=CLASSES[p.class];const abil=[...(c?.abilities||[]),...customAbilitiesFor(p).map(a=>[a.name,a.description||''])];return `<section class="imm-abilities" aria-label="Habilidades possuídas"><div class="imm-trained-head"><span class="section-kicker">HABILIDADES POSSUÍDAS</span><span class="corner-mark">${abil.length}</span></div>${abil.length?abil.map(([n,d])=>`<details class="imm-ability-item"><summary>${esc(n)}</summary><p>${esc(d)}</p></details>`).join(''):'<div class="empty">Escolha uma classe para revelar suas habilidades.</div>'}</section>`}
-const IMM_SLOT_ICONS={helm:'<path d="M12 3c-4 0-7 3-7 7v6l3 3v2h8v-2l3-3v-6c0-4-3-7-7-7zm-3 8h6v3H9z"/>',chest:'<path d="M8 3l-5 4 2 5 3-1v10h8V11l3 1 2-5-5-4c-1 2-2 3-4 3S9 5 8 3z"/>',arm:'<path d="M4 15l9-9 4 4-9 9H4z M15 4l2-2 5 5-2 2z"/>',legs:'<path d="M7 3h10l1 18h-5l-1-10-1 10H6z"/>',boots:'<path d="M8 3h6v9l6 3v5H5v-5l3-2z"/>',cape:'<path d="M7 3h10l4 18H3z M9 6l-2 12h10L15 6z" fill-rule="evenodd"/>',neck:'<path d="M5 4c0 8 3 11 7 11s7-3 7-11h-2c0 6-2 9-5 9s-5-3-5-9zM12 16l3 5-3 2-3-2z"/>',charm:'<path d="M12 2l2 4 4 1-3 3 1 5-4-2-4 2 1-5-3-3 4-1zM11 16h2v6h-2z"/>',ring:'<path d="M12 6a7 7 0 100 14 7 7 0 000-14zm0 3a4 4 0 110 8 4 4 0 010-8zM9 2h6l-1 3h-4z" fill-rule="evenodd"/>',weapon:'<path d="M19 2l3 3-9 9-2 4-3-3 4-2zM6 15l3 3-4 4-3-3z"/>',shield:'<path d="M12 2l8 3v7c0 5-4 8-8 10-4-2-8-5-8-10V5z"/>',banner:'<path d="M6 2h12v14l-6 6-6-6z"/>'};
-function immSlot(kind,label){return `<div class="imm-slot imm-slot-eq" title="${esc(label)} (vazio)" aria-label="${esc(label)}: vazio"><svg viewBox="0 0 24 24" aria-hidden="true">${IMM_SLOT_ICONS[kind]||''}</svg></div>`}
 function bagBookItem(it){return String(it?.category||'').toLowerCase().includes('livro')||!!it?.bookContent||(Array.isArray(it?.bookPages)&&it.bookPages.length>0)}
 function bagLayout(p){
   const entries=[];
@@ -2996,44 +3057,263 @@ function bagLayout(p){
   const used=entries.reduce((sum,e)=>sum+e.span,0),cap=bagCapacity(p);
   return{entries,used,cap,total:Math.max(cap,used)};
 }
-function bagCellsMarkup(p,total,cls,pickAttr,emptyHtml,sel){
-  const L=bagLayout(p),cells=[];
+const IMM_RARITY={'comum':['common','Comum'],'raro':['rare','Raro'],'épico':['epic','Épico'],'lendário':['legendary','Lendário']};
+function immRarity(it){const r=IMM_RARITY[String(it?.rarity||'').trim().toLowerCase()];return r?{key:r[0],label:r[1]}:null}
+function bagMoveEntry(p,from,to){
+  const bag=Array.isArray(p?.backpack)?p.backpack:null;
+  if(!bag||!Number.isInteger(from)||from<0||from>=bag.length)return -1;
+  let dest=to==='end'?bag.length-1:Number(to);
+  if(!Number.isInteger(dest)||dest<0)return -1;
+  dest=Math.min(dest,bag.length-1);
+  if(dest===from)return -1;
+  const [moved]=bag.splice(from,1);bag.splice(dest,0,moved);return dest;
+}
+function immBagCells(p,L,total,sel,theme){
+  const prev=immBagPrevIds,seen=new Set(),cells=[];
+  const empty=`<div class="imm-cell is-empty" data-bag-drop="end" aria-hidden="true"><span class="imm-cell-sym">${renderCustomIcon(theme.emptySlot)}</span></div>`;
   L.entries.forEach(e=>{
-    const label=`${e.it.name}${e.qty>1?` ×${e.qty}`:''}`;
+    const label=`${e.it.name}${e.qty>1?` ×${e.qty}`:''}`,r=immRarity(e.it);seen.add(e.it.id);
+    const fresh=(prev&&!prev.has(e.it.id))||e.i===immBagFlashIdx;
     for(let k=0;k<e.span;k++){
       const lead=k===0,over=cells.length>=L.cap;
-      cells.push(`<button type="button" class="${cls} ${lead?'is-lead':'is-tail'}${e.i===sel?' is-sel':''}${over?' is-over':''}" ${pickAttr}="${e.i}" title="${esc(label)}" aria-label="${esc(label)}">${itemIcon(e.it)}${lead&&e.qty>1?`<em>${e.qty}</em>`:''}${lead&&isWeaponItem(e.it)?'<i class="bag-mark" aria-hidden="true">⚔</i>':''}</button>`);
+      cells.push(`<button type="button" class="imm-cell ${lead?'is-lead':'is-tail'}${e.i===sel?' is-sel':''}${over?' is-over':''}${fresh&&lead?' fx-in':''}" draggable="true" data-bag-pick="${e.i}" data-bag-drop="${e.i}"${r?` data-rarity="${r.key}"`:''} title="${esc(label)}" aria-label="${esc(label)}" aria-pressed="${e.i===sel?'true':'false'}"><span class="imm-cell-ico">${itemIcon(e.it)}</span>${lead&&e.qty>1?`<em>${e.qty}</em>`:''}${lead&&isWeaponItem(e.it)?'<i class="bag-mark" aria-hidden="true">⚔</i>':''}</button>`);
     }
   });
-  while(cells.length<total)cells.push(emptyHtml);
+  immBagPrevIds=seen;immBagFlashIdx=-1;
+  while(cells.length<total)cells.push(empty);
   return cells.join('');
 }
-function bagDetailMarkup(p,i){
+function bagDetailMarkup(p,i,armed){
   const b=(Array.isArray(p?.backpack)?p.backpack:[])[i],it=b&&item(b.id);
-  if(!it)return '<div class="empty">Toque em um quadrado para ver o item.</div>';
-  const qty=Math.max(1,Number(b.qty)||1),w=inferWeight(it),sp=w*qty;
-  return `<span class="imm-bag-detail-icon">${itemIcon(it)}</span><div class="imm-bag-detail-body"><strong>${esc(it.name)}</strong><small>${it.category?`${esc(it.category)} • `:''}Peso ${w} • Qtd. ${qty} • ocupa ${sp} espaço${sp===1?'':'s'}${isWeaponItem(it)?` • ⚔️ ${esc(it.damage||weaponDamageFallback(it))}`:''}</small>${it.description?`<p>${esc(it.description)}</p>`:''}${bagBookItem(it)?`<button type="button" class="btn small" data-read-book="${esc(it.id)}">Ler</button>`:''}</div>`;
+  if(!it)return `<div class="imm-detail-empty"><span class="imm-detail-rune">${renderCustomIcon(sessionTheme().emptySlot)}</span><p>Selecione um item para consultar o registro.</p></div>`;
+  const qty=Math.max(1,Number(b.qty)||1),w=inferWeight(it),sp=w*qty,r=immRarity(it);
+  const props=[['Peso',w],['Quantidade',qty],['Ocupa',`${sp} espaço${sp===1?'':'s'}`]];
+  if(it.category)props.splice(0,0,['Categoria',it.category]);
+  if(isWeaponItem(it))props.push(['Dano',it.damage||weaponDamageFallback(it)]);
+  /* 'effects' é campo do Mestre (pode conter segredos): nunca é exibido ao Player. */
+  return `<div class="imm-detail-top"><span class="imm-detail-ico"${r?` data-rarity="${r.key}"`:''}>${itemIcon(it)}</span><div class="imm-detail-title"><strong>${esc(it.name)}</strong>${r?`<span class="imm-rarity" data-rarity="${r.key}">${r.label}</span>`:''}</div></div>${it.description?`<p class="imm-detail-desc">${esc(it.description)}</p>`:''}<dl class="imm-detail-props">${props.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join('')}</dl><div class="imm-detail-actions">${bagBookItem(it)?`<button type="button" class="imm-act" data-read-book="${esc(it.id)}">Ler</button>`:''}<button type="button" class="imm-act${armed?' is-armed':''}" data-bag-move>${armed?'Toque no destino…':'Mover'}</button>${qty>1?'<button type="button" class="imm-act" data-bag-discard="one">Descartar 1</button>':''}<button type="button" class="imm-act is-danger" data-bag-discard="all">${qty>1?'Descartar tudo':'Descartar'}</button></div>`;
+}
+function immCornersMarkup(t){const g=renderCustomIcon(t.ornCorner);return ['tl','tr','bl','br'].map(c=>`<i class="orn orn-${c}" aria-hidden="true">${g}</i>`).join('')}
+function immDividerMarkup(t){return `<div class="imm-rec-divider" aria-hidden="true"><span></span><i>${renderCustomIcon(t.ornDivider)}</i><span></span></div>`}
+function immBagPanelMarkup(p,theme,intro){
+  const L=bagLayout(p);
+  if(!L.entries.some(e=>e.i===immBagSel))immBagSel=L.entries.length?L.entries[0].i:-1;
+  const total=Math.max(12,Math.ceil(L.total/6)*6),pct=Math.min(100,Math.round(L.used/Math.max(1,L.cap)*100)),units=L.entries.reduce((n,e)=>n+e.qty,0);
+  return `<article class="imm-rec-bag${intro?' is-opening':''}" id="immBagPanel"><span class="imm-rec-corners">${immCornersMarkup(theme)}</span><header class="imm-bag-head"><span class="imm-bag-seal">${renderCustomIcon(theme.bagSeal)}</span><div class="imm-bag-title"><h3>MOCHILA</h3><small>Inventário pessoal</small></div><div class="imm-bag-count"><b class="${L.used>L.cap?'is-over':''}">${L.used}/${L.cap}</b><small>Itens armazenados: ${units}</small></div></header>${immDividerMarkup(theme)}<div class="imm-bag-meter${L.used>L.cap?' is-over':''}" role="meter" aria-valuemin="0" aria-valuemax="${L.cap}" aria-valuenow="${L.used}"><i style="width:${pct}%"></i></div><div class="imm-bag-grid${immBagMoveArmed?' is-move-armed':''}" id="immBagGrid" aria-label="Mochila">${immBagCells(p,L,total,immBagSel,theme)}</div><div class="imm-bag-detail" id="immBagDetail" aria-live="polite">${bagDetailMarkup(p,immBagSel,immBagMoveArmed)}</div></article>`;
 }
 function immGamePanel(p,hpMax,sanMax){
-  const cls=CLASSES[p.class]?p.class:'Sem classe';
-  const stat=(ico,val,label)=>`<div class="imm-gstat"><svg viewBox="0 0 24 24" aria-hidden="true">${ico}</svg><b>${val}</b><small>${label}</small></div>`;
-  const invL=bagLayout(p),invTotal=Math.max(12,Math.ceil(invL.total/6)*6);
-  const invCells=bagCellsMarkup(p,invTotal,'imm-slot imm-slot-item','data-imm-inv','<div class="imm-slot imm-slot-empty" aria-hidden="true">+</div>',-1);
+  const theme=sessionTheme(),cls=CLASSES[p.class]?p.class:'Sem classe',combat=state.combatSession||defaultCombatSession();
+  const intro=!immBagIntro;immBagIntro=true;
+  const stat=(ico,val,label)=>`<div class="imm-rec-stat"><svg viewBox="0 0 24 24" aria-hidden="true">${ico}</svg><b>${val}</b><small>${label}</small></div>`;
   const menu=[['sheet','☰','Ficha'],['classes','✠','Classes'],['map','◎','Mapa'],['diary','✎','Diário'],['library','❖','Biblioteca'],['nexus','◈','Nexus']].map(([k,i,l])=>`<button type="button" class="imm-gbtn" data-nav="${k}"><span aria-hidden="true">${i}</span><small>${l}</small></button>`).join('')+`<button type="button" class="imm-gbtn" data-open-secret-clues><span aria-hidden="true">✧</span><small>Fragmentos</small></button><button type="button" class="imm-gbtn" data-imm-exit><span aria-hidden="true">${CURTAIN_SVG}</span><small>Sair</small></button>`;
   const heart='<path d="M12 21s-8-5.5-8-11a4.5 4.5 0 018-2.7A4.5 4.5 0 0120 10c0 5.500-8 11-8 11z"/>';
   const mind='<path d="M12 3a6 6 0 00-6 6c0 2 1 3 2 4v3h8v-3c1-1 2-2 2-4a6 6 0 00-6-6zM9 19h6v2H9z"/>';
   const sword='<path d="M19 2l3 3-10 10-3-3zM6 14l4 4-3 3-2-1-1-2z"/>';
   const shield='<path d="M12 2l8 3v7c0 5-4 8-8 10-4-2-8-5-8-10V5z"/>';
   const flame='<path d="M12 2c1 4 6 6 6 12a6 6 0 01-12 0c0-3 2-4 3-6 1 1 1 2 2 2 0-3 0-5 1-8z"/>';
-  return `<section class="imm-game" aria-label="Painel do personagem">
-<div class="imm-game-stats">${stat(heart,`${Number(p.hp)||0}`,'Vida')}${stat(mind,`${Number(p.sanity)||0}`,'Sanidade')}${stat(sword,`${Number(p.attack)||0}`,'Ataque')}${stat(shield,`${Number(p.defense)||0}`,'Defesa')}${stat(flame,`${Number(p.determination)||0}`,'Determinação')}</div>
-<div class="imm-game-body">
-<div class="imm-game-char"><h2 class="imm-game-title">${esc(p.name||'Sobrevivente')} <small>${esc(cls)}</small></h2>
-<div class="imm-game-figure"><div class="imm-slots-col">${immSlot('helm','Cabeça')}${immSlot('chest','Torso')}${immSlot('arm','Braços')}${immSlot('legs','Pernas')}${immSlot('boots','Pés')}${immSlot('cape','Capa')}</div>
-<div class="imm-game-portrait">${sessionDiamondCard(p,{controls:true,big:true})}</div>
-<div class="imm-slots-col">${immSlot('neck','Colar')}${immSlot('charm','Amuleto')}${immSlot('ring','Anel')}${immSlot('weapon','Arma')}${immSlot('shield','Escudo')}${immSlot('banner','Insígnia')}</div></div></div>
-<div class="imm-game-side"><div class="imm-inv-wrap"><div class="imm-inv-head"><span>MOCHILA</span><b class="${invL.used>invL.cap?'is-over':''}">${invL.used}/${invL.cap}</b></div><div class="imm-inv" aria-label="Inventário">${invCells}</div></div><div class="imm-game-menu">${menu}</div></div>
-</div></section>`}
+  return `<section class="imm-rec"${sessionThemeAttrs(theme)} aria-label="Registro do personagem"><header class="imm-rec-head"><div class="imm-rec-head-row"><span class="imm-rec-brand">ASHEN TESTIMONY</span><span class="imm-rec-sub">Registro de sessão · ${String(Math.max(1,Number(combat.round)||1)).padStart(3,'0')}</span></div>${immDividerMarkup(theme)}</header>
+<div class="imm-rec-body"><article class="imm-rec-char imm-rec-card"><span class="imm-rec-corners">${immCornersMarkup(theme)}</span><div class="imm-rec-frame"><span class="imm-rec-sigil" aria-hidden="true">${renderCustomIcon(theme.portraitSigil)}</span><div class="imm-rec-portrait">${sessionDiamondCard(p,{controls:true,big:true})}</div></div><h2 class="imm-rec-name">${esc(p.name||'Sobrevivente')}</h2><p class="imm-rec-role">Personagem · <b>${esc(cls)}</b></p><div class="imm-rec-stats">${stat(heart,`${Number(p.hp)||0}`,'Vida')}${stat(mind,`${Number(p.sanity)||0}`,'Sanidade')}${stat(sword,`${Number(p.attack)||0}`,'Ataque')}${stat(shield,`${Number(p.defense)||0}`,'Defesa')}${stat(flame,`${Number(p.determination)||0}`,'Determ.')}</div></article>${immBagPanelMarkup(p,theme,intro)}</div><nav class="imm-rec-menu" aria-label="Menu">${menu}</nav></section>`}
+function bindImmBag(p){
+  const panel=document.getElementById('immBagPanel');if(!panel)return;
+  const cellsOf=i=>panel.querySelectorAll(`[data-bag-pick="${i}"]`);
+  const refreshDetail=()=>{const box=document.getElementById('immBagDetail');if(box){box.innerHTML=bagDetailMarkup(p,immBagSel,immBagMoveArmed);bindDetail()}document.getElementById('immBagGrid')?.classList.toggle('is-move-armed',immBagMoveArmed)};
+  const select=i=>{immBagSel=i;panel.querySelectorAll('[data-bag-pick]').forEach(x=>{const on=Number(x.dataset.bagPick)===i;x.classList.toggle('is-sel',on);x.setAttribute('aria-pressed',on?'true':'false')});refreshDetail()};
+  const doMove=async(from,to)=>{
+    const dest=bagMoveEntry(p,from,to);if(dest<0){immBagMoveArmed=false;refreshDetail();return}
+    immBagSel=dest;immBagFlashIdx=dest;immBagMoveArmed=false;{const y=window.scrollY;render('immersive');window.scrollTo(0,y)}
+    await persistPlayerMusicChange(p,'');
+  };
+  const doDiscard=async mode=>{
+    const i=immBagSel,b=p.backpack?.[i],it=b&&item(b.id);if(!it)return;
+    const qty=Math.max(1,Number(b.qty)||1),all=mode==='all'||qty<=1;
+    if(!confirm(all?`Descartar ${it.name}${qty>1?` (×${qty})`:''}? O item será removido da mochila.`:`Descartar 1 unidade de ${it.name}?`))return;
+    cellsOf(i).forEach(c=>c.classList.add('fx-out'));
+    if(!prefersReducedMotion())await new Promise(r=>setTimeout(r,230));
+    const cur=p.backpack?.[i];if(!cur||cur.id!==b.id)return;
+    if(all)p.backpack.splice(i,1);else cur.qty=qty-1;
+    immBagMoveArmed=false;{const y=window.scrollY;render('immersive');window.scrollTo(0,y)}
+    await persistPlayerMusicChange(p,all?'Item descartado.':'1 unidade descartada.');
+  };
+  function bindDetail(){
+    const box=document.getElementById('immBagDetail');if(!box)return;
+    box.querySelectorAll('[data-read-book]').forEach(r=>r.onclick=()=>openBookReader(Number(r.dataset.readBook)));
+    box.querySelector('[data-bag-move]')?.addEventListener('click',()=>{immBagMoveArmed=!immBagMoveArmed;refreshDetail()});
+    box.querySelectorAll('[data-bag-discard]').forEach(b=>b.addEventListener('click',()=>doDiscard(b.dataset.bagDiscard)));
+  }
+  let dragFrom=-1;
+  const clearDrag=()=>{dragFrom=-1;panel.classList.remove('is-dragging');panel.querySelectorAll('.is-drag,.is-drop').forEach(x=>x.classList.remove('is-drag','is-drop'))};
+  panel.querySelectorAll('[data-bag-pick]').forEach(c=>{
+    c.addEventListener('click',()=>{const i=Number(c.dataset.bagPick);if(immBagMoveArmed&&i!==immBagSel)doMove(immBagSel,i);else select(i)});
+    c.addEventListener('dragstart',e=>{dragFrom=Number(c.dataset.bagPick);immBagSel=dragFrom;try{e.dataTransfer.setData('text/plain',String(dragFrom));e.dataTransfer.effectAllowed='move'}catch{}panel.classList.add('is-dragging');cellsOf(dragFrom).forEach(x=>x.classList.add('is-drag'))});
+    c.addEventListener('dragend',clearDrag);
+  });
+  /* Toque/caneta: arrastar com pressão longa (o arrastar nativo do navegador não é confiável no celular). */
+  const buzz=ms=>{try{navigator.vibrate?.(ms)}catch{}};
+  panel.querySelectorAll('[data-bag-pick]').forEach(c=>{
+    let tp=null;
+    const dropTarget=(x,y)=>document.elementFromPoint(x,y)?.closest?.('[data-bag-drop]')||null;
+    const blockScroll=ev=>{if(ev.cancelable)ev.preventDefault()};
+    const cleanup=()=>{
+      if(!tp)return;clearTimeout(tp.timer);cancelAnimationFrame(tp.raf||0);
+      document.removeEventListener('touchmove',blockScroll);
+      tp.ghost?.remove();c.draggable=true;clearDrag();tp=null;
+    };
+    const autoScroll=()=>{
+      if(!tp||!tp.started)return;
+      const h=window.innerHeight,y=tp.y;
+      if(y<90)window.scrollBy(0,-14);else if(y>h-90)window.scrollBy(0,14);
+      tp.raf=requestAnimationFrame(autoScroll);
+    };
+    c.addEventListener('contextmenu',e=>{if(e.pointerType!=='mouse')e.preventDefault()});
+    c.addEventListener('pointerdown',e=>{
+      if(e.pointerType==='mouse'||e.button>0)return;
+      c.draggable=false;
+      tp={idx:Number(c.dataset.bagPick),x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,started:false,ghost:null,raf:0};
+      tp.timer=setTimeout(()=>{
+        if(!tp)return;tp.started=true;buzz(18);select(tp.idx);
+        panel.classList.add('is-dragging');cellsOf(tp.idx).forEach(x=>x.classList.add('is-drag'));
+        const g=document.createElement('div');g.className='imm-ghost';const ico=c.querySelector('.imm-cell-ico');if(ico)g.appendChild(ico.cloneNode(true));
+        g.style.left=tp.x+'px';g.style.top=tp.y+'px';document.body.appendChild(g);tp.ghost=g;
+        document.addEventListener('touchmove',blockScroll,{passive:false});
+        tp.raf=requestAnimationFrame(autoScroll);
+      },340);
+    });
+    c.addEventListener('pointermove',e=>{
+      if(!tp||e.pointerType==='mouse')return;
+      tp.x=e.clientX;tp.y=e.clientY;
+      if(!tp.started){if(Math.hypot(e.clientX-tp.sx,e.clientY-tp.sy)>8){clearTimeout(tp.timer);tp=null;c.draggable=true}return}
+      if(tp.ghost){tp.ghost.style.left=e.clientX+'px';tp.ghost.style.top=e.clientY+'px'}
+      panel.querySelectorAll('.is-drop').forEach(x=>x.classList.remove('is-drop'));
+      dropTarget(e.clientX,e.clientY)?.classList.add('is-drop');
+    });
+    const finish=e=>{
+      if(!tp)return;
+      const started=tp.started,from=tp.idx,t=started&&e.type==='pointerup'?dropTarget(e.clientX,e.clientY):null;
+      cleanup();
+      if(started){buzz(10);if(t)doMove(from,t.dataset.bagDrop)}
+    };
+    c.addEventListener('pointerup',finish);
+    c.addEventListener('pointercancel',finish);
+  });
+  panel.querySelectorAll('[data-bag-drop]').forEach(c=>{
+    if(c.classList.contains('is-empty'))c.addEventListener('click',()=>{if(immBagMoveArmed)doMove(immBagSel,'end')});
+    c.addEventListener('dragover',e=>{if(dragFrom<0)return;e.preventDefault();try{e.dataTransfer.dropEffect='move'}catch{}c.classList.add('is-drop')});
+    c.addEventListener('dragleave',()=>c.classList.remove('is-drop'));
+    c.addEventListener('drop',e=>{e.preventDefault();const from=dragFrom,to=c.dataset.bagDrop;clearDrag();if(from>=0)doMove(from,to)});
+  });
+  bindDetail();
+}
+let sessThemeDraft=null,sessThemeTarget='emptySlot';
+function sessionThemePreviewMarkup(t){
+  const sample=(state.items||[]).slice(0,3),cells=[];
+  sample.forEach((it,k)=>cells.push(`<div class="imm-cell is-lead${k===0?' is-sel':''}"${immRarity(it)?` data-rarity="${immRarity(it).key}"`:''}><span class="imm-cell-ico">${itemIcon(it)}</span>${k===1?'<em>3</em>':''}</div>`));
+  while(cells.length<12)cells.push(`<div class="imm-cell is-empty"><span class="imm-cell-sym">${renderCustomIcon(t.emptySlot)}</span></div>`);
+  return `<div class="imm-rec imm-rec-preview"${sessionThemeAttrs(t)}><span class="imm-rec-corners">${immCornersMarkup(t)}</span><span class="imm-rec-sigil" aria-hidden="true">${renderCustomIcon(t.portraitSigil)}</span><header class="imm-bag-head"><span class="imm-bag-seal">${renderCustomIcon(t.bagSeal)}</span><div class="imm-bag-title"><h3>MOCHILA</h3><small>Inventário pessoal</small></div></header>${immDividerMarkup(t)}<div class="imm-bag-grid" style="--cols:6">${cells.join('')}</div></div>`;
+}
+let sessGlyphEdit=null;
+function sgStrokeOptions(v){return [[1,'Fino'],[1.6,'Médio'],[2.4,'Grosso']].map(([k,l])=>`<option value="${k}"${Number(v)===k?' selected':''}>${l}</option>`).join('')}
+function sgPadMarkup(e){
+  const d=safeGlyphPath(e.value);
+  return `<svg class="st-pad" viewBox="0 0 24 24" data-sg-pad aria-label="Quadro de desenho"><path class="st-pad-grid" d="M4 0v24M8 0v24M12 0v24M16 0v24M20 0v24M0 4h24M0 8h24M0 12h24M0 16h24M0 20h24"/><path class="st-pad-line" id="sgPadPath" d="${esc(d)}" fill="${e.fill?'currentColor':'none'}" stroke="currentColor" stroke-width="${esc(String(e.stroke))}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+function sgFormMarkup(){
+  const e=sessGlyphEdit;if(!e)return '';
+  const body=e.type==='path'
+    ?`<div class="st-pad-wrap">${sgPadMarkup(e)}<div class="st-pad-side"><p class="small muted">Clique no quadro para marcar pontos. Cada ponto liga ao anterior.</p><div class="row" style="gap:6px"><button type="button" class="btn small" data-sg-newstroke>Novo traço</button><button type="button" class="btn small" data-sg-undo>Desfazer</button><button type="button" class="btn small" data-sg-clear>Limpar</button></div><div class="field"><label>Espessura</label><select data-sg-stroke>${sgStrokeOptions(e.stroke)}</select></div><label class="small"><input type="checkbox" data-sg-fill${e.fill?' checked':''}> Preencher formas fechadas</label></div></div><div class="field"><label>Traçado (avançado: M L H V C Q A Z em grade 24×24)</label><textarea data-sg-value rows="3" spellcheck="false">${esc(e.value)}</textarea></div>`
+    :e.type==='text'
+      ?`<div class="field"><label>Caractere ou emoji</label><input data-sg-value maxlength="12" value="${esc(e.value)}"></div>`
+      :`<div class="row"><label class="btn small">Escolher imagem<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-sg-file hidden></label><span class="small muted">PNG, JPG, WEBP ou GIF.</span></div>`;
+  return `<div class="st-custom-form"><div class="input-grid"><div class="field"><label>Nome do símbolo</label><input data-sg-name maxlength="40" value="${esc(e.name)}"></div><div class="field"><label>Tipo</label><select data-sg-type><option value="path"${e.type==='path'?' selected':''}>Desenho (traço)</option><option value="text"${e.type==='text'?' selected':''}>Caractere / emoji</option><option value="image"${e.type==='image'?' selected':''}>Imagem</option></select></div></div>${body}<div class="st-custom-foot"><span class="st-target-sym st-big" id="sgPreview">${customGlyphRender(e)}</span><div class="row" style="gap:8px"><button type="button" class="btn small" data-sg-cancel>Cancelar</button><button type="button" class="btn primary small" data-sg-save>Salvar símbolo</button></div></div></div>`;
+}
+function sessionThemeEditorMarkup(){
+  if(!sessThemeDraft)sessThemeDraft={...sessionTheme()};
+  const d=sessThemeDraft,applied=sessionTheme(),dirty=JSON.stringify(d)!==JSON.stringify(applied),cur=String(d[sessThemeTarget]||'');
+  const tgt=SESSION_THEME_TARGETS.find(x=>x[0]===sessThemeTarget)||SESSION_THEME_TARGETS[0];
+  const customs=customGlyphList();
+  const mine=`<div class="st-group"><h4>Meus símbolos</h4><div class="st-glyphs">${customs.map(c=>`<span class="st-mine${cur==='sym:'+c.id?' active':''}"><button type="button" class="st-glyph${cur==='sym:'+c.id?' active':''}" data-st-custom="${esc(c.id)}" title="${esc(c.name)}" aria-label="${esc(c.name)}">${customGlyphRender(c)}</button><button type="button" class="st-mini" data-sg-edit="${esc(c.id)}" title="Editar" aria-label="Editar ${esc(c.name)}">✎</button><button type="button" class="st-mini" data-sg-del="${esc(c.id)}" title="Apagar" aria-label="Apagar ${esc(c.name)}">×</button></span>`).join('')}<button type="button" class="st-glyph st-add" data-sg-new title="Novo símbolo" aria-label="Novo símbolo">+</button></div></div>`;
+  const lib=SESSION_GLYPH_GROUPS.map((g,gi)=>`<div class="st-group"><h4>${esc(g)}</h4><div class="st-glyphs">${SESSION_GLYPH_LIST.filter(x=>x[2]===gi).map(x=>`<button type="button" class="st-glyph${cur==='lib:'+x[0]?' active':''}" data-st-glyph="${x[0]}" title="${esc(x[1])}" aria-label="${esc(x[1])}">${sessGlyphSvg(x)}</button>`).join('')}</div></div>`).join('');
+  const customVal=/^(lib:|sym:|data:|https?:|\/|\.)/i.test(cur)?'':cur;
+  return `<div class="st-editor"><div class="st-targets">${SESSION_THEME_TARGETS.map(([k,l])=>`<button type="button" class="st-target${k===sessThemeTarget?' active':''}" data-st-target="${k}"><span class="st-target-sym">${renderCustomIcon(d[k])}</span><span>${esc(l)}</span></button>`).join('')}</div><p class="small muted">${esc(tgt[2])} Escolha da biblioteca, crie um símbolo seu, digite um caractere ou envie uma imagem.</p><div class="st-library">${mine}${sessGlyphEdit?sgFormMarkup():''}${lib}</div><div class="row st-custom"><input maxlength="12" data-st-text placeholder="Emoji ou caractere" value="${esc(customVal)}"><label class="btn small">Imagem<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-st-file hidden></label></div><div class="input-grid st-options"><div class="field"><label>Cor dos ornamentos</label><select data-st-tone>${SESSION_TONES.map(([k,l])=>`<option value="${k}"${d.ornTone===k?' selected':''}>${esc(l)}</option>`).join('')}</select></div><div class="field"><label>Estilo dos slots</label><select data-st-slotstyle>${SESSION_SLOT_STYLES.map(([k,l])=>`<option value="${k}"${d.slotStyle===k?' selected':''}>${esc(l)}</option>`).join('')}</select></div></div><div class="st-preview"><span class="section-kicker">PRÉVIA${dirty?' · AINDA NÃO APLICADA':''}</span>${sessionThemePreviewMarkup(d)}</div><div class="row" style="justify-content:flex-end;gap:8px;flex-wrap:wrap"><button type="button" class="btn small" data-st-reset>Restaurar padrão</button><button type="button" class="btn small" data-st-revert${dirty?'':' disabled'}>Descartar mudanças</button><button type="button" class="btn primary" data-st-apply${dirty?'':' disabled'}>Aplicar ao modo sessão</button></div></div>`;
+}
+function bindSessionThemeEditor(){
+  const host=document.getElementById('sessThemeEditor');if(!host)return;
+  const redraw=()=>{host.innerHTML=sessionThemeEditorMarkup()};
+  const syncForm=()=>{const e=sessGlyphEdit;if(!e)return;const pv=document.getElementById('sgPreview');if(pv)pv.innerHTML=customGlyphRender(e);const pp=document.getElementById('sgPadPath');if(pp){pp.setAttribute('d',safeGlyphPath(e.value));pp.setAttribute('stroke-width',String(e.stroke));pp.setAttribute('fill',e.fill?'currentColor':'none')}const ta=host.querySelector('textarea[data-sg-value]');if(ta&&ta!==document.activeElement)ta.value=e.value};
+  const saveGlyph=async()=>{
+    const e=sessGlyphEdit;if(!e)return;
+    const name=e.name.trim();if(!name){toast('Dê um nome ao símbolo.');return}
+    let value=String(e.value||'').trim();
+    if(e.type==='path'){value=safeGlyphPath(value);if(!/[Mm]/.test(value)){toast('Desenhe ao menos um traço.');return}}
+    else if(!value){toast(e.type==='image'?'Escolha uma imagem.':'Informe um caractere.');return}
+    const id=e.id||`c-${Date.now().toString(36)}${Math.random().toString(36).slice(2,5)}`;
+    state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};state.uiIcons.sessionGlyphs=state.uiIcons.sessionGlyphs||{};
+    state.uiIcons.sessionGlyphs[id]=JSON.stringify({name,type:e.type,value,stroke:e.stroke,fill:!!e.fill});
+    if(!e.id)sessThemeDraft[sessThemeTarget]='sym:'+id;
+    sessGlyphEdit=null;save();redraw();
+    try{await saveGlobalNow();toast('Símbolo salvo na biblioteca.')}catch{toast('Salvo neste aparelho; não foi possível sincronizar agora.')}
+  };
+  host.onclick=async e=>{
+    const t=e.target.closest?.('button,[data-sg-pad]');if(!t||!host.contains(t))return;
+    const ds=t.dataset;
+    if(t.hasAttribute('data-sg-pad')||t.closest('[data-sg-pad]')){
+      const pad=host.querySelector('[data-sg-pad]');if(!pad||!sessGlyphEdit)return;
+      const r=pad.getBoundingClientRect(),cl=v=>Math.min(24,Math.max(0,Math.round(v*2)/2));
+      const x=cl((e.clientX-r.left)/r.width*24),y=cl((e.clientY-r.top)/r.height*24),v=sessGlyphEdit.value.trim();
+      const startNew=!v||sessGlyphEdit.nextNew||!/[ML]/.test(v);
+      sessGlyphEdit.value=(v?v+' ':'')+(startNew?'M':'L')+`${x} ${y}`;sessGlyphEdit.nextNew=false;syncForm();return;
+    }
+    if(ds.stTarget){sessThemeTarget=ds.stTarget;redraw();return}
+    if(ds.stGlyph&&Object.prototype.hasOwnProperty.call(SESSION_GLYPHS,ds.stGlyph)){sessThemeDraft[sessThemeTarget]='lib:'+ds.stGlyph;redraw();return}
+    if(ds.stCustom){sessThemeDraft[sessThemeTarget]='sym:'+ds.stCustom;redraw();return}
+    if(t.hasAttribute('data-sg-new')){sessGlyphEdit={id:null,name:'',type:'path',value:'',stroke:1.4,fill:false,nextNew:true};redraw();return}
+    if(ds.sgEdit){const o=parseCustomGlyph(state.uiIcons?.sessionGlyphs?.[ds.sgEdit]);if(o){sessGlyphEdit={id:ds.sgEdit,...o,nextNew:true};redraw()}return}
+    if(ds.sgDel){
+      const o=parseCustomGlyph(state.uiIcons?.sessionGlyphs?.[ds.sgDel]);if(!o||!confirm(`Apagar o símbolo "${o.name}"? Onde ele estiver em uso, volta ao padrão.`))return;
+      state.uiIcons.sessionGlyphs[ds.sgDel]=JSON.stringify({deleted:true});
+      for(const k of Object.keys(sessThemeDraft))if(sessThemeDraft[k]==='sym:'+ds.sgDel)sessThemeDraft[k]=SESSION_THEME_DEFAULTS[k];
+      const ap=state.uiIcons.sessionTheme||{};let changed=false;for(const k of Object.keys(ap))if(ap[k]==='sym:'+ds.sgDel){ap[k]=SESSION_THEME_DEFAULTS[k];changed=true}
+      if(sessGlyphEdit?.id===ds.sgDel)sessGlyphEdit=null;
+      save();redraw();try{await saveGlobalNow();toast('Símbolo apagado.')}catch{toast('Apagado neste aparelho; não foi possível sincronizar agora.')}return;
+    }
+    if(t.hasAttribute('data-sg-newstroke')){if(sessGlyphEdit)sessGlyphEdit.nextNew=true;return}
+    if(t.hasAttribute('data-sg-undo')){if(sessGlyphEdit){sessGlyphEdit.value=sessGlyphEdit.value.replace(/\s*[MLml][^MLml]*$/,'').trim();syncForm()}return}
+    if(t.hasAttribute('data-sg-clear')){if(sessGlyphEdit){sessGlyphEdit.value='';sessGlyphEdit.nextNew=true;syncForm()}return}
+    if(t.hasAttribute('data-sg-cancel')){sessGlyphEdit=null;redraw();return}
+    if(t.hasAttribute('data-sg-save')){await saveGlyph();return}
+    if(t.hasAttribute('data-st-reset')){sessThemeDraft={...SESSION_THEME_DEFAULTS};redraw();return}
+    if(t.hasAttribute('data-st-revert')){sessThemeDraft={...sessionTheme()};redraw();return}
+    if(t.hasAttribute('data-st-apply')){
+      state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};
+      state.uiIcons.sessionTheme={...sessThemeDraft};
+      save();redraw();
+      try{await saveGlobalNow();toast('Símbolos aplicados e sincronizados com os Players.')}catch{toast('Aplicado neste aparelho; não foi possível sincronizar agora.')}
+    }
+  };
+  host.oninput=e=>{
+    const el=e.target,g=sessGlyphEdit;if(!g)return;
+    if(el.matches?.('[data-sg-name]'))g.name=el.value;
+    else if(el.matches?.('textarea[data-sg-value],input[data-sg-value]')){g.value=el.value;syncForm()}
+  };
+  host.onchange=async e=>{
+    const el=e.target;
+    if(el.matches?.('[data-sg-type]')&&sessGlyphEdit){sessGlyphEdit.type=el.value;sessGlyphEdit.value='';redraw()}
+    else if(el.matches?.('[data-sg-stroke]')&&sessGlyphEdit){sessGlyphEdit.stroke=Number(el.value)||1.4;syncForm()}
+    else if(el.matches?.('[data-sg-fill]')&&sessGlyphEdit){sessGlyphEdit.fill=el.checked;syncForm()}
+    else if(el.matches?.('[data-sg-file]')&&sessGlyphEdit){
+      const f=el.files?.[0];if(!f)return;
+      if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');el.value='';return}
+      try{sessGlyphEdit.value=await imageFileToRemoteURL(f,`symbols/custom-${Date.now().toString(36)}.webp`,256,.82);syncForm()}catch(err){console.error(err);toast('Não foi possível enviar a imagem.')}
+    }
+    else if(el.matches?.('[data-st-text]')){sessThemeDraft[sessThemeTarget]=el.value.trim()||SESSION_THEME_DEFAULTS[sessThemeTarget];redraw()}
+    else if(el.matches?.('[data-st-tone]')){sessThemeDraft.ornTone=el.value;redraw()}
+    else if(el.matches?.('[data-st-slotstyle]')){sessThemeDraft.slotStyle=el.value;redraw()}
+    else if(el.matches?.('[data-st-file]')){
+      const f=el.files?.[0];if(!f)return;
+      if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');el.value='';return}
+      try{sessThemeDraft[sessThemeTarget]=await imageFileToRemoteURL(f,`symbols/session-${sessThemeTarget}.webp`,256,.82);redraw()}catch(err){console.error(err);toast('Não foi possível enviar a imagem.')}
+    }
+  };
+}
 function immQuickNav(){return '<nav class="imm-quicknav" aria-label="Atalhos"><button type="button" data-nav="sheet">Ficha</button><button type="button" data-nav="classes">Classes</button><button type="button" data-nav="map">Mapa</button><button type="button" data-nav="diary">Diário</button><button type="button" data-nav="library">Biblioteca</button><button type="button" data-nav="nexus">Nexus</button><button type="button" data-open-secret-clues>Fragmentos ocultos</button></nav>'}
 function bindPlayerThemes(){document.querySelectorAll('[data-play-theme]').forEach(b=>b.onclick=()=>{const p=player(),t=p?.musicThemes?.[Number(b.dataset.playTheme)];if(t)playPersonalTheme(t.url,t.title,Number(b.dataset.playTheme))});document.querySelectorAll('[data-pause-theme]').forEach(b=>b.onclick=()=>pausePersonalTheme());document.querySelectorAll('[data-stop-theme]').forEach(b=>b.onclick=()=>stopPersonalTheme());document.getElementById('spotifyHomePlay')?.addEventListener('click',spotifyPlayCurrent);document.getElementById('spotifyHomePause')?.addEventListener('click',spotifyPause);document.getElementById('spotifyHomeLogin')?.addEventListener('click',async()=>{let id=spotifyClientId();if(!id){id=prompt('Cole o Client ID do seu aplicativo Spotify:')?.trim()||'';if(id)try{localStorage.setItem(SPOTIFY_CLIENT_KEY,id)}catch{}}if(id)await spotifyLogin()})}
 function curtainReveal(){
@@ -3103,12 +3383,6 @@ async function refreshImmersivePuzzles(){
 }
 
 function immersivePanel(p){
-  if(immersiveTab==='bag'){
-    const L=bagLayout(p);
-    if(!L.entries.some(e=>e.i===immBagSel))immBagSel=L.entries.length?L.entries[0].i:-1;
-    const pct=Math.min(100,Math.round(L.used/Math.max(1,L.cap)*100)),cols=L.total%6===0?6:5;
-    return `<div class="section-heading"><div><span class="section-kicker">MOCHILA</span><h2>${L.used}/${L.cap} espaços</h2></div>${L.used>L.cap?'<span class="corner-mark">EXCEDIDA</span>':''}</div><div class="imm-bag-meter${L.used>L.cap?' is-over':''}" role="meter" aria-valuemin="0" aria-valuemax="${L.cap}" aria-valuenow="${L.used}"><i style="width:${pct}%"></i></div>${L.entries.length?'':'<div class="empty">Mochila vazia.</div>'}<div class="imm-bag-grid" style="--cols:${cols}">${bagCellsMarkup(p,L.total,'imm-bsq','data-bag-pick','<div class="imm-bsq is-empty" aria-hidden="true"></div>',immBagSel)}</div><div class="imm-bag-detail" id="immBagDetail" aria-live="polite">${bagDetailMarkup(p,immBagSel)}</div>`;
-  }
   if(immersiveTab==='diary'){const d=getPrivateDiary();return `<div class="section-heading"><div><span class="section-kicker">DIÁRIO</span><h2>Registro privado</h2></div><span class="corner-mark">SÓ NESTE APARELHO</span></div><textarea id="immDiary" rows="14" placeholder="Pistas, nomes, suspeitas...">${esc(immDraft.diary??d.text)}</textarea><div class="row" style="justify-content:flex-end;margin-top:10px"><button type="button" class="btn primary" id="immSaveDiary">Salvar diário</button></div>`}
   if(immersiveTab==='notes')return `<div class="section-heading"><div><span class="section-kicker">ANOTAÇÕES</span><h2>Notas do personagem</h2></div></div><textarea id="immNotes" rows="14" placeholder="Anotações da sessão...">${esc(immDraft.notes??(p.playerNotes||''))}</textarea><div class="row" style="justify-content:flex-end;margin-top:10px"><button type="button" class="btn primary" id="immSaveNotes">Salvar anotações</button></div>`;
   if(immersiveTab==='music'){const themes=Array.isArray(p?.musicThemes)?p.musicThemes:[];return `<div class="section-heading"><div><span class="section-kicker">CANÇÕES DO FIM</span><h2>A trilha que acompanha o portador</h2></div></div><div class="home-theme-grid">${themes.length?themes.map((t,i)=>`<div class="home-theme-card"><span>${esc(t.label)}</span><strong>${esc(t.title)}</strong><div class="row"><button type="button" class="btn small gold" data-play-theme="${i}">▶ Tocar</button><button type="button" class="btn small" data-pause-theme="${i}">Ⅱ</button><button type="button" class="btn small" data-stop-theme="${i}">■</button><a class="btn small" href="${esc(safeHref(t.url))}" target="_blank" rel="noopener">Abrir ↗</a></div></div>`).join(''):'<div class="empty">Nenhuma melodia foi guardada neste arquivo.</div>'}</div>${spotifyHomePanel()}`}
@@ -3124,7 +3398,7 @@ function announceSessionJoin(p){return Promise.resolve();}
 function immersivePage(){
   const p=player();if(!p)return shell('<div class="empty">Player não encontrado.</div>','home');
   syncDerivedResources(p);
-  const nexusLive=!!state.nexus?.active;const tabs=[['bag','Mochila'],['diary','Diário'],['notes','Anotações'],['soul','Alma'],['nexus',nexusLive?'Nexus ●':'Nexus'],['music','Trilha'],['puzzles','Terminais']];
+  const nexusLive=!!state.nexus?.active;const tabs=[['diary','Diário'],['notes','Anotações'],['soul','Alma'],['nexus',nexusLive?'Nexus ●':'Nexus'],['music','Trilha'],['puzzles','Terminais']];
   if(hasMagicClass(p.class)||getAvailableSpells(p).length)tabs.push(['spells','Magias']);
   if(immersiveTab&&!tabs.some(t=>t[0]===immersiveTab))immersiveTab='';
   const hpMax=derivedMax(p,'Corpo')||1,sanMax=derivedMax(p,'Sanidade');
@@ -3141,15 +3415,9 @@ function bindImmersive(){
   const p=player();if(!p)return;
   announceSessionJoin(p);
   document.querySelectorAll('[data-imm-tab]').forEach(b=>b.onclick=()=>{immersiveTab=immersiveTab===b.dataset.immTab?'':b.dataset.immTab;render('immersive')});
-  document.querySelectorAll('[data-imm-inv]').forEach(b=>b.onclick=()=>{immBagSel=Number(b.dataset.immInv);immersiveTab='bag';render('immersive')});
-  document.querySelectorAll('[data-bag-pick]').forEach(b=>b.onclick=()=>{
-    immBagSel=Number(b.dataset.bagPick);
-    document.querySelectorAll('[data-bag-pick]').forEach(x=>x.classList.toggle('is-sel',x.dataset.bagPick===b.dataset.bagPick));
-    const box=document.getElementById('immBagDetail');
-    if(box){box.innerHTML=bagDetailMarkup(p,immBagSel);box.querySelectorAll('[data-read-book]').forEach(r=>r.onclick=()=>openBookReader(Number(r.dataset.readBook)))}
-  });
+  bindImmBag(p);
   document.querySelectorAll('[data-imm-view]').forEach(b=>b.onclick=()=>{immersiveViewMode=b.dataset.immView==='shared'?'shared':'personal';curtainTransition(()=>render('immersive'))});
-  document.querySelectorAll('[data-imm-exit]').forEach(b=>b.addEventListener('click',()=>curtainTransition(()=>render('sheet'))));bindPlayerThemes();
+  document.querySelectorAll('[data-imm-exit]').forEach(b=>b.addEventListener('click',()=>{immBagIntro=false;immBagPrevIds=null;immBagMoveArmed=false;curtainTransition(()=>render('sheet'))}));bindPlayerThemes();
   if(immersiveTab==='nexus')bindNexusViewer();
   try{document.querySelector('.imm-tabs button.active')?.scrollIntoView({inline:'center',block:'nearest'})}catch{}
   document.querySelectorAll('[data-read-book]').forEach(b=>b.onclick=()=>openBookReader(Number(b.dataset.readBook)));
