@@ -6,3 +6,8 @@ dist
 .chaos-build
 *.log
 .DS_Store
+
+*.pem
+*.key
+*.p12
+*.zip

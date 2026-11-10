@@ -11,3 +11,16 @@
 - Celular: arrastar por pressão longa (toque/caneta) com vibração e rolagem automática, detalhe do item fixo no rodapé, alvos de toque de 44px, retrato compacto ao lado do nome e estatísticas, layout paisagem.
 
 Validação: check, check:scope, stability:check, test:sync, test:player-backup, audit:xss (0 novas), test:unit (201), test:chaos. Visual alinhado aos tokens do modo sessão (--s-*). Build e teste visual em navegador não executados.
+
+## Polimento geral (bugs e usabilidade)
+- BUG: fallback de imagem quebrada usava `onerror=` inline, bloqueado pelo CSP (nunca disparava). Agora é um listener delegado (retratos caem em `/ritual.webp`, miniaturas/logo são ocultadas).
+- BUG (celular): `100vh` → `100dvh` (barra do navegador do celular cobria o fim das telas).
+- Acessibilidade: link "Pular para o conteúdo", foco visível consistente (vários componentes removiam o contorno), `alt` em imagens, suporte a `prefers-reduced-motion` global.
+- Toque: alvos de 44px em botões/abas/inputs em telas de toque; abas com encaixe suave; janelas sem "vazar" rolagem para a página de trás.
+- Visual: barras de rolagem discretas, seleção de texto e feedback de pressão no tom do site. Novo arquivo `styles-polish.css` (carregado por último, só complementa).
+
+## V1.5.79 — Quadro de investigação (referências do usuário)
+- Dossiê em papel envelhecido com polaroide presa por fita (retrato + nome em letra manuscrita), campos de ficha (Vida/Sanidade em barras, Ataque/Defesa) e determinação com controles.
+- Carimbos vermelhos (REGISTRO DE SESSÃO, MOCHILA), fio vermelho como divisor, mochila numa bandeja escura; itens com fita, seleção com pino vermelho; detalhe do item como bilhete de papel.
+- Menu em ícones redondos; no celular vira barra fixa embaixo (com área segura) e o dossiê fica compacto (polaroide à esquerda, campos à direita).
+- Tudo em CSS (sem novas imagens); ornamentos/símbolos continuam personalizáveis pelo Mestre (cores adaptadas a papel e a fundo escuro).
