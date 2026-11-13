@@ -1716,8 +1716,8 @@ body::before{
 .pt-btn:active{background:#5a1118;border-color:#c2202d}
 .main-sheet .pt-btn{background:rgba(246,232,194,.8);color:#2a1a17;border-color:rgba(103,57,27,.45)}
 .main-sheet .pt-btn:active{background:rgba(214,180,120,.9)}
-.attribute-box.pt-row{grid-template-columns:28px minmax(0,1fr) auto 25px!important}
-.skill-line.pt-row{grid-template-columns:minmax(0,1fr) auto 24px!important}
+.attribute-box.pt-row{grid-template-columns:28px minmax(0,1fr) auto 25px 34px!important;align-items:center}
+.skill-line.pt-row{grid-template-columns:34px minmax(0,1fr) auto 24px!important;align-items:center}
 @media print{.pt-btn{display:none!important}}
 
 /* V1.5.4 — mapa narrativo fictício e ferramentas de cartografia */
@@ -2325,3 +2325,51 @@ body::before{
 .load-lab-targets span{font-size:11px;color:#8e817c}
 .load-lab-status{padding:12px 14px;border-left:3px solid #b38b3c;background:rgba(190,160,90,.07);font-weight:600;color:#ead9bc!important}
 @media(max-width:650px){.load-lab-targets{grid-template-columns:1fr}.load-lab-targets>div{padding:12px}}
+
+.skill-roll{display:inline-grid;place-items:center;width:32px;height:32px;padding:0;border:1px solid rgba(214,180,120,.35);border-radius:8px;background:rgba(20,10,10,.55);color:#d6b478;cursor:pointer;transition:transform .15s,background .15s,color .15s,box-shadow .15s;-webkit-tap-highlight-color:transparent}
+.skill-roll:hover{background:rgba(214,180,120,.18);color:#f0d9a0;box-shadow:0 0 8px rgba(214,180,120,.25)}
+.skill-roll:active{transform:rotate(25deg) scale(.9)}
+.shell:not(.shell-master) .skill-roll{color:#d83a59;border-color:#451323;background:#090609}
+.shell:not(.shell-master) .skill-roll:hover{color:#ff6b86;box-shadow:0 0 8px rgba(216,58,89,.35)}
+@media print{.skill-roll{display:none!important}}
+
+/* ---- perícias: marcas, legenda, bloqueio e rolagens ---- */
+.skill-mark{margin-left:3px;font-size:.75em;color:#c9a45c;font-weight:700;cursor:help}
+.skill-legend{margin:10px 0 4px;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;font-style:italic;color:#8a7d78}
+.skill-legend strong{color:#d6683a;font-style:normal}
+.skill-roll.locked{opacity:.32;cursor:not-allowed;filter:grayscale(.6)}
+.skill-roll.locked:hover{box-shadow:none;background:rgba(20,10,10,.55)}
+.imm-chip-name .skill-roll{width:26px;height:26px;border-radius:6px;flex:0 0 auto}
+.imm-chip-name .skill-roll svg{width:17px;height:17px}
+.dossier-skill-list>div{display:flex;align-items:center;gap:8px}
+.dossier-skill-list>div>span{flex:1;min-width:0}
+.dossier-skill-list .skill-roll{width:28px;height:28px}
+.dice-skull-visual.roll-crit{animation:diceCritGlow 1.4s ease-out}
+.dice-skull-visual.roll-fumble{animation:diceFumbleShake .7s ease-in-out}
+.dice-skull-visual.roll-crit .dice-result-overlay span{color:#ffd978;text-shadow:0 0 14px rgba(255,200,90,.95),0 0 32px rgba(255,170,40,.7)}
+.dice-skull-visual.roll-fumble .dice-result-overlay span{color:#ff5468;text-shadow:0 0 14px rgba(255,40,70,.9)}
+@keyframes diceCritGlow{0%{filter:brightness(1)}20%{filter:brightness(1.9) drop-shadow(0 0 22px rgba(255,205,90,.95));transform:scale(1.08)}100%{filter:brightness(1);transform:scale(1)}}
+@keyframes diceFumbleShake{0%,100%{transform:translateX(0)}15%{transform:translateX(-7px) rotate(-3deg)}30%{transform:translateX(7px) rotate(3deg)}45%{transform:translateX(-5px)}60%{transform:translateX(5px)}80%{transform:translateX(-2px)}}
+.roll-entry.roll-crit{border-color:rgba(255,200,90,.7)!important;box-shadow:0 0 10px rgba(255,200,90,.25)}
+.roll-entry.roll-fumble{border-color:rgba(255,70,95,.7)!important;box-shadow:0 0 10px rgba(255,70,95,.25)}
+.rolls-feed{display:grid;gap:6px;max-height:60vh;overflow:auto;margin-top:10px}
+.master-roll{display:grid!important;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center}
+.master-roll-who{display:flex;flex-direction:column;min-width:0}
+.master-roll-who span{font-size:11px;opacity:.7}
+.master-roll b{font-size:14px;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.dice-skull-visual.roll-crit,.dice-skull-visual.roll-fumble{animation:none}}
+
+.roll-adv{display:flex;gap:0;margin:8px 0 10px;border:1px solid rgba(214,180,120,.3);border-radius:10px;overflow:hidden;width:100%;max-width:420px}
+.roll-adv button{flex:1;padding:8px 6px;border:0;background:rgba(20,10,10,.5);color:#a8998f;font:inherit;font-size:12px;letter-spacing:.04em;cursor:pointer;transition:background .15s,color .15s;-webkit-tap-highlight-color:transparent}
+.roll-adv button+button{border-left:1px solid rgba(214,180,120,.2)}
+.roll-adv button.active{background:rgba(214,180,120,.2);color:#f0d9a0;font-weight:700}
+.roll-adv button[data-roll-adv="adv"].active{background:rgba(90,180,110,.22);color:#9be3a8}
+.roll-adv button[data-roll-adv="dis"].active{background:rgba(216,58,89,.22);color:#ff8ea0}
+.attribute-box .attr-bonus{grid-column:1/-1}
+.imm-trained .roll-adv{grid-column:1/-1;margin:0 0 6px}
+
+/* Leitura do livro oficial da campanha */
+.rules-reader{padding:clamp(12px,2vw,22px)}
+.rules-reader iframe{display:block;width:100%;height:min(78vh,1050px);min-height:520px;border:1px solid rgba(184,151,112,.25);border-radius:8px;background:#171113}
+.player-story-text{white-space:normal;line-height:1.85;font-size:1.05rem;color:var(--text,#e8dfd2);overflow-wrap:anywhere}
+@media(max-width:640px){.rules-reader iframe{height:72vh;min-height:420px}}

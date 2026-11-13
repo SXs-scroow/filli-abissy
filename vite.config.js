@@ -9,6 +9,12 @@ export default defineConfig({
   server: { host: true, port: 5173, strictPort: false },
   preview: { host: true, port: 4173 },
   build: {
+    // Arquivos com hash podem ser cacheados por um ano sem servir código antigo.
+    assetsInlineLimit: 2048,
+    cssCodeSplit: true,
+    cssMinify: true,
+    minify: 'esbuild',
+    target: 'es2020',
     rollupOptions: {
       output: {
         manualChunks(id) {

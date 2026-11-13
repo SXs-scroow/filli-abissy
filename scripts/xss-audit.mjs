@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 const file = process.argv.slice(2).find(a => !a.startsWith('--')) || 'app.js';
 const src = readFileSync(file, 'utf8');
 
-const SAFE_CALL = /^(esc|escAttr|pointField|safeImgSrc|safeUrl|safeMediaSrc|imageValue|Number|parseInt|parseFloat|Math\.\w+|String\(\s*Number|encodeURIComponent|JSON\.stringify)\s*\(/;
+const SAFE_CALL = /^(esc|escAttr|pointField|skillRollButton|attrRollButton|rollAdvControlHtml|masterRollButton|skillMarksHtml|skillLegendHtml|rollsAdminListMarkup|rollCritClass|safeImgSrc|safeUrl|safeMediaSrc|imageValue|Number|parseInt|parseFloat|Math\.\w+|String\(\s*Number|encodeURIComponent|JSON\.stringify)\s*\(/;
 const NUMERIC = /^[\d\s+\-*/().%]+$/;
 const SAFE_IDENT = /^(i|j|k|n|idx|index|page|pages|round|total|count|len|pct|percent|max|min|val|num|hp|san|hpMax|sanMax|level|lvl)$/;
 

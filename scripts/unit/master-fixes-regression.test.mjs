@@ -101,9 +101,9 @@ test('Modo Sessão mostra só atributos e perícias com pontos, com o valor ao l
   const fn = extract(app, 'function immTrainedPanel');
   const esc = x => String(x);
   const attrs = { Corpo: 3, Mente: 0, Força: 2 }, skills = { Luta: 4, Furtividade: 0, Medicina: 1 };
-  const panel = new Function('allAttrs', 'allSkills', 'effectiveAttr', 'effectiveSkill', 'uiAttrIcon', 'uiSkillIcon', 'esc', 'MAX_ATTR', 'MAX_SKILL',
+  const panel = new Function('allAttrs', 'allSkills', 'effectiveAttr', 'effectiveSkill', 'uiAttrIcon', 'uiSkillIcon', 'esc', 'MAX_ATTR', 'MAX_SKILL', 'skillMarksHtml', 'skillRollButton', 'attrRollButton', 'rollAdvControlHtml',
     `${fn}; return immTrainedPanel;`)(
-    () => Object.keys(attrs), () => Object.keys(skills), (p, a) => attrs[a], (p, s) => skills[s], () => '', () => '', esc, 8, 15);
+    () => Object.keys(attrs), () => Object.keys(skills), (p, a) => attrs[a], (p, s) => skills[s], () => '', () => '', esc, 8, 15, () => '', () => '', () => '', () => '');
   const html = panel({});
   assert.match(html, />\s*Corpo<\/span><b>3<\/b>/);
   assert.match(html, />\s*Força<\/span><b>2<\/b>/);
