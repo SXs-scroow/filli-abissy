@@ -140,6 +140,50 @@ export async function getSessionMasterNotes(sessionId) {
 export async function saveSessionMasterNotes(sessionId, notes) {
   return await rpc('a_profecia_session_master_notes_save', { p_token: getAuthToken(), p_session_id: String(sessionId || ''), p_notes: String(notes || '') });
 }
+
+// O Arquivo de Campanha usa armazenamento privado no Supabase.
+// Não incluir esses registros no JSON global, que também é lido pelos Players.
+export async function listCampaignArchive(search = '', kind = 'all', includeArchived = false) {
+  const result = await rpc('a_profecia_campaign_archive_list', {
+    p_token: getAuthToken(),
+    p_search: String(search || '').slice(0, 100),
+    p_kind: String(kind || 'all'),
+    p_include_archived: Boolean(includeArchived)
+  });
+  return Array.isArray(result) ? result : [];
+}
+
+export async function saveCampaignArchive(item, expectedRevision = null) {
+  return await rpc('a_profecia_campaign_archive_save', {
+    p_token: getAuthToken(),
+    p_item: item || {},
+    p_expected_revision: Number.isInteger(expectedRevision) ? expectedRevision : null
+  });
+}
+
+export async function deleteCampaignArchive(recordId, expectedRevision) {
+  return await rpc('a_profecia_campaign_archive_delete', {
+    p_token: getAuthToken(),
+    p_record_id: String(recordId || ''),
+    p_expected_revision: Number(expectedRevision) || 0
+  });
+}
+
+export async function restoreCampaignArchive(recordId, expectedRevision) {
+  return await rpc('a_profecia_campaign_archive_restore', {
+    p_token: getAuthToken(),
+    p_record_id: String(recordId || ''),
+    p_expected_revision: Number(expectedRevision) || 0
+  });
+}
+
+export async function getCampaignArchiveHistory(recordId) {
+  const result = await rpc('a_profecia_campaign_archive_history', {
+    p_token: getAuthToken(),
+    p_record_id: String(recordId || '')
+  });
+  return Array.isArray(result) ? result : [];
+}
 export async function changePlayerPassword(playerId, newPassword) {
   return await rpc('a_profecia_player_set_password', {
     p_token: getAuthToken(),
@@ -330,7 +374,7 @@ export function subscribeGlobal(callback) {
 let liveChannel = null;
 let liveReady = null;
 let liveSubscribers = new Map();
-const LIVE_EVENTS = ['sound-trigger','secret-clue','session-start','tv-scene','nexus-join','nexus-offer','nexus-answer','nexus-ice','nexus-start','nexus-stop','session-join','session-join-ack','global-changed'];
+const LIVE_EVENTS = ['sound-trigger','secret-clue','session-start','tv-scene','nexus-join','nexus-offer','nexus-answer','nexus-ice','nexus-start','nexus-stop','session-join','session-join-ack','global-changed','campaign-archive-changed'];
 let liveReconnectTimer = null;
 
 function dispatchLiveMessage(event, message) {

@@ -3,6 +3,7 @@ import '../styles.css';
 import '../styles-bloodborne.css';
 import '../styles-session.css';
 import '../styles-polish.css';
+import '../styles-archive.css';
 
 if (import.meta.env.VITE_SPOTIFY_CLIENT_ID) {
   window.SPOTIFY_CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
