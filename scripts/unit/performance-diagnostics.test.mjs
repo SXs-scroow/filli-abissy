@@ -68,3 +68,23 @@ test('performance classification avoids false certainty when metrics are absent'
   assert.equal(assessment.findings.length, 0);
   assert.match(assessment.summary, /não garante ausência/);
 });
+
+test('tarefa longa só do carregamento inicial vira observação, não atenção', () => {
+  const boot = classifyPerformanceSnapshot({ navigation: { loadEventMs: 1186 }, longTasks: { supported: true, count: 1, longestMs: 1177, boot: { count: 1, longestMs: 1177 }, afterLoad: { count: 0, totalMs: 0, longestMs: 0 } } });
+  assert.equal(boot.level, 'watch');
+  assert.ok(boot.findings.some((f) => f.metric === 'bootLongTask'));
+});
+
+test('tarefa longa durante o uso continua sendo atenção', () => {
+  const use = classifyPerformanceSnapshot({ longTasks: { supported: true, count: 2, longestMs: 400, boot: { count: 1, longestMs: 90 }, afterLoad: { count: 1, totalMs: 400, longestMs: 400 } } });
+  assert.equal(use.level, 'attention');
+});
+
+test('o monitor separa as tarefas do carregamento das posteriores', () => {
+  const entries = [{ startMs: 300, durationMs: 1177 }, { startMs: 90000, durationMs: 230 }];
+  const target = { __ashenPerformanceMonitor: { supported: true, longTaskCount: 2, longTaskTotalMs: 1407, longestLongTaskMs: 1177, entries, startedAt: Date.now() } };
+  const report = collectPerformanceSnapshot({ performanceObj: { getEntriesByType: (t) => t === 'navigation' ? [{ loadEventEnd: 1186, domContentLoadedEventEnd: 900, responseEnd: 60, requestStart: 10 }] : [], now: () => 1 }, documentObj: { getElementsByTagName: () => [] }, navigatorObj: {}, target });
+  assert.equal(report.longTasks.boot.longestMs, 1177);
+  assert.equal(report.longTasks.afterLoad.count, 1);
+  assert.equal(report.longTasks.afterLoad.longestMs, 230);
+});

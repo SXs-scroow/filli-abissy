@@ -131,3 +131,56 @@ button:disabled,.btn:disabled{cursor:not-allowed}
 .combat-monster-card.is-hidden-monster{border-style:dashed}
 .combat-monster-hp-actions,.combat-monster-roll-actions{flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}
 .combat-monster-amount{padding:6px 8px}
+
+/* Ficha do player: abas + barra fixa de vitais */
+.sheet-sticky-top{position:sticky;top:0;z-index:30;margin:0 0 14px;padding:8px 0 0;background:linear-gradient(180deg,rgba(6,9,10,.97) 70%,rgba(6,9,10,0));backdrop-filter:blur(6px)}
+.sheet-vitals-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:8px 12px;border:1px solid rgba(190,120,90,.28);background:rgba(20,10,12,.88);border-radius:10px}
+.svb-group{display:flex;align-items:center;gap:6px}
+.svb-label{font-size:.68rem;letter-spacing:.14em;color:#a99;opacity:.9}
+.svb-val{min-width:58px;text-align:center;font-variant-numeric:tabular-nums}
+.svb-group[data-state="critical"] .svb-val,.svb-group[data-state="empty"] .svb-val{color:#e0645a}
+.svb-step,.svb-btn{min-width:36px;min-height:36px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:8px;cursor:pointer;font:inherit}
+.svb-step:hover,.svb-btn:hover:not(:disabled){background:rgba(190,120,90,.2)}
+.svb-btn:disabled{opacity:.4;cursor:default}
+.svb-conds{font-size:.76rem;color:#d9a07a;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.svb-roll{display:flex;align-items:center;gap:6px;margin-left:auto}
+.svb-last{border:0;background:none;color:inherit;font-size:.8rem;opacity:.85;cursor:pointer;text-decoration:underline dotted}
+.sheet-tabs{display:flex;gap:6px;overflow-x:auto;padding:8px 0 6px;scrollbar-width:thin}
+.sheet-tab-btn{flex:0 0 auto;min-height:40px;padding:8px 14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.03);color:inherit;border-radius:999px;cursor:pointer;font:inherit;font-size:.84rem;letter-spacing:.04em;white-space:nowrap}
+.sheet-tab-btn.active,.sheet-tab-btn[aria-selected="true"]{background:rgba(190,120,90,.24);border-color:rgba(214,160,110,.6);color:#f2dcc0}
+[data-sheet-tab][hidden],.sheet-side[hidden]{display:none!important}
+.sheet-layout[data-active-tab]:not([data-active-tab="essencial"]){grid-template-columns:minmax(0,1fr)!important}
+@media (max-width:640px){.sheet-vitals-bar{padding:6px 8px;gap:6px 8px}.svb-group{gap:4px}.svb-label{font-size:.6rem;letter-spacing:.08em}.svb-step,.svb-btn{min-width:34px;min-height:34px}.svb-val{min-width:44px;font-size:.92rem}.svb-roll{margin-left:0;gap:4px}.svb-last{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sheet-tabs{padding:6px 0 4px}.sheet-tab-btn{min-height:36px;padding:6px 12px}}
+@media print{.sheet-sticky-top{display:none!important}[data-sheet-tab][hidden],.sheet-side[hidden]{display:block!important}}
+
+/* Modo Sessão do Mestre */
+.sm-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px}
+.sm-top h1{margin:4px 0 0;font-size:clamp(1.4rem,3vw,2rem)}
+.sm-top-status{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.sm-grid{display:grid;grid-template-columns:minmax(280px,1fr) minmax(320px,1.25fr) minmax(280px,.9fr);gap:14px;align-items:start}
+.sm-col{display:flex;flex-direction:column;gap:10px;min-width:0}
+.sm-col h2{font-size:1.05rem;margin:0}
+.sm-box,.sm-turn,.sm-player,.sm-monster{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);border-radius:12px;padding:12px}
+.sm-player.is-current,.sm-monster.is-current{border-color:rgba(214,160,110,.7);box-shadow:0 0 0 1px rgba(214,160,110,.25) inset}
+.sm-player.is-offline{opacity:.62}
+.sm-player header,.sm-monster header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.sm-name{display:flex;flex-direction:column;min-width:0;flex:1}
+.sm-name small{opacity:.7}
+.sm-dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;background:#555;box-shadow:0 0 0 2px rgba(255,255,255,.08)}
+.sm-dot.online{background:#4cc36b;box-shadow:0 0 8px rgba(76,195,107,.7)}
+.sm-dot.offline{background:#6b5a5a}
+.sm-dot.unknown{background:#8a8a8a;opacity:.5}
+.sm-res{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0}
+.sm-res .combat-vital-track{flex:1 0 100%}
+.sm-player-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.sm-init{display:flex;align-items:center;gap:4px;font-size:.7rem;letter-spacing:.08em}
+.sm-init input{width:58px;padding:5px 6px}
+.sm-monster.is-fallen{opacity:.6;filter:grayscale(.5)}
+.sm-monster.is-hidden-monster{border-style:dashed}
+.sm-skull{font-size:1.4rem;color:#c7a16b}
+.sm-feed{max-height:340px;overflow:auto}
+.sm-tool{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-top:1px solid rgba(255,255,255,.08)}
+.sm-tool:first-of-type{border-top:0}
+.sm-history{border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:8px 10px}
+@media (max-width:1100px){.sm-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.sm-col-side{grid-column:1/-1}}
+@media (max-width:700px){.sm-grid{grid-template-columns:minmax(0,1fr)}.sm-top-status{align-items:flex-start}}

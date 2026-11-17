@@ -15,13 +15,13 @@ function extract(src, marker) {
   throw new Error('chaves não fecham');
 }
 
-test('Vida (Corpo) e Sanidade seguem a tabela 18, 24, 27, 36 e máximo 45', () => {
+test('Vida (Corpo) e Sanidade seguem a curva uniforme 25 + 4 por ponto, máximo 45', () => {
   const max = new Function(`${extract(app, 'function campaignResourceMax')}; return campaignResourceMax;`)();
-  assert.equal(max(0), 18);
-  assert.equal(max(1), 18);
-  assert.equal(max(2), 24);
-  assert.equal(max(3), 27);
-  assert.equal(max(4), 36);
+  assert.equal(max(0), 25);
+  assert.equal(max(1), 29);
+  assert.equal(max(2), 33);
+  assert.equal(max(3), 37);
+  assert.equal(max(4), 41);
   assert.equal(max(5), 45);
   assert.equal(max(6), 45);
   assert.equal(max(8), 45);

@@ -83,6 +83,18 @@ const mons = (await st()).combatSession.participants.filter(p => p.kind === 'mon
 ok('iniciativa dos monstros rolada (1–20)', mons.every(m => m.initiative >= 1 && m.initiative <= 20));
 const ordered = (await st()).combatSession.participants.slice().sort((a, b) => a.turnOrder - b.turnOrder).filter(p => p.kind === 'monster').map(p => p.initiative);
 ok('ordem: monstros em ordem decrescente de iniciativa', ordered.every((v, i) => i === 0 || ordered[i - 1] >= v));
+// iniciar combate respeita a iniciativa digitada (pela interface; o Zumbi m1 está caído e deve ser pulado)
+await page.click('#combatEnd'); await wait(500);
+const parts0 = (await st()).combatSession.participants;
+const target = parts0.find(p => p.kind === 'monster' && p.entityId !== 'm1').key;
+for (const p of parts0) {
+  const v = p.key === target ? '19' : p.key === 'monster:m1' ? '25' : '3';
+  const input = page.locator(`[data-combat-participant-key="${p.key}"]`).first();
+  await input.fill(v); await input.dispatchEvent('change'); await wait(700);
+}
+await page.click('#combatStart'); await wait(700);
+const first = (await st()).combatSession;
+ok('iniciar combate começa por quem tem maior iniciativa (pulando o caído)', first.currentKey === target);
 await page.screenshot({ path: 'monster-ui.png', fullPage: true });
 ok('sem erros de página', errors.length === 0);
 if (errors.length) console.log(errors);

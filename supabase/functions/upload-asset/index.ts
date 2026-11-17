@@ -2,7 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-asset-path, x-asset-content-type",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-asset-path, x-asset-content-type, x-asset-mode, x-asset-size",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Cache-Control": "no-store",
 };
@@ -40,7 +40,7 @@ function allowedPath(path: string, role: string, playerId: string | null) {
     return false;
   }
   if (role === "master") {
-    return /^(branding|backgrounds|slasher-music|music|sounds|tv|spells|conditions|deities|symbols|players)\//.test(path);
+    return /^(branding|backgrounds|slasher-music|music|sounds|tv|rules|spells|conditions|deities|symbols|players)\//.test(path);
   }
   if (role === "player" && playerId) {
     return path.startsWith(`players/${playerId}/`);
@@ -59,6 +59,7 @@ function typeForPath(path: string, supplied: string) {
     webm: "video/webm", mp4: "video/mp4", mov: "video/quicktime",
     m4v: "video/mp4", ogv: "video/ogg",
   };
+  if (ext === "pdf" && path.startsWith("rules/")) map.pdf = "application/pdf";
   const expected = isVideoPath && ext === "ogg" ? "video/ogg" : map[ext];
   if (!expected) return null;
   if (supplied && supplied !== "application/octet-stream") {

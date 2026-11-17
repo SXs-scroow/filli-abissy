@@ -1,11 +1,7 @@
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from '../src/supabaseConfig.js';
 
-const DEFAULT_OPENAI_MODEL = 'gpt-5-mini';
-const DEFAULT_GATEWAY_MODEL = 'openai/gpt-5-mini';
-const DEFAULT_OPENAI_BASE = 'https://api.openai.com';
-const DEFAULT_GATEWAY_BASE = 'https://ai-gateway.vercel.sh';
-const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com';
-const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
+import { aiConfig, callProvider } from '../server/ai-provider.js';
+
 const MAX_OUTPUT_TOKENS = 4000;
 const MAX_MESSAGES = 12;
 const MAX_CONTENT = 12000;
@@ -44,99 +40,6 @@ function cleanMessages(messages) {
   })).filter((m) => m.content.trim());
   while (cleaned.length && cleaned[0].role !== 'user') cleaned.shift();
   return cleaned;
-}
-
-function normalizeBase(value, fallback) {
-  const base = String(value || fallback).trim().replace(/\/+$/, '');
-  return base.replace(/\/v1$/, '');
-}
-
-const CUSTOM_KEY_NAMES = ['filiabissy', 'FILIABISSY', 'Filiabissy'];
-
-function customConfig() {
-  const name = CUSTOM_KEY_NAMES.find((n) => String(process.env[n] || '').trim());
-  if (!name) return null;
-  const key = String(process.env[name]).trim();
-  const forced = String(process.env.AI_PROVIDER || '').trim().toLowerCase();
-  const provider = forced || (key.startsWith('sk-ant-') ? 'anthropic' : key.startsWith('vck_') ? 'gateway' : 'openai');
-  if (provider === 'anthropic') {
-    return { kind: 'anthropic', key, base: normalizeBase(process.env.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE), model: String(process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL).trim() };
-  }
-  if (provider === 'gateway') {
-    return { kind: 'openai', key, base: normalizeBase(process.env.AI_GATEWAY_BASE_URL, DEFAULT_GATEWAY_BASE), model: String(process.env.AI_GATEWAY_MODEL || DEFAULT_GATEWAY_MODEL).trim() };
-  }
-  return { kind: 'openai', key, base: normalizeBase(process.env.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE), model: String(process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL).trim() };
-}
-
-function aiConfig() {
-  const custom = customConfig();
-  if (custom) return custom;
-  const directKey = String(process.env.OPENAI_API_KEY || '').trim();
-  if (directKey) {
-    return {
-      kind: 'openai',
-      key: directKey,
-      base: normalizeBase(process.env.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE),
-      model: String(process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL).trim()
-    };
-  }
-
-  const gatewayKey = String(process.env.AI_GATEWAY_API_KEY || '').trim();
-  if (gatewayKey) {
-    return {
-      kind: 'openai',
-      key: gatewayKey,
-      base: normalizeBase(process.env.AI_GATEWAY_BASE_URL, DEFAULT_GATEWAY_BASE),
-      model: String(process.env.AI_GATEWAY_MODEL || DEFAULT_GATEWAY_MODEL).trim()
-    };
-  }
-
-  const anthropicKey = String(process.env.ANTHROPIC_API_KEY || '').trim();
-  if (anthropicKey) {
-    return {
-      kind: 'anthropic',
-      key: anthropicKey,
-      base: normalizeBase(process.env.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE),
-      model: String(process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL).trim()
-    };
-  }
-
-  return null;
-}
-
-async function callProvider(config, system, messages) {
-  if (config.kind === 'anthropic') {
-    const response = await fetch(`${config.base}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': config.key,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({ model: config.model, max_tokens: MAX_OUTPUT_TOKENS, system, messages })
-    });
-    const data = await response.json().catch(() => ({}));
-    const text = Array.isArray(data?.content)
-      ? data.content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim()
-      : '';
-    return { response, data, text, model: data?.model || config.model };
-  }
-
-  const response = await fetch(`${config.base}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${config.key}`
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [{ role: 'system', content: system }, ...messages],
-      max_completion_tokens: MAX_OUTPUT_TOKENS
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  const text = String(data?.choices?.[0]?.message?.content || '').trim();
-  return { response, data, text, model: data?.model || config.model };
 }
 
 export default async function handler(req, res) {

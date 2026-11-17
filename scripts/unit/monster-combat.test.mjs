@@ -58,3 +58,9 @@ test('combate: ações do monstro, ocultar e desfazer existem na tela do Mestre'
   }
   assert.match(app, /entry\.hidden===true&&state\.session\?\.role!=='master'/);
 });
+
+test('regressão: iniciar o combate respeita as iniciativas digitadas', () => {
+  assert.match(app, /function combatApplyInitiativeOrder\(c\)/);
+  const start = app.slice(app.indexOf('function combatStart(c){'), app.indexOf('async function advanceCombatTurn'));
+  assert.match(start, /combatApplyInitiativeOrder\(c\)/);
+});

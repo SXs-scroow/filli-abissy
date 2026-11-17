@@ -394,7 +394,7 @@ export function startPlayerSyncInfrastructure(){
 const stopStartedPlayerSyncInfrastructure = startPlayerSyncInfrastructure();
 export function stopPlayerSyncInfrastructure(){stopStartedPlayerSyncInfrastructure()}
 
-export function subscribePlayerPresence(sessionId, playerId, callback){
+export function subscribePlayerPresence(sessionId, playerId, callback, { role = 'player' } = {}){
   if(!supabase||!sessionId||!playerId)return ()=>{};
   let disposed=false;
   const channel=supabase.channel(`a-profecia-presence-${String(sessionId)}`,{config:{presence:{key:String(playerId)}}});
@@ -403,9 +403,9 @@ export function subscribePlayerPresence(sessionId, playerId, callback){
   channel.on('presence',{event:'join'},()=>{if(!disposed&&typeof callback==='function')callback(channel.presenceState())});
   channel.on('presence',{event:'leave'},()=>{if(!disposed&&typeof callback==='function')callback(channel.presenceState())});
   channel.subscribe(status=>{
-    if(status==='SUBSCRIBED')channel.track({playerId:String(playerId),role:'player',lastSeen:Date.now()}).catch(()=>{});
+    if(status==='SUBSCRIBED')channel.track({playerId:String(playerId),role,lastSeen:Date.now()}).catch(()=>{});
   });
-  presenceTimer=window.setInterval(()=>{if(!disposed)channel.track({playerId:String(playerId),role:'player',lastSeen:Date.now()}).catch(()=>{})},20000);
+  presenceTimer=window.setInterval(()=>{if(!disposed)channel.track({playerId:String(playerId),role,lastSeen:Date.now()}).catch(()=>{})},20000);
   return ()=>{disposed=true;clearInterval(presenceTimer);presenceTimer=0;try{supabase.removeChannel(channel)}catch{}if(presenceChannel===channel)presenceChannel=null}
 }
 

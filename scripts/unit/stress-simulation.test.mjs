@@ -98,7 +98,8 @@ test('renderizador do laboratório não depende de window em execução de teste
   const markup = loadAdmin('V1.5.56');
   assert.match(markup, /Meta de capacidade — 15 pessoas simultâneas/);
   assert.match(markup, /runPlayerStressTest/);
-  assert.match(markup, /não simula gravações reais/i);
+  assert.match(markup, /fichas descartáveis/i);
+  assert.match(markup, /PARCIAL/);
 });
 
 
@@ -168,5 +169,67 @@ test('sem armazenamento remoto, o teste informa PARCIAL e não tenta ler nem gra
     assert.match(report.skipReason, /desativado/);
     assert.equal(reads, 0);
     assert.equal(JSON.stringify(ctx.state), before);
+  } finally { browser.restore(); }
+});
+
+async function runWithE2E(e2e) {
+  const { ctx } = build();
+  const browser = installBrowserStubs();
+  try {
+    await runPlayerStressTest({
+      version: 'V1.5.56', state: ctx.state, ps: ctx.realPs,
+      applyPlayerRows: ctx.realApply, clone: ctx.realClone,
+      playerStoreEnabled: true, getAuthToken: () => 'token-de-teste',
+      fetchPlayersByIds: async ids => ids.map(id => ({ id })), e2e, toast() {}
+    });
+    return { report: globalThis.window.__aProfeciaStressReport, status: browser.elements.playerStressStatus.textContent };
+  } finally { browser.restore(); }
+}
+
+const goodMetrics = { clients: 15, writes: { ok: 20, latency: { p50: 80, p95: 140 } }, delivery: { expected: 300, received: 300, latency: { p50: 60, p95: 200, max: 250 } }, presence: { ms: 400 }, cleanup: { players: 10 } };
+
+test('só declara APROVADO quando o teste ponta a ponta de gravação e Realtime passa', async () => {
+  const { report, status } = await runWithE2E({ run: async () => ({ verdict: 'passed', reasons: [], metrics: goodMetrics }) });
+  assert.equal(report.status, 'passed');
+  assert.equal(report.endToEndValidated, true);
+  assert.match(status, /APROVADO/);
+});
+
+test('reprova quando o teste ponta a ponta falha, mesmo com a simulação local OK', async () => {
+  const { report, status } = await runWithE2E({ run: async () => ({ verdict: 'failed', reasons: ['12 de 300 avisos de Realtime não chegaram'], metrics: goodMetrics }) });
+  assert.equal(report.status, 'failed');
+  assert.equal(report.endToEndValidated, false);
+  assert.match(status, /FALHOU/);
+});
+
+test('ponta a ponta inconclusivo deixa o resultado PARCIAL, nunca aprovado', async () => {
+  const { report } = await runWithE2E({ run: async () => ({ verdict: 'inconclusive', reasons: ['função de limpeza ausente'], metrics: null }) });
+  assert.equal(report.status, 'partial');
+  assert.equal(report.endToEndValidated, false);
+});
+
+test('erro inesperado no teste ponta a ponta não vira aprovação', async () => {
+  const { report } = await runWithE2E({ run: async () => { throw new Error('rede caiu'); } });
+  assert.equal(report.status, 'partial');
+  assert.equal(report.endToEndValidated, false);
+});
+
+test('sem confirmação do Mestre nada é gravado e o resultado fica PARCIAL', async () => {
+  let ran = false;
+  const { ctx } = build();
+  const browser = installBrowserStubs();
+  try {
+    await runPlayerStressTest({
+      version: 'V1.5.56', state: ctx.state, ps: ctx.realPs,
+      applyPlayerRows: ctx.realApply, clone: ctx.realClone,
+      playerStoreEnabled: true, getAuthToken: () => 'token-de-teste',
+      fetchPlayersByIds: async ids => ids.map(id => ({ id })),
+      e2e: { run: async () => { ran = true; return { verdict: 'passed', reasons: [], metrics: null }; } },
+      confirmE2E: async () => false, toast() {}
+    });
+    const report = globalThis.window.__aProfeciaStressReport;
+    assert.equal(ran, false);
+    assert.equal(report.status, 'partial');
+    assert.equal(report.endToEndValidated, false);
   } finally { browser.restore(); }
 });

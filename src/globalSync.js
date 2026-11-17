@@ -270,7 +270,7 @@ async function explainUploadError(error) {
   } catch {}
   if (code === 'unauthorized') return handleAuthError(new Error('SESSAO_INVALIDA'));
   const messages = {
-    unsupported_file_type: 'Formato não suportado. Use MP4, WebM, MOV, M4V ou OGV.',
+    unsupported_file_type: 'Formato não suportado para este envio. Imagens: PNG, JPG, WebP, AVIF. Áudio: MP3, WAV, OGG, M4A, AAC, FLAC. Vídeo: MP4, WebM, MOV, M4V, OGV. Regras: PDF.',
     file_too_large: 'O arquivo excede o limite de 200 MB.',
     forbidden: 'Sem permissão para enviar para esta pasta.',
     method_not_allowed: 'Requisição de upload inválida.'
