@@ -20,13 +20,13 @@ function constLine(name) {
   return m[0];
 }
 
-function build({ mode = 'cris', attrs = {}, skills = {}, heavy = false, dice = [] } = {}) {
+function build({ mode = 'limit', attrs = {}, skills = {}, heavy = false, dice = [] } = {}) {
   const queue = [...dice];
   const toasts = [];
   const src = [
     constLine('SKILL_ATTR'), constLine('TRAINED_ONLY_SKILLS'), constLine('LOAD_PENALTY_SKILLS'), constLine('LOAD_PENALTY_VALUE'),
     extract(app, 'function skillRollMode'), extract(app, 'function heavyLoad'), extract(app, 'function rollCritClass'),
-    'let masterRollLog=[];', 'let rollAdvMode=\'\';', extract(app, 'function setRollAdv'), extract(app, 'function rollPoolD20'),
+    'let masterRollLog=[];', 'let rollAdvMode=\'\';', extract(app, 'function setRollAdv'), extract(app, 'function rollPoolD20'), extract(app, 'function rollPoolLimit'), extract(app, 'function rollDtValue'), extract(app, 'function clearRollDt'), extract(app, 'function rollGrade'),
     extract(app, 'function finishRoll'), extract(app, 'function buildRoll'), extract(app, 'function rollSkillFor'), extract(app, 'function rollAttrFor'),
     'return {rollSkillFor,rollAttrFor,setRollAdv,get log(){return masterRollLog}};'
   ].join('\n');
@@ -38,7 +38,7 @@ function build({ mode = 'cris', attrs = {}, skills = {}, heavy = false, dice = [
 }
 
 test('rolagem C.R.I.S.: d20 = atributo ligado, pega o maior e soma a perícia', () => {
-  const { rollSkillFor } = build({ attrs: { Agilidade: 3 }, skills: { Furtividade: 5 }, dice: [4, 17, 9] });
+  const { rollSkillFor } = build({ mode: 'cris', attrs: { Agilidade: 3 }, skills: { Furtividade: 5 }, dice: [4, 17, 9] });
   const p = { name: 'Ana', rolls: [] };
   const r = rollSkillFor(p, 'Furtividade');
   assert.equal(r.natural, 17);
@@ -47,7 +47,7 @@ test('rolagem C.R.I.S.: d20 = atributo ligado, pega o maior e soma a perícia', 
 });
 
 test('atributo 0 rola 2d20 e fica com o menor', () => {
-  const { rollSkillFor } = build({ attrs: { Agilidade: 0 }, skills: { Furtividade: 2 }, dice: [15, 6] });
+  const { rollSkillFor } = build({ mode: 'cris', attrs: { Agilidade: 0 }, skills: { Furtividade: 2 }, dice: [15, 6] });
   const r = rollSkillFor({ rolls: [] }, 'Furtividade');
   assert.equal(r.natural, 6);
   assert.equal(r.value, 8);
@@ -61,7 +61,7 @@ test('modo simples rola só 1d20 + perícia', () => {
 });
 
 test('perícia só treinada não rola sem treino', () => {
-  const { rollSkillFor, toasts } = build({ attrs: { Conhecimento: 2 }, skills: { Ciências: 0 } });
+  const { rollSkillFor, toasts } = build({ mode: 'cris', attrs: { Conhecimento: 2 }, skills: { Ciências: 0 } });
   const p = { rolls: [] };
   assert.equal(rollSkillFor(p, 'Ciências'), null);
   assert.equal(p.rolls.length, 0);
@@ -84,7 +84,7 @@ test('crítico natural, falha crítica e rolagem do Mestre fora do histórico do
 });
 
 test('vantagem soma 1d20 e volta ao normal depois da rolagem', () => {
-  const { rollSkillFor, setRollAdv } = build({ attrs: { Agilidade: 2 }, skills: { Furtividade: 0 }, dice: [3, 8, 19, 5, 5] });
+  const { rollSkillFor, setRollAdv } = build({ mode: 'cris', attrs: { Agilidade: 2 }, skills: { Furtividade: 0 }, dice: [3, 8, 19, 5, 5] });
   setRollAdv('adv');
   const r = rollSkillFor({ rolls: [] }, 'Furtividade');
   assert.equal(r.rawRolls.length, 3);
@@ -94,7 +94,7 @@ test('vantagem soma 1d20 e volta ao normal depois da rolagem', () => {
 });
 
 test('desvantagem tira 1d20 e, se zerar, rola 2 e fica com o menor', () => {
-  const { rollSkillFor, setRollAdv } = build({ attrs: { Agilidade: 1 }, skills: { Furtividade: 0 }, dice: [18, 4] });
+  const { rollSkillFor, setRollAdv } = build({ mode: 'cris', attrs: { Agilidade: 1 }, skills: { Furtividade: 0 }, dice: [18, 4] });
   setRollAdv('dis');
   const r = rollSkillFor({ rolls: [] }, 'Furtividade');
   assert.equal(r.rawRolls.length, 2);
@@ -110,11 +110,59 @@ test('modo simples: vantagem = 2d20 maior, desvantagem = 2d20 menor', () => {
 });
 
 test('rolagem de atributo: d20 por ponto, pega o maior, sem bônus de perícia', () => {
-  const { rollAttrFor } = build({ attrs: { Força: 3 }, dice: [2, 14, 9] });
+  const { rollAttrFor } = build({ mode: 'cris', attrs: { Força: 3 }, dice: [2, 14, 9] });
   const p = { rolls: [] };
   const r = rollAttrFor(p, 'Força');
   assert.equal(r.natural, 14);
   assert.equal(r.value, 14);
   assert.equal(r.modifier, 0);
   assert.equal(p.rolls.length, 1);
+});
+
+test('Manual: 5 pontos = 3d20 (maior) + 4', () => {
+  const { rollSkillFor } = build({ skills: { Investigação: 5 }, dice: [7, 12, 18] });
+  const r = rollSkillFor({ rolls: [] }, 'Investigação');
+  assert.equal(r.rawRolls.length, 3);
+  assert.equal(r.natural, 18);
+  assert.equal(r.modifier, 4);
+  assert.equal(r.value, 22);
+});
+
+test('Manual: 0 e 1 ponto rolam 1d20; 2 pontos rolam 2d20', () => {
+  assert.equal(build({ skills: { Luta: 0 }, dice: [9] }).rollSkillFor({ rolls: [] }, 'Luta').rawRolls.length, 1);
+  assert.equal(build({ skills: { Luta: 1 }, dice: [9] }).rollSkillFor({ rolls: [] }, 'Luta').rawRolls.length, 1);
+  assert.equal(build({ skills: { Luta: 2 }, dice: [9, 4] }).rollSkillFor({ rolls: [] }, 'Luta').rawRolls.length, 2);
+});
+
+test('Manual: vantagem e desvantagem respeitam máximo 3 e mínimo 1, e mantêm o bônus', () => {
+  const a = build({ skills: { Luta: 3 }, dice: [5, 6, 7] });
+  a.setRollAdv('adv');
+  assert.equal(a.rollSkillFor({ rolls: [] }, 'Luta').rawRolls.length, 3);
+  const b = build({ skills: { Luta: 6 }, dice: [5, 6] });
+  b.setRollAdv('dis');
+  const r = b.rollSkillFor({ rolls: [] }, 'Luta');
+  assert.equal(r.rawRolls.length, 2);
+  assert.equal(r.modifier, 6);
+  const c = build({ skills: { Luta: 0 }, dice: [5] });
+  c.setRollAdv('dis');
+  assert.equal(c.rollSkillFor({ rolls: [] }, 'Luta').rawRolls.length, 1);
+  const d = build({ skills: { Luta: 1 }, dice: [5, 8] });
+  d.setRollAdv('adv');
+  assert.equal(d.rollSkillFor({ rolls: [] }, 'Luta').rawRolls.length, 2);
+});
+
+test('Manual: atributo usa os próprios pontos; crítico é o maior dado 20/1', () => {
+  const { rollAttrFor } = build({ attrs: { Força: 4 }, dice: [20, 3, 11] });
+  const r = rollAttrFor({ rolls: [] }, 'Força');
+  assert.equal(r.modifier, 2);
+  assert.equal(r.crit, 'crit');
+  const f = build({ attrs: { Força: 3 }, dice: [1, 1, 1] }).rollAttrFor({ rolls: [] }, 'Força');
+  assert.equal(f.crit, 'fumble');
+  const notFumble = build({ attrs: { Força: 3 }, dice: [1, 1, 12] }).rollAttrFor({ rolls: [] }, 'Força');
+  assert.equal(notFumble.crit, '');
+});
+
+test('Manual: carga pesada ainda aplica −2 e o bônus de especialização continua', () => {
+  const { rollSkillFor } = build({ skills: { Furtividade: 5 }, heavy: true, dice: [10, 10, 10] });
+  assert.equal(rollSkillFor({ rolls: [] }, 'Furtividade').value, 10 + 4 - 2);
 });

@@ -1,7 +1,7 @@
 {
   "name": "a-profecia",
   "private": true,
-  "version": "1.5.78",
+  "version": "1.6.2",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -20,7 +20,7 @@
     "test:sync-queue": "node --test scripts/unit/sync-coordinator.test.mjs",
     "test:e2e:staging-sync": "node scripts/e2e/staging-sync-load.mjs",
     "test:player-backup": "node scripts/player-backup-points-regression.mjs",
-    "test:ashen-ai": "node scripts/test-ashen-ai.mjs"
+    "test:ashen-ai": "node --test scripts/unit/ashen-ai-engine.test.mjs scripts/unit/ashen-ai-ui.test.mjs scripts/unit/ashen-ai-memory-migration.test.mjs && node scripts/test-ashen-ai-api.mjs"
   },
   "devDependencies": {
     "vite": "7.3.6",
@@ -31,8 +31,5 @@
   },
   "engines": {
     "node": "22.x"
-  },
-  "allowScripts": {
-    "esbuild@0.28.2": true
   }
 }

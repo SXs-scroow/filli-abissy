@@ -43,12 +43,16 @@ export function evaluateEndToEnd(m, limits = {}) {
   const expectedClean = m.cleanupExpected ?? m.writes.uniqueIds;
   if (!m.cleanup || m.cleanup.error) reasons.push(`a limpeza falhou: fichas ${LOADTEST_PREFIX}${m.runId}_* podem ter sobrado${m.cleanup?.error ? ` (${m.cleanup.error})` : ''}`);
   else if (Number(m.cleanup.players) !== expectedClean) reasons.push(`limpeza apagou ${m.cleanup.players} de ${expectedClean} fichas de teste`);
-  return { verdict: reasons.length ? 'failed' : 'passed', reasons, stages: describeStages(m, lim) };
+  const hints = [];
+  if (m.delivery.received < m.delivery.expected) hints.push('DICA: avisos perdidos indicam limite de mensagens/s do plano Realtime do Supabase ou Realtime desligado para a tabela; confira Project Settings → Realtime e o trigger a_profecia_players_realtime.');
+  if (!m.presence.converged || m.presence.ms > lim.presenceMs) hints.push('DICA: presença lenta costuma ser rede/WebSocket do aparelho de teste, não do site.');
+  if (m.writes.latency.p95 > lim.p95WriteMs) hints.push('DICA: gravação lenta costuma ser distância até a região do Supabase; compare em outra rede.');
+  return { verdict: reasons.length ? 'failed' : 'passed', reasons: [...reasons, ...hints], stages: describeStages(m, lim) };
 }
 
 export async function runEndToEndProbe(deps, options = {}) {
   const {
-    clients = 15, rows = 10, waves = 2,
+    clients = 15, rows = 10, waves = 2, writeConcurrency = 4,
     connectTimeoutMs = 10000, presenceTimeoutMs = 10000, deliveryTimeoutMs = 8000, onStage = () => {},
   } = options;
   const now = deps.now || (() => globalThis.performance?.now?.() ?? Date.now());
@@ -149,15 +153,23 @@ export async function runEndToEndProbe(deps, options = {}) {
     onStage(`Gravando ${rows} fichas descartáveis em ${waves} rodadas...`);
     const writeLat = [];
     for (let w = 1; w <= waves; w++) {
-      await Promise.all(Array.from({ length: rows }, async (_, j) => {
-        const id = idFor(j);
-        const t0 = now();
-        try {
-          await deps.savePlayer({ id, login: id, data: { name: `Teste ${j}`, _loadtest: true, wave: w }, syncStamp: base + w * 1000 + j, deletedAt });
-          writeLat.push(Math.round(now() - t0)); m.writes.ok++; okIds.add(id); createdIds.add(id);
-          writeLog.push({ id, op: w === 1 ? 'insert' : 'update', t0 });
-        } catch (error) { m.writes.failed++; if (m.errors.length < 3) m.errors.push(String(error?.message || error)); }
-      }));
+      // Concorrência limitada: uma mesa real não grava 10 fichas no mesmo instante; 150+ avisos simultâneos
+      // medem o limite de mensagens do plano Realtime, não a experiência de jogo.
+      let next = 0;
+      const worker = async () => {
+        while (next < rows) {
+          const j = next++;
+          const id = idFor(j);
+          const t0 = now();
+          try {
+            await deps.savePlayer({ id, login: id, data: { name: `Teste ${j}`, _loadtest: true, wave: w }, syncStamp: base + w * 1000 + j, deletedAt });
+            const t1 = now();
+            writeLat.push(Math.round(t1 - t0)); m.writes.ok++; okIds.add(id); createdIds.add(id);
+            writeLog.push({ id, op: w === 1 ? 'insert' : 'update', t0, t1 });
+          } catch (error) { m.writes.failed++; if (m.errors.length < 3) m.errors.push(String(error?.message || error)); }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.max(1, Math.min(rows, writeConcurrency)) }, worker));
     }
     m.writes.latency = summarize(writeLat);
     m.writes.uniqueIds = okIds.size;
@@ -173,7 +185,7 @@ export async function runEndToEndProbe(deps, options = {}) {
     const dl = [];
     for (const h of live) {
       const i = handles.indexOf(h);
-      for (const wr of writeLog) { const at = got.get(keyOf(i, wr.id, wr.op)); if (at !== undefined) { m.delivery.received++; dl.push(Math.max(0, Math.round(at - wr.t0))); } }
+      for (const wr of writeLog) { const at = got.get(keyOf(i, wr.id, wr.op)); if (at !== undefined) { m.delivery.received++; dl.push(Math.max(0, Math.round(at - wr.t1))); } }
     }
     m.delivery.latency = summarize(dl);
   } catch (error) {

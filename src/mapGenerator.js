@@ -18,7 +18,7 @@ function seededRandom(text) {
   };
 }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const pointString = points => points.map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join(' ');
+export const pointString = points => points.map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join(' ');
 const distance2 = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
 function pointInPolygon(point, polygon) {
   let inside = false;
@@ -136,7 +136,7 @@ function makeDistrictSites(rand, count, water, boundary) {
   return sites;
 }
 
-function makeVoronoiRegions(boundary, sites, templates) {
+export function makeVoronoiRegions(boundary, sites, templates) {
   return sites.map((site, i) => {
     let cell = boundary.slice();
     for (let j = 0; j < sites.length && cell.length; j++) {

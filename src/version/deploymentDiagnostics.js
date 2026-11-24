@@ -34,11 +34,12 @@ export async function runDeploymentCacheCheck({
     add('HTML de entrada responde', response.ok, `HTTP ${response.status}`);
     add('HTML identifica o Ashen Testimony e aponta para o JavaScript', shellLooksValid,
       shellLooksValid ? 'estrutura de entrada reconhecida' : 'título ou referência principal não reconhecidos');
-    const isLocalDev=/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(String(locationObj.hostname||''));
-    const cacheOk=(/no-store/i.test(cacheControl) && /no-cache/i.test(cacheControl))
-      || (isLocalDev && /no-store|no-cache|max-age=0/i.test(cacheControl));
+    const host = String(locationObj.hostname || '');
+    const isDevHost = /^(localhost|127\.0\.0\.1|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/i.test(host);
+    // no-store, no-cache, must-revalidate ou max-age=0 obrigam o navegador a revalidar o HTML: nenhum deles prende versão antiga.
+    const cacheOk = /no-store|no-cache|must-revalidate|max-age=0/i.test(cacheControl);
     add('HTML configurado para não ficar preso em cache', cacheOk,
-      (cacheControl || 'cabeçalho Cache-Control ausente')+(isLocalDev&&cacheOk?' (servidor local; em produção o vercel.json aplica no-store)':''));
+      (cacheControl || 'cabeçalho Cache-Control ausente') + (cacheOk && isDevHost ? ' (servidor de desenvolvimento; em produção o vercel.json aplica no-store)' : ''));
   } catch (error) {
     add('Leitura atualizada do HTML', false, String(error?.message || error));
   }

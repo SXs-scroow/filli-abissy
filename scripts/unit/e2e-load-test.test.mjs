@@ -176,3 +176,28 @@ test('o resultado mostra cada etapa com o limite que estourou', async () => {
   assert.equal(slow.verdict, 'failed');
   assert.ok(slow.stages.some((x) => /gravação: p95 4200 ms.*ACIMA DO LIMITE/.test(x)), slow.stages.join('|'));
 });
+
+test('as gravações respeitam o limite de concorrência (não geram rajada irreal de avisos)', async () => {
+  const hub = makeHub();
+  let inFlight = 0, peak = 0;
+  const deps = depsFor(hub, { savePlayer: async (x) => { inFlight++; peak = Math.max(peak, inFlight); await new Promise((r) => setTimeout(r, 15)); try { return await hub.savePlayer(x); } finally { inFlight--; } } });
+  const r = await runEndToEndProbe(deps, { ...opts, rows: 8, writeConcurrency: 3 });
+  assert.equal(r.verdict, 'passed', JSON.stringify(r.reasons));
+  assert.ok(peak <= 3, `pico de ${peak} gravações simultâneas`);
+  assert.equal(r.metrics.writes.ok, 16);
+});
+
+test('a latência do aviso de Realtime não soma o tempo da gravação (servidor lento não reprova o Realtime)', async () => {
+  const hub = makeHub({ delay: 1 });
+  const deps = depsFor(hub, { savePlayer: async (x) => { await hub.savePlayer(x); await new Promise((r) => setTimeout(r, 120)); } });
+  const r = await runEndToEndProbe(deps, opts);
+  assert.equal(r.verdict, 'passed', JSON.stringify(r.reasons));
+  assert.ok(r.metrics.writes.latency.p50 >= 100, 'a gravação é medida separadamente');
+  assert.ok(r.metrics.delivery.latency.p95 < 60, `entrega p95 ${r.metrics.delivery.latency.p95}`);
+});
+
+test('quando o teste falha, o motivo vem com dica de causa', async () => {
+  const hub = makeHub({ dropEvery: 4 });
+  const r = await runEndToEndProbe(depsFor(hub), opts);
+  assert.ok(r.reasons.some((x) => /^DICA:/.test(x)));
+});

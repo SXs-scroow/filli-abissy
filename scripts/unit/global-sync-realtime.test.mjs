@@ -44,6 +44,11 @@ function createHarness(sharedDb) {
         return { data: { updated_at: updatedAt }, error: null };
       }
       if (name === 'a_profecia_get_global') return { data: sharedDb.global, error: null };
+      if (name === 'a_profecia_backup_global') {
+        if (sharedDb.failBackup) return { data: null, error: { message: 'backup endpoint unavailable' } };
+        sharedDb.backups.push({ data: args.p_data, label: args.p_label });
+        return { data: { id: `backup-${sharedDb.backups.length}` }, error: null };
+      }
       if (name === 'a_profecia_whoami') return { data: { role: 'master' }, error: null };
       return { data: null, error: null };
     },
@@ -132,7 +137,7 @@ function createSharedDb() {
       }
     }
   };
-  return { bus, global: { data: { initial: true }, updated_at: 'initial' }, stamp: 0, failPush: false, failRealtime: false };
+  return { bus, global: { data: { initial: true }, updated_at: 'initial' }, backups: [], stamp: 0, failPush: false, failBackup: false, failRealtime: false };
 }
 
 async function waitFor(predicate, timeoutMs = 1200) {
@@ -210,4 +215,31 @@ test('shared Realtime channel reconnects after a connection closes while subscri
   await sender.api.pushGlobal({ marker: 'after-reconnect' });
   assert.equal(await waitFor(() => received.some(row => row.data?.marker === 'after-reconnect')), true, 'events should flow after reconnecting');
   unsubscribe();
+});
+
+
+test('global save backs up the previous remote state before replacing it', async () => {
+  const db = createSharedDb();
+  db.global = { data: { campaign: 'old-state', players: [{ id: 'p1' }] }, updated_at: 'old-stamp' };
+  const sender = createHarness(db);
+
+  const result = await sender.api.pushGlobal({ campaign: 'new-state', players: [{ id: 'p1' }] });
+
+  assert.equal(result.verified, true);
+  assert.equal(db.backups.length, 1);
+  assert.deepEqual(db.backups[0].data, { campaign: 'old-state', players: [{ id: 'p1' }] });
+  assert.equal(db.backups[0].label, 'automatico-antes-de-salvar');
+  assert.deepEqual(db.global.data, { campaign: 'new-state', players: [{ id: 'p1' }] });
+});
+
+test('backup remoto indisponível não bloqueia a gravação global principal', async () => {
+  const db = createSharedDb();
+  db.failBackup = true;
+  const sender = createHarness(db);
+
+  const result = await sender.api.pushGlobal({ marker: 'still-saved' });
+
+  assert.equal(result.verified, true);
+  assert.equal(db.global.data.marker, 'still-saved');
+  assert.equal(db.backups.length, 0);
 });

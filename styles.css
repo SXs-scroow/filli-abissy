@@ -2376,43 +2376,49 @@ body::before{
 
 .derived-preview{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 0;padding:9px 12px;border:1px solid rgba(139,32,41,.45);border-radius:10px;background:rgba(0,0,0,.18);font-size:13px}.derived-preview b{margin-left:3px;font-size:15px}
 
-/* ASHEN COMMAND DESK — camada de janelas independente, sem alterar os módulos originais. */
-.ashen-window-dock{position:fixed;z-index:9000;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:5px;max-width:calc(100vw - 24px);padding:8px 10px;background:linear-gradient(180deg,rgba(29,20,20,.97),rgba(10,9,11,.98));border:1px solid rgba(183,145,93,.48);border-top:2px solid #9d784c;border-radius:7px;box-shadow:0 12px 40px #000b, inset 0 1px rgba(255,255,255,.04);backdrop-filter:blur(14px);color:#e8dcc8;font-family:Spectral,Georgia,serif}
-.ashen-dock-mark{display:grid;place-items:center;width:29px;height:29px;border:1px solid #9c7547;color:#d8b77d;font-family:Georgia,serif;font-size:19px;font-weight:700;background:radial-gradient(circle,#39251e,#100d0e)}
-.ashen-dock-label{display:flex;flex-direction:column;line-height:1.05;padding:0 9px 0 2px;font:700 10px/1.2 'Spectral',serif;letter-spacing:1.8px}.ashen-dock-label small{font:8px/1.3 monospace;color:#9e8b75;letter-spacing:1.1px}
-.ashen-window-dock button{border:1px solid rgba(154,126,91,.28);border-radius:3px;background:rgba(255,255,255,.025);color:#c8bba8;padding:8px 9px;font:700 9px/1 monospace;letter-spacing:.65px;cursor:pointer;white-space:nowrap;transition:background .16s,border-color .16s,color .16s}
-.ashen-window-dock button:hover,.ashen-window-dock button:focus-visible{background:rgba(151,105,61,.2);border-color:#a98456;color:#f0d7a8;outline:none}
-.ashen-window-layer{position:fixed;inset:0;z-index:8990;pointer-events:none;overflow:hidden}
-.ashen-float-window{position:absolute;width:min(390px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 100px));overflow:hidden;display:flex;flex-direction:column;pointer-events:auto;background:linear-gradient(145deg,rgba(28,22,22,.985),rgba(12,12,15,.99));border:1px solid rgba(174,139,91,.52);border-radius:5px;box-shadow:0 18px 55px #000b,0 0 0 1px #0008,inset 0 1px rgba(255,255,255,.035);color:#d9cdbb;backdrop-filter:blur(18px);animation:ashen-window-in .18s ease-out}
-@keyframes ashen-window-in{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
-.ashen-float-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 14px 11px;border-bottom:1px solid rgba(176,137,84,.28);background:linear-gradient(90deg,rgba(117,75,49,.16),transparent);cursor:move;user-select:none}
-.ashen-float-head>div:first-child{display:flex;flex-direction:column;gap:4px}.ashen-float-head small{font:9px monospace;letter-spacing:1.4px;color:#a98960}.ashen-float-head strong{font:700 13px/1.2 'Cormorant Garamond',Georgia,serif;letter-spacing:1.8px;color:#eadbc2}
-.ashen-float-controls{display:flex;gap:5px}.ashen-float-controls button{width:27px;height:25px;border:1px solid #66513b;border-radius:3px;background:#181416;color:#cbb99e;font:16px/1 monospace;cursor:pointer}.ashen-float-controls button:hover{border-color:#c49a62;color:#fff0d2}
-.ashen-float-content{padding:15px 16px 17px;overflow:auto;font:13px/1.65 'Spectral',Georgia,serif;color:#bdb1a1}.ashen-float-content p{margin:0 0 11px}.ashen-wm-lead{font:600 18px/1.2 'Cormorant Garamond',Georgia,serif!important;color:#e5d1b0;letter-spacing:.3px}.ashen-wm-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:15px}.ashen-wm-grid button,.ashen-wm-action{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px;border:1px solid rgba(161,125,79,.38);border-radius:3px;background:rgba(105,75,49,.12);color:#ddc49d;text-align:left;font:700 9px/1.35 monospace;letter-spacing:.35px;cursor:pointer}.ashen-wm-grid button:hover,.ashen-wm-action:hover{background:rgba(151,105,61,.23);border-color:#a98456}.ashen-wm-grid button span{font-size:14px}.ashen-wm-action{display:inline-flex;margin-top:5px}.ashen-wm-note{display:flex;flex-direction:column;gap:4px;margin-top:16px;padding:10px 11px;border-left:2px solid #8e6843;background:rgba(0,0,0,.2);font-size:11px}.ashen-wm-note b{font:9px monospace;letter-spacing:1.5px;color:#b38a5a}.ashen-wm-status{display:inline-block;margin-top:5px;padding:5px 8px;border:1px dashed rgba(174,139,91,.4);color:#b39770;font:9px monospace;letter-spacing:1px}.ashen-float-window footer{display:flex;justify-content:space-between;gap:8px;padding:7px 12px;border-top:1px solid rgba(176,137,84,.2);color:#756b60;font:8px monospace;letter-spacing:.7px}.ashen-float-window.is-minimized{display:none}
-@media(max-width:700px){.ashen-window-dock{left:8px;right:8px;bottom:8px;transform:none;justify-content:flex-start;overflow-x:auto;max-width:none}.ashen-dock-label{display:none}.ashen-window-dock button{padding:9px 8px;font-size:8px}.ashen-float-window{left:12px!important;top:12vh!important;width:calc(100vw - 24px);max-height:72vh}.ashen-window-layer{bottom:58px}}
-@media(prefers-reduced-motion:reduce){.ashen-float-window{animation:none}.ashen-window-dock button{transition:none}}
+.yt-personal-host{position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:1200;width:min(356px,calc(100vw - 24px));background:#0b0708;border:1px solid rgba(184,151,112,.4);border-radius:12px;overflow:hidden;box-shadow:0 14px 34px rgba(0,0,0,.55)}
+.yt-host-bar{display:flex;align-items:center;gap:10px;padding:6px 8px 6px 12px;font-size:12px;color:#d8c8b4;background:rgba(255,255,255,.04)}
+.yt-host-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.yt-host-bar a{color:#b89770;text-decoration:underline;white-space:nowrap}
+.yt-host-close{background:transparent;border:0;color:#d8c8b4;font-size:16px;line-height:1;padding:6px 8px;cursor:pointer;border-radius:6px}
+.yt-host-close:hover,.yt-host-close:focus-visible{background:rgba(255,255,255,.1)}
+.yt-host-mount{aspect-ratio:16/9;min-height:200px;background:#000}
+.yt-host-mount iframe{display:block;width:100%;height:100%;border:0}
 
-/* External music providers: keep the official video player visible and responsive. */
-.global-music.youtube{width:min(390px,calc(100vw - 24px));}
-.global-music.youtube iframe{display:block;width:100%;aspect-ratio:16/9;height:auto;min-height:180px;border:1px solid rgba(181,48,56,.38);border-radius:8px;background:#050404;margin:8px 0;}
-@media(max-width:700px){.global-music.youtube iframe{min-height:160px}}
+/* ===== Tutorial de Rolagens ===== */
+.dice-rules-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:14px;align-items:start;margin-top:14px}
+.dice-rules-card h2{font-size:1.15rem}
+.dice-rules-card p,.dice-rules-card li,.dice-rules-card dd{line-height:1.5}
+.dice-steps{margin:8px 0 10px;padding-left:1.3em}.dice-steps li{margin:5px 0}
+.dice-list{margin:8px 0;padding-left:1.2em}.dice-list li{margin:6px 0}
+.dice-table{margin:10px 0;overflow-x:auto;border:1px solid rgba(126,31,39,.35);border-radius:10px}
+.dice-table table{width:100%;border-collapse:collapse;font-size:.92rem}
+.dice-table th,.dice-table td{padding:8px 10px;text-align:left;border-bottom:1px solid rgba(214,180,120,.12)}
+.dice-table th{color:#d6b478;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase}
+.dice-table tr:last-child td{border-bottom:0}
+.dice-example{margin:10px 0;padding:10px 12px;border-left:3px solid #d6b478;background:rgba(214,180,120,.08);border-radius:0 8px 8px 0}
+.dice-faq dt{font-weight:700;margin-top:10px;color:#f0d9a0}.dice-faq dd{margin:2px 0 0}
+.dice-sim{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.dice-sim label{display:flex;flex-direction:column;gap:4px;font-size:.78rem;color:#a8998f}
+.dice-sim input,.dice-sim select{width:100%;min-height:40px}
+.dice-sim-out{margin-top:12px;padding:12px;border:1px solid rgba(214,180,120,.25);border-radius:10px;background:rgba(0,0,0,.25)}
+.dice-chip{display:inline-grid;place-items:center;min-width:42px;height:42px;margin:0 6px 6px 0;border:1px solid rgba(214,180,120,.3);border-radius:10px;font-weight:700;font-size:1.1rem;color:#a8998f}
+.dice-chip.kept{border-color:#d6b478;color:#f0d9a0;background:rgba(214,180,120,.16)}
+.dice-total{font-size:1.4rem;color:#f0d9a0}
+.dice-flag{margin:6px 0 0}.dice-flag.good{color:#9be3a8}.dice-flag.bad{color:#ff8ea0}
+.roll-dt{display:flex;align-items:center;gap:4px;padding:0 8px;border-left:1px solid rgba(214,180,120,.2);background:rgba(20,10,10,.5);color:#a8998f;font-size:12px;letter-spacing:.04em}
+.roll-dt-input{width:44px;min-height:30px;padding:2px 4px;border:1px solid rgba(214,180,120,.25);border-radius:6px;background:rgba(0,0,0,.35);color:#f0d9a0;font:inherit;text-align:center}
+.roll-adv{max-width:520px}
+@media(max-width:640px){.dice-sim{grid-template-columns:1fr 1fr}.dice-sim label:last-child{grid-column:1/-1}}
 
-/* ASHEN AI — consulta contextual e privada do Mestre. */
-.ashen-ai-dock-button{border-color:rgba(173,74,63,.65)!important;color:#f0c6a5!important;background:linear-gradient(135deg,rgba(110,38,35,.42),rgba(35,19,20,.6))!important}
-.ashen-ai-status{display:flex;align-items:center;gap:8px;margin:0 0 10px;color:#b99571;font:9px/1.4 monospace;letter-spacing:1px}
-.ashen-ai-indicator{width:7px;height:7px;border-radius:50%;background:#b54c43;box-shadow:0 0 10px #b54c43;flex:none}
-.ashen-ai-log{display:flex;flex-direction:column;gap:9px;max-height:min(44vh,390px);min-height:170px;overflow:auto;padding:10px;border:1px solid rgba(164,119,83,.22);background:rgba(0,0,0,.27)}
-.ashen-ai-empty{align-self:center;margin:auto;color:#8f857a;font:12px/1.6 'Spectral',Georgia,serif;text-align:center}
-.ashen-ai-message{max-width:100%;padding:9px 10px;border:1px solid rgba(164,119,83,.18);background:rgba(255,255,255,.035);overflow-wrap:anywhere}
-.ashen-ai-message.user{border-left:2px solid #9e7548;background:rgba(105,75,49,.11)}
-.ashen-ai-message.assistant{border-left:2px solid #9b4945}
-.ashen-ai-message b{display:block;margin-bottom:4px;color:#b99b77;font:9px/1.3 monospace;letter-spacing:1px}
-.ashen-ai-message p{margin:0;white-space:pre-wrap;color:#ded2c2;font:12px/1.65 'Spectral',Georgia,serif}
-.ashen-ai-form{display:grid;grid-template-columns:1fr auto;gap:7px;margin-top:9px;align-items:stretch}
-.ashen-ai-form textarea{width:100%;min-width:0;resize:vertical;min-height:65px;padding:9px;border:1px solid rgba(164,119,83,.35);border-radius:3px;background:#0b090a;color:#e5d9c8;font:12px/1.5 'Spectral',Georgia,serif}
-.ashen-ai-form button{padding:8px 10px;border:1px solid #88554a;background:rgba(105,37,36,.3);color:#e5c6a9;font:700 9px/1.2 monospace;letter-spacing:.5px;cursor:pointer}
-.ashen-ai-form button:disabled{opacity:.55;cursor:wait}
-.ashen-ai-footnote{margin:8px 0 0!important;color:#756c62;font:8px/1.4 monospace;letter-spacing:.45px}
-
-/* Ashen AI — sessão presencial e diagnóstico integrado */
-.ashen-ai-tools{display:flex;justify-content:flex-end;margin:8px 0}.ashen-ai-tools button,.ashen-presence-head button,.ashen-presence-actions button{border:1px solid rgba(164,119,83,.4);background:rgba(105,37,36,.22);color:#e5c6a9;padding:8px 10px;font:700 9px/1.3 monospace;letter-spacing:.5px;cursor:pointer}.ashen-ai-tools button:disabled,.ashen-presence-actions button:disabled{opacity:.55;cursor:wait}.ashen-presence{margin-top:14px;padding:12px;border:1px solid rgba(164,119,83,.3);background:rgba(0,0,0,.22)}.ashen-presence-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.ashen-presence-head b,.ashen-presence-head small{display:block}.ashen-presence-head b{font:700 10px/1.4 monospace;letter-spacing:.5px;color:#c9a47d}.ashen-presence-head small{font:11px/1.5 'Spectral',Georgia,serif;color:#948779}.ashen-presence-head button[aria-pressed=true]{border-color:#a34c43;background:rgba(145,47,43,.35)}.ashen-presence-state{margin:10px 0;color:#b99571;font:9px/1.5 monospace;letter-spacing:.45px}.ashen-presence-queue{display:grid;gap:8px}.ashen-presence-queue>p{margin:0;color:#786e64;font:11px/1.5 'Spectral',Georgia,serif}.ashen-presence-action{display:grid;gap:6px;padding:10px;border:1px solid rgba(190,145,70,.45);background:rgba(120,82,35,.1)}.ashen-presence-action>b{color:#e4c59e;font:700 11px/1.4 monospace}.ashen-presence-action>span{color:#c4b5a2;font:11px/1.5 'Spectral',Georgia,serif}.ashen-presence-actions{display:flex;gap:8px}.ashen-presence-actions button:first-child{border-color:rgba(100,165,112,.5);color:#b9d5b7}.ashen-presence-actions button:last-child{border-color:rgba(160,90,80,.4);color:#d2a49b}@media(max-width:600px){.ashen-presence-head{align-items:flex-start;flex-direction:column}.ashen-presence-head button{width:100%}.ashen-ai-tools button{width:100%}}
+/* Nexus na TV e verificação real */
+.tv-nexus-layer{position:absolute;inset:0;display:none;background:#000;z-index:3}
+.tv-nexus-layer video{width:100%;height:100%;object-fit:contain;background:#000}
+.tv-screen.tv-nexus-on .tv-nexus-layer{display:block}
+.nexus-steps{padding:12px;border:1px solid rgba(255,255,255,.15);border-radius:8px;margin-bottom:12px}
+.nexus-steps ol{margin:8px 0 8px 18px;padding:0}.nexus-steps code{display:block;margin:6px 0;word-break:break-all}
+.nexus-turn{margin:10px 0}.nexus-viewer-actions{margin:8px 0}
+.sv-list{list-style:none;margin:12px 0;padding:0;display:grid;gap:6px}
+.sv-row{display:flex;gap:10px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04);border-left:3px solid #666}
+.sv-row small{display:block;opacity:.85;word-break:break-word}.sv-row .sv-fix{opacity:1;color:#e8c27a}
+.sv-fail{border-left-color:#d33}.sv-warn{border-left-color:#e90}.sv-ok{border-left-color:#3a6}.sv-skip{border-left-color:#999}

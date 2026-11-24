@@ -10,10 +10,6 @@ if (import.meta.env.VITE_SPOTIFY_CLIENT_ID) {
 }
 
 import '../app.js';
-import { initWindowManager } from './windowManager.js';
-
-// O ambiente de janelas só é montado quando a interface confirma uma sessão de Mestre.
-initWindowManager();
 
 // Recursos de diagnóstico/manutenção não bloqueiam a primeira renderização.
 // São carregados quando o navegador termina o trabalho prioritário.

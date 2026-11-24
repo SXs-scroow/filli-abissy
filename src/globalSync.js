@@ -184,6 +184,23 @@ export async function getCampaignArchiveHistory(recordId) {
   });
   return Array.isArray(result) ? result : [];
 }
+
+// Memória persistente privada do Ashen AI. As RPCs validam o token customizado do Mestre.
+export async function listAshenMemories(search = '', limit = 20) {
+  const result = await rpc('a_profecia_ashen_memory_list', {
+    p_token: getAuthToken(), p_search: String(search || '').slice(0, 180),
+    p_limit: Math.max(1, Math.min(40, Number(limit) || 20))
+  });
+  return Array.isArray(result) ? result : [];
+}
+
+export async function saveAshenMemory(item) {
+  return await rpc('a_profecia_ashen_memory_save', { p_token: getAuthToken(), p_item: item || {} });
+}
+
+export async function archiveAshenMemory(memoryId) {
+  return await rpc('a_profecia_ashen_memory_archive', { p_token: getAuthToken(), p_memory_id: String(memoryId || '') });
+}
 export async function changePlayerPassword(playerId, newPassword) {
   return await rpc('a_profecia_player_set_password', {
     p_token: getAuthToken(),
@@ -227,6 +244,34 @@ export async function backupGlobal(data, label = 'auto') {
   return await rpc('a_profecia_backup_global', { p_token: getAuthToken(), p_data: data, p_label: String(label || 'auto') });
 }
 
+const AUTO_GLOBAL_BACKUP_KEY = 'a_profecia_last_global_backup_v1';
+const AUTO_GLOBAL_BACKUP_INTERVAL = 5 * 60 * 1000;
+let automaticBackupPromise = null;
+
+async function backupCurrentGlobalBeforePush(nextData) {
+  if (!supabase || !nextData || !getAuthToken()) return false;
+  const previousBackupAt = Number(readStoredJson(AUTO_GLOBAL_BACKUP_KEY, 0)) || 0;
+  if (Date.now() - previousBackupAt < AUTO_GLOBAL_BACKUP_INTERVAL) return false;
+  if (automaticBackupPromise) return automaticBackupPromise;
+
+  automaticBackupPromise = (async () => {
+    const response = await fetchGlobal();
+    const currentData = response?.data && typeof response.data === 'object' ? response.data : response;
+    if (!currentData || typeof currentData !== 'object') return false;
+    if (JSON.stringify(currentData) === JSON.stringify(nextData)) return false;
+    await backupGlobal(currentData, 'automatico-antes-de-salvar');
+    writeStoredJson(AUTO_GLOBAL_BACKUP_KEY, Date.now());
+    return true;
+  })().catch(error => {
+    // A backup outage must not discard a valid write; the local recovery copy
+    // remains available and the error is visible in the console for diagnosis.
+    console.warn('Backup global automático indisponível; a gravação principal continuará:', error);
+    return false;
+  }).finally(() => { automaticBackupPromise = null; });
+
+  return automaticBackupPromise;
+}
+
 export async function listGlobalBackups(limit = 20) {
   if (!supabase) return [];
   const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
@@ -243,6 +288,7 @@ export async function pushGlobal(data) {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) { syncMarkOffline(); throw new Error('OFFLINE'); }
   if (!getAuthToken()) { const e = new Error('SESSAO_INVALIDA'); handleAuthError(e); throw e; }
   syncMarkSyncing();
+  await backupCurrentGlobalBeforePush(data);
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -447,6 +493,13 @@ async function ensureLiveChannel() {
     try { await supabase.removeChannel(channel); } catch {}
     throw error;
   }
+}
+
+export const supabaseRuntime = { url, key };
+export const LIVE_CHANNEL_NAME = 'a-profecia-live-v2';
+export function createVerificationClient() {
+  if (!remoteEnabled) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
 export async function broadcastLive(event, payload = {}) {

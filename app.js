@@ -1,17 +1,21 @@
-import { remoteEnabled, fetchGlobal, pushGlobal, backupGlobal, listGlobalBackups, uploadGlobalFile, subscribeGlobal, subscribeLive, broadcastLive, authMasterLogin, authPlayerLogin, authRegisterPlayer, authLogout, authCheck, changeMasterPassword, changePlayerPassword, getPlayerMasterSecret, savePlayerMasterSecret, listSessionPuzzles, saveSessionPuzzle, deleteSessionPuzzle, unlockSessionPuzzle, getSessionMasterNotes, saveSessionMasterNotes, authErrorText, getAuthToken, syncHealth, listCampaignArchive, saveCampaignArchive, deleteCampaignArchive, getCampaignArchiveHistory, restoreCampaignArchive } from './src/globalSync.js';
+import { parseYouTubeUrl, youtubeWatchUrl, loadYouTubeApi, createYouTubeAudio } from './src/youtubeMusic.js';
+import { remoteEnabled, LIVE_CHANNEL_NAME, supabaseRuntime, createVerificationClient, fetchGlobal, pushGlobal, backupGlobal, listGlobalBackups, uploadGlobalFile, subscribeGlobal, subscribeLive, broadcastLive, authMasterLogin, authPlayerLogin, authRegisterPlayer, authLogout, authCheck, changeMasterPassword, changePlayerPassword, getPlayerMasterSecret, savePlayerMasterSecret, listSessionPuzzles, saveSessionPuzzle, deleteSessionPuzzle, unlockSessionPuzzle, getSessionMasterNotes, saveSessionMasterNotes, authErrorText, getAuthToken, syncHealth, listCampaignArchive, saveCampaignArchive, deleteCampaignArchive, getCampaignArchiveHistory, restoreCampaignArchive, listAshenMemories, saveAshenMemory, archiveAshenMemory } from './src/globalSync.js';
 import { buildTerminalModel, terminalDesktopMarkup as kitDesktopMarkup, bootDuration, terminalCommand, termAudioPrime, sfx, playBootSound, stopBootSound, disposeAudioPlayers, pauseAudioPlayers, bindAudioPlayers, bindTerminalAudioUi, bindLoginSfx, startTerminalClock, runFsckSim, clockText, corruptText, normalizeLevel, CORRUPTION_LEVELS, TERMINAL_FOLDERS } from './src/terminalKit.js';
-import { playerStoreEnabled, fetchPlayers as fetchPlayerRows, fetchPlayersByIds, upsertPlayers, deletePlayerServer, restorePlayerServer, subscribePlayers, subscribePlayerPresence, fetchPlayerHistory, fetchPlayerHistoryEntry } from './src/playerStore.js';
+import { playerStoreEnabled, fetchPlayers as fetchPlayerRows, fetchPlayersByIds, upsertPlayers, deletePlayerServer, restorePlayerServer, subscribePlayers, subscribePlayerPresence, fetchPlayerHistory, fetchPlayerHistoryEntry, pendingPlayerSyncCount, flushPendingPlayerSync } from './src/playerStore.js';
 import { ps, initPlayers, PLAYER_ROSTER_CACHE_KEY, playerSyncKey, markLocalPlayerChanges, mergePlayersRemote, playerRowDeletedStamp, fetchPlayerRowsConfirmed, applyPlayerRows, hydratePlayersDb, syncPlayersDbNow, queuePlayerDbSave, reconcilePlayersStability, mergeRollHistory } from './src/players.js';
 import { nextStamp } from './src/stampClock.js';
-import { detectMusicSource, normalizeMusicLibraryEntry } from './src/musicSources.js';
+import { waitForIceGatheringComplete } from './src/nexusSignaling.js';
 import { nextMonsterCopyName, applyMonsterHpDelta, isMonsterDown, pickNextParticipant } from './src/monsterUtils.js';
-import { calculateHpChange } from './src/ashenSessionAssistant.js';
 import { configureSyncCoordinator, enqueueGlobalSnapshot } from './src/syncCoordinator.js';
 import { campaignMapPage, bindCampaignMap } from './src/campaignMap.js';
 import { campaignArchivePage, bindCampaignArchive } from './src/campaignArchive.js';
 import { loadAdmin, runPlayerStressTest, runPersistenceSelfTest, runDeploymentCacheSelfTest, runPerformanceDiagnosticsSelfTest, bindPerformanceReportExport } from './src/loadTest.js';
 import { buildBrowserE2E } from './src/e2eLoadTest.js';
-const APP_VERSION='V1.5.78 · ASHEN AI PRESENCE & INTEGRITY';
+import { bindSiteVerification } from './src/siteVerification.js';
+import { runDeploymentCacheCheck } from './src/version/deploymentDiagnostics.js';
+import { collectPerformanceSnapshot, classifyPerformanceSnapshot, runResponsivenessProbe } from './src/performance/performanceDiagnostics.js';
+import { bindAshenAI } from './src/ashenAI.js';
+const APP_VERSION='V1.6.2 · NEXUS TV + VERIFICAÇÃO REAL';
 try{window.__ASHEN_BUILD=APP_VERSION}catch{}
 let loadFailed=false;
 let saveTimer=0,saveDirty=false,saveFirstAt=0,lastRecoveryAt=0;
@@ -33,6 +37,7 @@ let immersiveViewMode='personal';
 let immersivePuzzleCache=[];
 let immersivePuzzleStatus='idle';
 let immersivePuzzleStatusMessage='';
+let immersivePuzzleSig='';
 let puzzleSchemaWarningLogged=false;
 let immersivePuzzleSessionId='';
 let immersivePuzzleOwnerId='';
@@ -46,7 +51,17 @@ let immersiveTerminalHistory={};
 let immersiveTerminalSince={};
 let immersiveTerminalFresh=false;
 function resetTerminalUiState(){Object.values(immersiveTerminalBootTimers).forEach(t=>clearTimeout(t));immersiveTerminalOpenFiles={};immersiveTerminalBooting={};immersiveTerminalBootStart={};immersiveTerminalBootTimers={};immersiveTerminalCwd={};immersiveTerminalHistory={};immersiveTerminalSince={};try{stopBootSound();disposeAudioPlayers()}catch{}}
-function clearImmersivePuzzleState(){immersivePuzzleCache=[];immersivePuzzleStatus='idle';immersivePuzzleStatusMessage='';immersivePuzzleSessionId='';immersivePuzzleOwnerId='';immersivePuzzleUnlocked={};resetTerminalUiState();}
+function clearImmersivePuzzleState(){immersivePuzzleSig='';immersivePuzzleCache=[];immersivePuzzleStatus='idle';immersivePuzzleStatusMessage='';immersivePuzzleSessionId='';immersivePuzzleOwnerId='';immersivePuzzleUnlocked={};resetTerminalUiState();}
+function puzzleAutoRefreshTick(){
+  try{
+    if(document.hidden||state.session?.role!=='player'||currentView!=='immersive'||immersiveTab!=='puzzles')return;
+    if(immersivePuzzleStatus==='loading')return;
+    const a=document.activeElement;if(a&&a.closest&&a.closest('form[data-puzzle-unlock-form]'))return;
+    if(Object.values(immersiveTerminalBooting).some(Boolean))return;
+    refreshImmersivePuzzles({silent:true});
+  }catch(err){console.warn('Atualização automática de terminais:',err)}
+}
+if(typeof window!=='undefined'&&!window.__puzzleAutoRefresh){window.__puzzleAutoRefresh=setInterval(puzzleAutoRefreshTick,6000)}
 function prefersReducedMotion(){try{return window.matchMedia('(prefers-reduced-motion: reduce)').matches}catch{return false}}
 function pushTerminalHistory(pid,entry){if(!entry)return;const h=immersiveTerminalHistory[pid]||(immersiveTerminalHistory[pid]=[]);h.push(entry);if(h.length>12)h.splice(0,h.length-12)}
 function finishTerminalBoot(pid,sid,owner,skipped){
@@ -529,7 +544,34 @@ const idbGetSound=id=>mediaGet(MEDIA_STORES.sounds,id);
 const idbDeleteSound=id=>mediaDelete(MEDIA_STORES.sounds,id);
 const STATE_BACKUP_DB='a-profecia-recovery-v1',STATE_BACKUP_STORE='snapshots';
 function stateBackupOpen(){return new Promise((resolve,reject)=>{try{const r=indexedDB.open(STATE_BACKUP_DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STATE_BACKUP_STORE))r.result.createObjectStore(STATE_BACKUP_STORE);};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('IndexedDB indisponível'));}catch(e){reject(e)}})}
-async function saveLocalRecovery(label='auto'){if(label==='save'||label==='global-save'){const t=Date.now();if(t-lastRecoveryAt<45000)return;lastRecoveryAt=t}try{const db=await stateBackupOpen();const snap={label,createdAt:Date.now(),state:JSON.parse(serializeState())};await new Promise((resolve,reject)=>{const tx=db.transaction(STATE_BACKUP_STORE,'readwrite');tx.objectStore(STATE_BACKUP_STORE).put(snap,String(snap.createdAt));tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>{db.close();reject(tx.error||new Error('backup'))}});const db2=await stateBackupOpen();await new Promise((resolve,reject)=>{const tx=db2.transaction(STATE_BACKUP_STORE,'readwrite'),store=tx.objectStore(STATE_BACKUP_STORE),req=store.getAllKeys();req.onsuccess=()=>{const keys=(req.result||[]).map(Number).sort((a,b)=>b-a);keys.slice(8).forEach(k=>store.delete(String(k)))};tx.oncomplete=()=>{db2.close();resolve()};tx.onerror=()=>{db2.close();reject(tx.error||new Error('cleanup'))}})}catch(e){console.warn('Backup local de recuperação falhou:',e)}}
+async function saveLocalRecovery(label='auto'){
+  const rateLimited=label==='save'||label==='global-save';
+  const now=Date.now();
+  if(rateLimited&&now-lastRecoveryAt<45000)return {skipped:true};
+  try{
+    const db=await stateBackupOpen();
+    const snap={label,createdAt:now,state:JSON.parse(serializeState())};
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(STATE_BACKUP_STORE,'readwrite');
+      tx.objectStore(STATE_BACKUP_STORE).put(snap,String(snap.createdAt));
+      tx.oncomplete=()=>{db.close();resolve()};
+      tx.onerror=tx.onabort=()=>{const error=tx.error||new Error('Não foi possível gravar o backup local.');db.close();reject(error)};
+    });
+    const db2=await stateBackupOpen();
+    await new Promise((resolve,reject)=>{
+      const tx=db2.transaction(STATE_BACKUP_STORE,'readwrite'),store=tx.objectStore(STATE_BACKUP_STORE),req=store.getAllKeys();
+      req.onsuccess=()=>{const keys=(req.result||[]).map(String).sort((a,b)=>Number(b)-Number(a));keys.slice(8).forEach(key=>store.delete(key))};
+      req.onerror=()=>{try{tx.abort()}catch{}};
+      tx.oncomplete=()=>{db2.close();resolve()};
+      tx.onerror=tx.onabort=()=>{const error=tx.error||new Error('Não foi possível organizar os backups locais.');db2.close();reject(error)};
+    });
+    if(rateLimited)lastRecoveryAt=now;
+    return snap;
+  }catch(e){
+    console.warn('Backup local de recuperação falhou:',e);
+    throw new Error(`Backup local não foi criado: ${e?.message||'armazenamento indisponível'}`,{cause:e});
+  }
+}
 const PLAYER_SHEET_BACKUP_DB='a-profecia-player-sheet-backups-v1',PLAYER_SHEET_BACKUP_STORE='snapshots';
 let playerSheetBackupTimer=0,playerSheetBackupPending=null;
 function playerSheetBackupOpen(){return new Promise((resolve,reject)=>{try{if(typeof indexedDB==='undefined')throw new Error('IndexedDB indisponível');const r=indexedDB.open(PLAYER_SHEET_BACKUP_DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(PLAYER_SHEET_BACKUP_STORE))r.result.createObjectStore(PLAYER_SHEET_BACKUP_STORE)};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('Não foi possível abrir o backup da ficha'))}catch(e){reject(e)}})}
@@ -546,8 +588,8 @@ function integrityAuditOpen(){return new Promise((resolve,reject)=>{try{const r=
 async function integrityAudit(action,details={}){try{const db=await integrityAuditOpen();await new Promise((resolve,reject)=>{const tx=db.transaction(INTEGRITY_AUDIT_STORE,'readwrite');tx.objectStore(INTEGRITY_AUDIT_STORE).add({at:Date.now(),action:String(action),role:state.session?.role||'',playerId:state.session?.playerId||'',details});tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>{db.close();reject(tx.error)}})}catch(e){console.warn('Auditoria local indisponível:',e)}}
 function campaignIntegrityReport(){const players=Array.isArray(state.players)?state.players:[],ids=new Set(),duplicates=[],missingId=[],invalid=[];for(const p of players){const id=String(p?.id||'').trim();if(!id){missingId.push(p?.name||p?.login||'sem nome');continue}if(ids.has(id))duplicates.push(id);ids.add(id);if(!String(p?.login||'').trim())invalid.push(id)}const pending=(()=>{try{return Number(JSON.parse(localStorage.getItem('a_profecia_sync_health_v1')||'{}')?.pending?1:0)}catch{return 0}})();return {ok:!duplicates.length&&!missingId.length&&!invalid.length,players:players.length,uniqueIds:ids.size,duplicates,missingId,invalid,pendingSync:pending,checkedAt:Date.now()}}
 function exportCampaignEmergency(){const report=campaignIntegrityReport();const payload={format:'A-PROFECIA-EMERGENCY-BACKUP',version:APP_VERSION,exportedAt:new Date().toISOString(),integrity:report,state:JSON.parse(serializeState())};const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`a-profecia-backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);integrityAudit('emergency-export',report);toast(report.ok?'Backup de emergência exportado.':'Backup exportado com alertas de integridade.');}
-async function getLocalRecoveries(){try{const db=await stateBackupOpen();return await new Promise((resolve,reject)=>{const tx=db.transaction(STATE_BACKUP_STORE,'readonly'),req=tx.objectStore(STATE_BACKUP_STORE).getAll();req.onsuccess=()=>{db.close();resolve((req.result||[]).sort((a,b)=>b.createdAt-a.createdAt))};req.onerror=()=>{db.close();reject(req.error)}})}catch{return []}}
-async function restoreLocalRecovery(){const list=await getLocalRecoveries();if(list.length<2&&list.length<1)throw new Error('Nenhum backup local encontrado');const snap=list[0];await saveLocalRecovery('antes-da-restauracao');state=clone(snap.state);state.items=migrateItems(state.items);storageSet(KEY,serializeState());if(remoteEnabled){try{const old=await fetchGlobal();if(old?.data)await backupGlobal(old.data,'antes-da-restauracao-local');await pushGlobalTracked(globalPayload())}catch(e){console.warn('Falha ao enviar restauração ao Supabase:',e)}}render(currentView||'home');toast(`Backup restaurado: ${new Date(snap.createdAt).toLocaleString('pt-BR')}`)}
+async function getLocalRecoveries(){const db=await stateBackupOpen();return await new Promise((resolve,reject)=>{const tx=db.transaction(STATE_BACKUP_STORE,'readonly'),req=tx.objectStore(STATE_BACKUP_STORE).getAll();req.onsuccess=()=>{db.close();resolve((req.result||[]).filter(x=>x&&x.state&&Number.isFinite(Number(x.createdAt))).sort((a,b)=>b.createdAt-a.createdAt))};req.onerror=()=>{db.close();reject(req.error||new Error('Não foi possível ler os backups locais.'))};tx.onabort=()=>{db.close();reject(tx.error||new Error('Leitura dos backups locais foi interrompida.'))}})}
+async function restoreLocalRecovery(){const list=await getLocalRecoveries();if(!list.length)throw new Error('Nenhum backup local encontrado.');const snap=list[0];await saveLocalRecovery('antes-da-restauracao');state=clone(snap.state);state.items=migrateItems(state.items);storageSet(KEY,serializeState());if(remoteEnabled){try{const old=await fetchGlobal();if(old?.data)await backupGlobal(old.data,'antes-da-restauracao-local');await pushGlobalTracked(globalPayload())}catch(e){console.warn('Falha ao enviar restauração ao Supabase:',e)}}render(currentView||'home');toast(`Backup restaurado: ${new Date(snap.createdAt).toLocaleString('pt-BR')}`)}
 function storageGet(key){try{return localStorage.getItem(key)}catch{return memoryStore[key]??null}}
 function storageSet(key,value){try{localStorage.setItem(key,value)}catch{memoryStore[key]=value}}
 const SESSION_CACHE_KEY='a_profecia_session_v3';
@@ -591,7 +633,7 @@ initPlayers({getState:()=>state,clone,storageGet,storageSet,KEY,serializeState,s
 let state=clone(DEFAULT);
 state=load();
 ps.lastSnapshot=clone(state.players||[]);
-function load(){try{const raw=storageGet(KEY)||storageGet('filii_abyssi_state_v10')||storageGet('filii_abyssi_state_v8');const saved=raw?JSON.parse(raw):null;if(!saved){const fresh=clone(DEFAULT);try{const cs=readStoredSession();if(cs?.role)fresh.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{}try{const cm=JSON.parse(storageGet(MEDIA_CACHE_KEY)||'null');mergeCriticalCacheIntoState(cm,fresh)}catch{}return fresh;}try{const tabS=tabSessionGet(),cs=tabS||(!saved.session?readStoredSession():null);if(cs?.role)saved.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{};try{const cachedMedia=storageGet(MEDIA_CACHE_KEY);if(cachedMedia)saved.__criticalMediaCache=JSON.parse(cachedMedia)}catch{};saved.siteBrand={name:'Ashen Testimony',image:'runa-gold.png',...(saved.siteBrand||{})};saved.siteBrand.name=String(saved.siteBrand.name||'Ashen Testimony').trim()||'Ashen Testimony';saved.siteBrand.image=saved.siteBrand.image||'runa-gold.png';saved.characterRules={campaign:{...DEFAULT_RULES.campaign,...(saved.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(saved.characterRules?.slasher||{})},skillRollMode:saved.characterRules?.skillRollMode==='simple'?'simple':'cris'};saved.classBonuses={...clone(CLASS_BONUSES_DEFAULTS_V107),...(saved.classBonuses||{})};saved.items=migrateItems(saved.items);saved.players=Array.isArray(saved.players)?saved.players:[];saved.playerTombstones=saved.playerTombstones&&typeof saved.playerTombstones==='object'?saved.playerTombstones:{};saved.creatures=Array.isArray(saved.creatures)?saved.creatures:[];saved.sounds=Array.isArray(saved.sounds)?saved.sounds:[];saved.musicLibrary=Array.isArray(saved.musicLibrary)?saved.musicLibrary:[];if(saved.music?.url&&!saved.musicLibrary.some(x=>String(x.url)===String(saved.music.url)))saved.musicLibrary.unshift({id:saved.music.mediaId||`music-${Date.now()}`,title:saved.music.title||'Trilha da campanha',url:saved.music.url,kind:saved.music.kind||'url',createdAt:Number(saved.music.commandAt)||Date.now()});saved.spells=Array.isArray(saved.spells)&&saved.spells.length?saved.spells:INITIAL_SPELLS.map(clone);{const known=new Set(saved.spells.map(x=>String(x?.id)));for(const seeded of INITIAL_SPELLS.filter(x=>SEEDED_SPELL_IDS.includes(x.id)))if(!known.has(String(seeded.id)))saved.spells.push(clone(seeded));}saved.uiIcons=saved.uiIcons||{attrs:{},skills:{}};saved.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(saved.uiIcons.attrs||{})};saved.uiIcons.skills=fixNewSkillIcons({...DEFAULT_SKILL_ICONS,...(saved.uiIcons.skills||{})});saved.uiIcons.conditions={...(saved.uiIcons.conditions||{})};saved.uiIcons.sessionSlots={main:'⚔',off:'◈',consumable:'✦',tool:'⚒',relic:'☽',free:'◇',...(saved.uiIcons.sessionSlots||{})};saved.backgrounds={...(saved.backgrounds||{})};saved.customContent={attrs:[],skills:[],conditions:[],deities:[],...(saved.customContent||{})};saved.combatSession={...defaultCombatSession(),...(saved.combatSession||{})};saved.combatSession.sessionId=String(saved.combatSession.sessionId||'')||cryptoRandomId('combat');saved.combatSession.round=Math.max(1,Number(saved.combatSession.round)||1);saved.combatSession.turn=Math.max(0,Number(saved.combatSession.turn)||0);saved.combatSession.participants=Array.isArray(saved.combatSession.participants)?saved.combatSession.participants:[];saved.combatSession.actedKeys=Array.isArray(saved.combatSession.actedKeys)?saved.combatSession.actedKeys.map(String):[];saved.combatSession.history=Array.isArray(saved.combatSession.history)?saved.combatSession.history:[];saved.terrorMode={...defaultTerrorMode(),...(saved.terrorMode||{})};saved.nexus={active:false,title:'Nexus Tabletop',url:'',...(saved.nexus||{})};saved.tvScreen={...defaultTvScreen(),...(saved.tvScreen||{})};saved.tvScenes=Array.isArray(saved.tvScenes)?saved.tvScenes:[];saved.soundboard={volume:.85,enabled:true,...(saved.soundboard||{})};saved.secretClues=Array.isArray(saved.secretClues)?saved.secretClues:[];saved.rulesBook={title:'Livro de Regras',url:'',kind:'url',...(saved.rulesBook||{})};if(typeof saved.music==='string')saved.music={type:'audio',url:saved.music,title:'Trilha da sessão'};saved.music=saved.music||{type:'',url:'',title:'',kind:'url',mediaId:''};saved.slasherIntroMusic=saved.slasherIntroMusic||{url:'',title:'',kind:'url'};if(typeof saved.music==='object'){saved.music.kind=saved.music.kind||'url';saved.music.mediaId=saved.music.mediaId||''}delete saved.sessionBoard;state=saved;saved.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.secretClues=Array.isArray(p.secretClues)?p.secretClues:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});mergeCriticalCacheIntoState(saved.__criticalMediaCache,saved);delete saved.__criticalMediaCache;saved.version=1.0;return saved}catch(e){console.error('[Ashen Testimony] load() falhou; usando estado padrão:',e);loadFailed=true;try{const raw=storageGet(KEY);if(raw&&!storageGet(KEY+'_backup_loadfail'))storageSet(KEY+'_backup_loadfail',raw)}catch{}return clone(DEFAULT)}}
+function load(){try{const raw=storageGet(KEY)||storageGet('filii_abyssi_state_v10')||storageGet('filii_abyssi_state_v8');const saved=raw?JSON.parse(raw):null;if(!saved){const fresh=clone(DEFAULT);try{const cs=readStoredSession();if(cs?.role)fresh.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{}try{const cm=JSON.parse(storageGet(MEDIA_CACHE_KEY)||'null');mergeCriticalCacheIntoState(cm,fresh)}catch{}return fresh;}try{const tabS=tabSessionGet(),cs=tabS||(!saved.session?readStoredSession():null);if(cs?.role)saved.session={role:cs.role,login:cs.login||'',playerId:cs.playerId||'',playerSnapshot:cs.playerSnapshot||null}}catch{};try{const cachedMedia=storageGet(MEDIA_CACHE_KEY);if(cachedMedia)saved.__criticalMediaCache=JSON.parse(cachedMedia)}catch{};saved.siteBrand={name:'Ashen Testimony',image:'runa-gold.png',...(saved.siteBrand||{})};saved.siteBrand.name=String(saved.siteBrand.name||'Ashen Testimony').trim()||'Ashen Testimony';saved.siteBrand.image=saved.siteBrand.image||'runa-gold.png';saved.characterRules={campaign:{...DEFAULT_RULES.campaign,...(saved.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(saved.characterRules?.slasher||{})},...rollRulesPatch(saved.characterRules)};saved.classBonuses={...clone(CLASS_BONUSES_DEFAULTS_V107),...(saved.classBonuses||{})};saved.items=migrateItems(saved.items);saved.players=Array.isArray(saved.players)?saved.players:[];saved.playerTombstones=saved.playerTombstones&&typeof saved.playerTombstones==='object'?saved.playerTombstones:{};saved.creatures=Array.isArray(saved.creatures)?saved.creatures:[];saved.sounds=Array.isArray(saved.sounds)?saved.sounds:[];saved.musicLibrary=Array.isArray(saved.musicLibrary)?saved.musicLibrary:[];if(saved.music?.url&&!saved.musicLibrary.some(x=>String(x.url)===String(saved.music.url)))saved.musicLibrary.unshift({id:saved.music.mediaId||`music-${Date.now()}`,title:saved.music.title||'Trilha da campanha',url:saved.music.url,kind:saved.music.kind||'url',createdAt:Number(saved.music.commandAt)||Date.now()});saved.spells=Array.isArray(saved.spells)&&saved.spells.length?saved.spells:INITIAL_SPELLS.map(clone);{const known=new Set(saved.spells.map(x=>String(x?.id)));for(const seeded of INITIAL_SPELLS.filter(x=>SEEDED_SPELL_IDS.includes(x.id)))if(!known.has(String(seeded.id)))saved.spells.push(clone(seeded));}saved.uiIcons=saved.uiIcons||{attrs:{},skills:{}};saved.uiIcons.attrs={...DEFAULT_ATTR_ICONS,...(saved.uiIcons.attrs||{})};saved.uiIcons.skills=fixNewSkillIcons({...DEFAULT_SKILL_ICONS,...(saved.uiIcons.skills||{})});saved.uiIcons.conditions={...(saved.uiIcons.conditions||{})};saved.uiIcons.sessionSlots={main:'⚔',off:'◈',consumable:'✦',tool:'⚒',relic:'☽',free:'◇',...(saved.uiIcons.sessionSlots||{})};saved.backgrounds={...(saved.backgrounds||{})};saved.customContent={attrs:[],skills:[],conditions:[],deities:[],...(saved.customContent||{})};saved.combatSession={...defaultCombatSession(),...(saved.combatSession||{})};saved.combatSession.sessionId=String(saved.combatSession.sessionId||'')||cryptoRandomId('combat');saved.combatSession.round=Math.max(1,Number(saved.combatSession.round)||1);saved.combatSession.turn=Math.max(0,Number(saved.combatSession.turn)||0);saved.combatSession.participants=Array.isArray(saved.combatSession.participants)?saved.combatSession.participants:[];saved.combatSession.actedKeys=Array.isArray(saved.combatSession.actedKeys)?saved.combatSession.actedKeys.map(String):[];saved.combatSession.history=Array.isArray(saved.combatSession.history)?saved.combatSession.history:[];saved.terrorMode={...defaultTerrorMode(),...(saved.terrorMode||{})};saved.nexus={active:false,title:'Nexus Tabletop',url:'',...(saved.nexus||{})};saved.tvScreen={...defaultTvScreen(),...(saved.tvScreen||{})};saved.tvScenes=Array.isArray(saved.tvScenes)?saved.tvScenes:[];saved.soundboard={volume:.85,enabled:true,...(saved.soundboard||{})};saved.secretClues=Array.isArray(saved.secretClues)?saved.secretClues:[];saved.rulesBook={title:'Livro de Regras',url:'',kind:'url',...(saved.rulesBook||{})};if(typeof saved.music==='string')saved.music={type:'audio',url:saved.music,title:'Trilha da sessão'};saved.music=saved.music||{type:'',url:'',title:'',kind:'url',mediaId:''};saved.slasherIntroMusic=saved.slasherIntroMusic||{url:'',title:'',kind:'url'};if(typeof saved.music==='object'){saved.music.kind=saved.music.kind||'url';saved.music.mediaId=saved.music.mediaId||''}delete saved.sessionBoard;state=saved;saved.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.secretClues=Array.isArray(p.secretClues)?p.secretClues:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});mergeCriticalCacheIntoState(saved.__criticalMediaCache,saved);delete saved.__criticalMediaCache;saved.version=1.0;return saved}catch(e){console.error('[Ashen Testimony] load() falhou; usando estado padrão:',e);loadFailed=true;try{const raw=storageGet(KEY);if(raw&&!storageGet(KEY+'_backup_loadfail'))storageSet(KEY+'_backup_loadfail',raw)}catch{}return clone(DEFAULT)}}
 let remoteSaveTimer=null,remoteHydrated=false,remoteApplying=false;
 let remoteRenderFrame=0,remoteRenderQueued=false;
 function queueRemoteRender(view=currentView||'home'){
@@ -673,7 +715,7 @@ function mergeGlobal(remote){
     state.uiIcons.skills=fixNewSkillIcons({...DEFAULT_SKILL_ICONS,...(state.uiIcons.skills||{})});
     state.uiIcons.conditions={...(state.uiIcons.conditions||{})};state.uiIcons.sessionTheme={...(state.uiIcons.sessionTheme||{})};state.uiIcons.sessionGlyphs={...(state.uiIcons.sessionGlyphs||{})};
     state.backgrounds={...(state.backgrounds||{})};state.tvScreen={...defaultTvScreen(),...(state.tvScreen||{})};state.tvScenes=Array.isArray(state.tvScenes)?state.tvScenes:[];state.slasherIntroMusic=state.slasherIntroMusic||{url:'',title:'',kind:'url'};state.customContent={attrs:[],skills:[],conditions:[],deities:[],...(state.customContent||{})};
-    state.characterRules={campaign:{...DEFAULT_RULES.campaign,...(state.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(state.characterRules?.slasher||{})},skillRollMode:state.characterRules?.skillRollMode==='simple'?'simple':'cris'};state.classBonuses={...clone(CLASS_BONUSES_DEFAULTS_V107),...(state.classBonuses||{})};normalizeCombatSession();normalizeTerrorMode();state.nexus={active:false,title:'Nexus Tabletop',url:'',...(state.nexus||{})};state.soundboard={volume:.85,enabled:true,...(state.soundboard||{})};state.sounds=Array.isArray(state.sounds)?state.sounds:[];
+    state.characterRules={campaign:{...DEFAULT_RULES.campaign,...(state.characterRules?.campaign||{})},slasher:{...DEFAULT_RULES.slasher,...(state.characterRules?.slasher||{})},...rollRulesPatch(state.characterRules)};state.classBonuses={...clone(CLASS_BONUSES_DEFAULTS_V107),...(state.classBonuses||{})};normalizeCombatSession();normalizeTerrorMode();state.nexus={active:false,title:'Nexus Tabletop',url:'',...(state.nexus||{})};state.soundboard={volume:.85,enabled:true,...(state.soundboard||{})};state.sounds=Array.isArray(state.sounds)?state.sounds:[];
     state.players.forEach(p=>{p.musicThemes=Array.isArray(p.musicThemes)?p.musicThemes:[];p.secretClues=Array.isArray(p.secretClues)?p.secretClues:[];p.homeWallpaper=p.homeWallpaper||'';normalize(p)});
     state.musicLibrary=Array.isArray(state.musicLibrary)?state.musicLibrary:[];
     state.creatures.forEach(normalize);
@@ -928,13 +970,14 @@ function masterRollButton(p,sk){return `<button type="button" class="skill-roll"
 function skillMarksHtml(sk){const m=(TRAINED_ONLY_SKILLS.has(sk)?'*':'')+(LOAD_PENALTY_SKILLS.has(sk)?'+':'');return m?`<sup class="skill-mark" title="${TRAINED_ONLY_SKILLS.has(sk)?'Somente treinada. ':''}${LOAD_PENALTY_SKILLS.has(sk)?'Penalidade de carga.':''}">${m}</sup>`:''}
 function heavyLoad(p){try{const cap=bagCapacity(p);return cap>0&&bagWeight(p)>=Math.ceil(cap*0.8)}catch{return false}}
 function skillLegendHtml(p){return `<p class="skill-legend"><span>* Somente treinada.</span> <span>+ Penalidade de carga.</span>${heavyLoad(p)?` <strong>Carga pesada: −${LOAD_PENALTY_VALUE} nas perícias com +.</strong>`:''}</p>`}
-function skillRollMode(){return state?.characterRules?.skillRollMode==='simple'?'simple':'cris'}
+function skillRollMode(){const v=state?.characterRules?.skillRollMode;return v==='simple'||v==='cris'?v:'limit'}
+function rollRulesPatch(r){const v=r&&r.skillRollMode;return {skillRollMode:Number(r&&r.rollSystemV)===2&&(v==='simple'||v==='cris')?v:'limit',rollSystemV:2}}
 function rollCritClass(r){return r?.crit==='crit'?'roll-crit':r?.crit==='fumble'?'roll-fumble':''}
 function rollOneD20(){if(window.crypto?.getRandomValues){const limit=Math.floor(0x100000000/20)*20,arr=new Uint32Array(1);do{crypto.getRandomValues(arr)}while(arr[0]>=limit);return arr[0]%20+1}return Math.floor(Math.random()*20)+1}
 let masterRollLog=[];
 let rollAdvMode='';
 function setRollAdv(v){rollAdvMode=v==='adv'||v==='dis'?v:'';if(typeof document!=='undefined')document.querySelectorAll('.roll-adv [data-roll-adv]').forEach(b=>{const on=(b.dataset.rollAdv||'')===rollAdvMode;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on?'true':'false')})}
-function rollAdvControlHtml(){const btn=(v,t)=>`<button type="button" data-roll-adv="${v}" class="${rollAdvMode===v?'active':''}" aria-pressed="${rollAdvMode===v?'true':'false'}">${t}</button>`;return `<div class="roll-adv" role="group" aria-label="Vantagem ou desvantagem na próxima rolagem">${btn('dis','Desvantagem')}${btn('','Normal')}${btn('adv','Vantagem')}</div>`}
+function rollAdvControlHtml(){const btn=(v,t)=>`<button type="button" data-roll-adv="${v}" class="${rollAdvMode===v?'active':''}" aria-pressed="${rollAdvMode===v?'true':'false'}">${t}</button>`;return `<div class="roll-adv" role="group" aria-label="Vantagem ou desvantagem na próxima rolagem">${btn('dis','Desvantagem')}${btn('','Normal')}${btn('adv','Vantagem')}<label class="roll-dt" title="Opcional: informe a DT para ver o grau de sucesso">DT <input type="number" inputmode="numeric" min="1" max="99" class="roll-dt-input" placeholder="—" aria-label="Dificuldade do teste (opcional)"></label></div>`}
 function attrRollButton(a){const n=esc(a);return `<button type="button" class="skill-roll attr-roll" data-roll-attr="${n}" title="Rolar ${n}" aria-label="Rolar ${n}">${skillRollIconSVG()}</button>`}
 function rollPoolD20(base){
  const adj=Math.max(0,Math.min(10,Math.floor(base)||0))+(rollAdvMode==='adv'?1:rollAdvMode==='dis'?-1:0);
@@ -942,21 +985,43 @@ function rollPoolD20(base){
  const dice=Array.from({length:count},rollOneD20);
  return {dice,keep,natural:keep==='high'?Math.max(...dice):Math.min(...dice)};
 }
+function rollPoolLimit(points){
+ const pts=Math.max(0,Math.floor(Number(points))||0);
+ const adv=rollAdvMode==='adv'?1:rollAdvMode==='dis'?-1:0;
+ const count=Math.max(1,Math.min(3,Math.max(1,Math.min(3,pts))+adv));
+ const dice=Array.from({length:count},rollOneD20);
+ return {dice,keep:'high',natural:Math.max(...dice),bonus:Math.max(0,pts-3)*2,points:pts};
+}
+function rollDtValue(){
+ if(typeof document==='undefined')return 0;
+ for(const el of document.querySelectorAll('.roll-dt-input')){const n=Math.floor(Number(el.value));if(Number.isFinite(n)&&n>0)return Math.min(99,n)}
+ return 0;
+}
+function clearRollDt(){if(typeof document!=='undefined')document.querySelectorAll('.roll-dt-input').forEach(el=>{el.value=''})}
+function rollGrade(natural,value,dt){
+ if(!(dt>0))return '';
+ if(natural===20)return 'Sucesso crítico';
+ if(natural===1)return 'Falha crítica';
+ const d=value-dt;
+ return d<=-10?'Falha grave':d<0?'Falha':d>=10?'Sucesso excepcional':d>=5?'Sucesso elevado':'Sucesso';
+}
 function finishRoll(p,roll,opts){
  const adv=rollAdvMode;
  if(opts.log==='master'){masterRollLog=[{...roll,who:`Mestre → ${p.name||p.login||'Player'}`},...masterRollLog].slice(0,30)}
  else{p.rolls=mergeRollHistory(p.rolls,roll);save();updateDiceUI(roll)}
- toast(`${roll.skill||roll.attr}${adv==='adv'?' (vantagem)':adv==='dis'?' (desvantagem)':''}: ${roll.text}${roll.crit==='crit'?' • Crítico natural!':roll.crit==='fumble'?' • Falha crítica!':''}`);
- setRollAdv('');
+ toast(`${roll.skill||roll.attr}${adv==='adv'?' (vantagem)':adv==='dis'?' (desvantagem)':''}: ${roll.text}${roll.grade?'':roll.crit==='crit'?' • Crítico natural!':roll.crit==='fumble'?' • Falha crítica!':''}`);
+ setRollAdv('');clearRollDt();
  return roll;
 }
 function buildRoll(name,pool,modifier,extra){
  const {dice,keep,natural}=pool,value=natural+modifier;
  const modTxt=modifier?` ${modifier>0?'+':'−'} ${Math.abs(modifier)}`:'';
- const text=dice.length>1?`[${dice.join(', ')}] → ${natural}${modTxt} = ${value}`:`${natural}${modTxt} = ${value}`;
+ const dt=Number.isFinite(Number(extra?.dt))&&Number(extra.dt)>0?Number(extra.dt):rollDtValue(),grade=rollGrade(natural,value,dt);
+ const baseText=dice.length>1?`[${dice.join(', ')}] → ${natural}${modTxt} = ${value}`:`${natural}${modTxt} = ${value}`;
+ const text=grade?`${baseText} • DT ${dt}: ${grade}`:baseText;
  const dieTxt=dice.length>1?`${dice.length}d20 (${keep==='low'?'menor':'maior'})`:'d20';
  const tag=rollAdvMode==='adv'?' ▲':rollAdvMode==='dis'?' ▼':'';
- return {id:cryptoRandomId('roll'),value,label:`${name} • ${dieTxt}${modifier?(modifier>0?'+':'−')+Math.abs(modifier):''}${tag}`,die:name,time:new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),rawRolls:dice,modifier,diceTotal:natural,natural,crit:natural===20?'crit':natural===1?'fumble':'',adv:rollAdvMode,text,createdAt:Date.now(),...extra};
+ return {id:cryptoRandomId('roll'),value,label:`${name} • ${dieTxt}${modifier?(modifier>0?'+':'−')+Math.abs(modifier):''}${tag}`,die:name,time:new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),rawRolls:dice,modifier,diceTotal:natural,natural,crit:natural===20?'crit':natural===1?'fumble':'',adv:rollAdvMode,text,dt:dt||0,grade,createdAt:Date.now(),...extra};
 }
 function rollSkillFor(p,sk,opts={}){
  if(!p||!sk)return null;
@@ -965,12 +1030,14 @@ function rollSkillFor(p,sk,opts={}){
  const penalty=LOAD_PENALTY_SKILLS.has(sk)&&heavyLoad(p)?LOAD_PENALTY_VALUE:0;
  const attr=SKILL_ATTR[sk];let poolBase=1;
  if(skillRollMode()==='cris'&&attr&&allAttrs().includes(attr))poolBase=Number.isFinite(opts.attrValue)?opts.attrValue:effectiveAttr(p,attr);
+ if(skillRollMode()==='limit'){const pool=rollPoolLimit(base);return finishRoll(p,buildRoll(sk,pool,pool.bonus-penalty,{skill:sk,attr:attr||'',points:base}),opts)}
  const roll=buildRoll(sk,rollPoolD20(poolBase),base-penalty,{skill:sk,attr:attr||''});
  return finishRoll(p,roll,opts);
 }
 function rollAttrFor(p,attr,opts={}){
  if(!p||!attr)return null;
  const av=Number.isFinite(opts.attrValue)?opts.attrValue:effectiveAttr(p,attr);
+ if(skillRollMode()==='limit'){const pool=rollPoolLimit(av);return finishRoll(p,buildRoll(attr,pool,pool.bonus,{attr,points:av}),opts)}
  const roll=buildRoll(attr,rollPoolD20(skillRollMode()==='cris'?av:1),0,{attr});
  return finishRoll(p,roll,opts);
 }
@@ -1334,8 +1401,8 @@ function setMusicUiState(patch){
 }
 function musicIsMaster(){return state.session?.role==='master'}
 function normalizeMusic(){
-  const m=state.music||{},source=detectMusicSource(m.url),type=source.error?(m.type||'audio'):source.type;
-  return {type,title:m.title||'',url:source.error?(m.url||''):source.url,kind:m.kind||source.provider||'url',provider:source.error?(m.provider||'audio'):source.provider,sourceId:source.id||'',embedUrl:source.embedUrl||'',playing:!!m.playing,loop:!!m.loop,position:Math.max(0,Number(m.position)||0),commandAt:Number(m.commandAt)||0,startedAt:Number(m.startedAt)||0,mediaId:m.mediaId||''};
+  const m=state.music||{};
+  return {type:m.type||'audio',title:m.title||'',url:m.url||'',kind:m.kind||'url',playing:!!m.playing,loop:!!m.loop,position:Math.max(0,Number(m.position)||0),commandAt:Number(m.commandAt)||0,startedAt:Number(m.startedAt)||0,mediaId:m.mediaId||''};
 }
 function musicTargetPosition(m){
   if(!m.playing)return Math.max(0,Number(m.position)||0);
@@ -1366,7 +1433,7 @@ function releaseGlobalMusicAudio(){
   globalMusicSrc='';globalMusicLastCommand=0;
 }
 function applyGlobalMusicPlayback(m,localVolume,force=false){
-  if(m.type!=='audio'||!m.url){releaseGlobalMusicAudio();return null;}
+  if(m.type==='spotify'||!m.url){releaseGlobalMusicAudio();return null;}
   const audio=ensureGlobalMusicAudio();
   audio.loop=!!m.loop;
   audio.volume=localVolume;
@@ -1421,17 +1488,9 @@ function syncGlobalMusic(force=false){
   const signature=`${m.type}|${m.url}|${m.title}|${m.playing}|${m.loop}|${m.commandAt}|${ui.closed?'c':''}|${ui.minimized?'m':''}|${globalMusicBlocked?'b':''}`;
   if(!force&&root.dataset.signature===signature)return;
   if(m.type==='spotify'){
-    root.innerHTML=`<div class="global-music spotify"><div class="global-music-head"><div><span class="muted">TRILHA SPOTIFY</span><strong>${esc(m.title||'Spotify')}</strong></div><button class="music-window-btn" id="musicClose" title="Fechar">×</button></div>${spotifyLogged()?`<div class="spotify-controls"><button class="btn gold" id="spotifyPlayGlobal">▶ Reproduzir</button><button class="btn" id="spotifyPauseGlobal">Ⅱ Pausar</button></div>`:`<div class="field"><label>Client ID do app Spotify</label><input id="spotifyClientIdGlobal" value="${esc(spotifyClientId())}" placeholder="Cole o Client ID do Spotify"></div><button class="btn gold" id="spotifyLoginGlobal">Conectar minha conta Spotify</button>`}<p class="tiny muted">Cada dispositivo conecta sua própria conta. Reprodução completa pelo SDK exige Premium.</p></div>`;
+    root.innerHTML=`<div class="global-music spotify"><div class="global-music-head"><div><span class="muted">Trilha Spotify</span><strong>${esc(m.title||'Spotify')}</strong></div></div><div class="spotify-controls"><button class="btn gold" id="spotifyPlayGlobal">▶ Reproduzir</button><button class="btn" id="spotifyPauseGlobal">Ⅱ Pausar</button><button class="btn ghost" id="musicClose">×</button></div><p class="tiny muted">Spotify continua individual por conta/dispositivo.</p></div>`;
     root.querySelector('#spotifyPlayGlobal')?.addEventListener('click',spotifyPlayCurrent);
     root.querySelector('#spotifyPauseGlobal')?.addEventListener('click',spotifyPause);
-    root.querySelector('#spotifyLoginGlobal')?.addEventListener('click',spotifyLogin);
-    bindMusicUi(root,m,null,localVolume);root.dataset.signature=signature;return;
-  }
-  if(m.type==='youtube'){
-    const videoId=m.sourceId||detectMusicSource(m.url).id||'',start=Math.floor(m.playing?musicTargetPosition(m):m.position),params=new URLSearchParams({autoplay:m.playing?'1':'0',controls:'1',playsinline:'1',rel:'0',modestbranding:'1',start:String(Math.max(0,start))});
-    if(m.loop){params.set('loop','1');params.set('playlist',videoId)}
-    const embed=videoId?`https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`:'';
-    root.innerHTML=`<div class="global-music music-panel youtube"><div class="global-music-head"><div><span class="muted">YOUTUBE / YOUTUBE MUSIC</span><strong>${esc(m.title||'Trilha da campanha')}</strong></div><div class="music-window-controls"><button class="music-window-btn" id="musicMinimize" title="Minimizar">−</button><button class="music-window-btn" id="musicClose" title="Fechar">×</button></div></div>${embed?`<iframe title="${esc(m.title||'Vídeo da trilha')}" src="${embed}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`:'<p class="tiny muted">Link de vídeo inválido.</p>'}<div class="music-status"><span class="music-status-dot ${m.playing?'on':''}"></span>${m.playing?'Reprodução solicitada para a sessão':'Pausada'}</div>${musicIsMaster()?`<div class="music-master-controls"><button class="music-control" id="musicGlobalPlay">${m.playing?'Ⅱ':'▶'}</button><button class="music-control" id="musicGlobalStop">■</button><button class="music-loop ${m.loop?'active':''}" id="musicGlobalLoop">↻ ${m.loop?'LOOP ATIVO':'LOOP'}</button></div>`:'<p class="music-player-note">O Mestre seleciona a trilha. Se a reprodução automática for bloqueada, toque em Play no vídeo.</p>'}<p class="tiny muted">Reprodução pelo player oficial do YouTube; o vídeo não é convertido nem extraído como MP3.</p></div>`;
     bindMusicUi(root,m,null,localVolume);root.dataset.signature=signature;return;
   }
   if(ui.closed){root.innerHTML=`<button class="music-reopen" id="musicReopen" title="Abrir controle de música">♪</button>`;bindMusicUi(root,m,audio,localVolume);root.dataset.signature=signature;return;}
@@ -1473,7 +1532,7 @@ function syncSoundboard(){
   root.dataset.signature=signature;
 }
 
-function spotifyHomePanel(){const m=normalizeMusic();if(m.type!=='spotify'||!m.url)return '';return `<section class="home-panel spotify-home-panel"><div class="section-kicker">TRILHA SPOTIFY</div><h2>${esc(m.title||'Trilha da campanha')}</h2><p>Conecte sua própria conta Spotify para reproduzir a trilha no seu navegador. A escolha da trilha continua sob controle do Mestre.</p><div class="row">${spotifyLogged()?`<button class="btn gold" id="spotifyHomePlay">▶ Reproduzir</button><button class="btn" id="spotifyHomePause">Ⅱ Pausar</button>`:`<button class="btn gold" id="spotifyHomeLogin">Entrar com Spotify</button>`}<a class="btn ghost" href="${esc(safeHref(m.url))}" target="_blank" rel="noopener">Abrir</a></div></section>`}
+function spotifyHomePanel(){const m=state.music||{};if(m.type!=='spotify'||!m.url)return '';return `<section class="home-panel spotify-home-panel"><div class="section-kicker">TRILHA SPOTIFY</div><h2>${esc(m.title||'Trilha da campanha')}</h2><p>Conecte sua própria conta Spotify para reproduzir a trilha no seu navegador. A escolha da trilha continua sob controle do Mestre.</p><div class="row">${spotifyLogged()?`<button class="btn gold" id="spotifyHomePlay">▶ Reproduzir</button><button class="btn" id="spotifyHomePause">Ⅱ Pausar</button>`:`<button class="btn gold" id="spotifyHomeLogin">Entrar com Spotify</button>`}<a class="btn ghost" href="${esc(safeHref(m.url))}" target="_blank" rel="noopener">Abrir</a></div></section>`}
 function siteBrand(){const b=state?.siteBrand||{};const rawName=String(b.name||'').trim();return {name:(!rawName||rawName==='A Profecia')?'Ashen Testimony':rawName,image:safeImgSrc(assetUrl(b.image||'runa-gold.png'),'/runa-gold.png')}}
 function applySiteBrand(){const b=siteBrand();document.title=b.name;const meta=document.querySelector('meta[name=description]');if(meta)meta.setAttribute('content',`${b.name} — sistema de RPG sombrio.`);}
 function openPersonalSpellEditor(p,id=null,view='sheet'){
@@ -1545,7 +1604,7 @@ function spellMarkup(p){
 }
 
 function guardianBadge(){const map={ok:['🟢','SITE OK'],attention:['🟡','ATENÇÃO'],offline:['🔴','OFFLINE'],checking:['🔵','VERIFICANDO'],session:['🟣','SESSÃO']};const [icon,label]=map[sessionGuardian.state]||map.checking;return `<button type="button" class="site-status-indicator status-${esc(sessionGuardian.state)}" id="siteStatusIndicator" title="${esc(sessionGuardian.message)}"><span>${icon}</span><b>${label}</b></button>`}
-function shell(content,active='home'){const brand=siteBrand();const master=state.session?.role==='master';const libraryActive=active==='library';const diaryActive=active==='diary';const nexusActive=active==='nexus';return `<div class="shell ${master?'shell-master':''}"><a class="skip-link" href="#main-content" data-skip-main>Pular para o conteúdo</a><header class="topbar"><div class="topbar-inner"><div class="brand"><img src="${esc(brand.image)}" alt=""><span class="brand-name">${esc(brand.name)}</span></div><div class="topbar-status">${guardianBadge()}</div><nav class="nav"><button data-nav="home" class="${active==='home'?'active':''}${master?'':' nav-curtain'}"${master?'':' type="button" aria-label="Modo sessão" title="Modo sessão"'}>${master?'Início':CURTAIN_CLOSED_SVG}</button>${master?`<button data-nav="session" class="${active==='session'?'active':''}" title="Painel único para conduzir a mesa">Sessão</button>`:''}<button data-nav="sheet" class="${active==='sheet'?'active':''}">Ficha</button><button data-nav="classes" class="${active==='classes'?'active':''}">Classes</button><button data-nav="nexus" class="${nexusActive?'active':''}">Nexus</button>${master?`<button data-nav="master" class="${active==='master'?'active':''}">Mestre</button>`:`<button data-nav="spells" class="${active==='spells'?'active':''}">Magias</button><button data-nav="map" class="${active==='map'?'active':''}">Mapa</button><button data-nav="archive" class="${active==='archive'?'active':''}">Arquivo</button><button data-nav="diary" class="${diaryActive?'active':''}">Diário</button><button data-nav="library" class="${libraryActive?'active':''}">Biblioteca</button><button data-nav="rules" class="${active==='rules'?'active':''}">Regras</button>`}<button id="logout" type="button">Sair</button></nav></div></header><main id="main-content" tabindex="-1" class="main ${['sheet','classes','master','map','archive','diary','library','rules','nexus','spells','session'].includes(active)?`main-${active}`:'main-home'}">${content}</main><div id="personal-player" aria-live="polite"></div></div>`}
+function shell(content,active='home'){const brand=siteBrand();const master=state.session?.role==='master';const libraryActive=active==='library';const diaryActive=active==='diary';const nexusActive=active==='nexus';return `<div class="shell ${master?'shell-master':''}"><a class="skip-link" href="#main-content" data-skip-main>Pular para o conteúdo</a><header class="topbar"><div class="topbar-inner"><div class="brand"><img src="${esc(brand.image)}" alt=""><span class="brand-name">${esc(brand.name)}</span></div><div class="topbar-status">${guardianBadge()}</div><nav class="nav"><button data-nav="home" class="${active==='home'?'active':''}${master?'':' nav-curtain'}"${master?'':' type="button" aria-label="Modo sessão" title="Modo sessão"'}>${master?'Início':CURTAIN_CLOSED_SVG}</button>${master?`<button data-nav="session" class="${active==='session'?'active':''}" title="Painel único para conduzir a mesa">Sessão</button>`:''}<button data-nav="sheet" class="${active==='sheet'?'active':''}">Ficha</button><button data-nav="classes" class="${active==='classes'?'active':''}">Classes</button><button data-nav="nexus" class="${nexusActive?'active':''}">Nexus</button>${master?`<button data-nav="master" class="${active==='master'?'active':''}">Mestre</button>`:`<button data-nav="spells" class="${active==='spells'?'active':''}">Magias</button><button data-nav="map" class="${active==='map'?'active':''}">Mapa</button><button data-nav="archive" class="${active==='archive'?'active':''}">Arquivo</button><button data-nav="diary" class="${diaryActive?'active':''}">Diário</button><button data-nav="library" class="${libraryActive?'active':''}">Biblioteca</button><button data-nav="rules" class="${active==='rules'?'active':''}">Regras</button>`}<button data-nav="dicerules" class="${active==='dicerules'?'active':''}">Rolagens</button><button id="logout" type="button">Sair</button></nav></div></header><main id="main-content" tabindex="-1" class="main ${['sheet','classes','master','map','archive','diary','library','rules','nexus','spells','session'].includes(active)?`main-${active}`:'main-home'}">${content}</main><div id="personal-player" aria-live="polite"></div></div>`}
 async function deletePlayerConfirmed(player){
   const id=playerSyncKey(player);
   if(!id)throw new Error('PLAYER_ID_INVALIDO');
@@ -1613,7 +1672,7 @@ function bindNav(){
   },true);
 }
 function playerMusicLibraryMarkup(p){const lib=Array.isArray(p.playerMusicLibrary)?p.playerMusicLibrary:[];return `<article class="sheet-card player-music-library"><div class="section-heading"><div><span class="section-kicker">BIBLIOTECA PESSOAL</span><h2>Suas trilhas salvas</h2></div><span class="corner-mark">${lib.length} música(s)</span></div><p class="muted small">Crie seu banco de músicas para usar durante a sessão. Envie o MP3 baixado no seu aparelho.</p><div class="library-add-grid"><input id="libMusicTitle" placeholder="Ex.: Tema de combate" maxlength="80"><label class="btn small gold">🎵 Enviar MP3<input id="libMusicFile" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.opus" hidden></label></div><small class="muted">Preencha o título (opcional) e escolha o arquivo (até 25 MB).</small><div class="library-list">${lib.length?lib.map((m,i)=>`<div class="library-item"><div><strong>${esc(m.title||'Sem nome')}</strong><small>${m.kind==='file'?'Arquivo enviado do aparelho':esc(m.url||'')}</small></div><div class="row"><button type="button" class="btn small gold" data-play-library="${i}">▶</button><button type="button" class="btn small" data-pause-library="${i}">Ⅱ</button><button type="button" class="btn small" data-stop-library="${i}">■</button><button type="button" class="btn small danger" data-remove-library="${i}">✕</button></div></div>`).join(''):'<div class="empty">Sem músicas na sua biblioteca.</div>'}</div></article>`}
-function playerThemesMarkup(p){const themes=Array.isArray(p.musicThemes)?p.musicThemes:[];return `<article class="sheet-card character-themes"><div class="section-heading"><div><span class="section-kicker">TRILHAS DO PERSONAGEM</span><h2>A música que acompanha sua história</h2></div></div><p class="muted small">Crie trilhas separadas, como Música de Morte, Tema de Combate ou Tema Pessoal. Você escolhe o título e o link.</p><div class="theme-add-grid"><input id="themeLabel" placeholder="Ex.: Música de morte"><input id="themeTitle" placeholder="Ex.: Old Doll"><input id="themeUrl" placeholder="Link do Spotify ou URL da música"><button class="btn gold" id="addTheme">Adicionar trilha</button></div><div class="theme-upload-row"><label class="btn small gold">🎵 Enviar MP3 do celular<input id="themeFile" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.opus" hidden></label><small class="muted">Preencha o tipo e o nome acima (opcional) e escolha o arquivo (até 25 MB).</small></div><div class="character-theme-list">${themes.length?themes.map((t,i)=>`<div class="character-theme-card"><div><span class="theme-label">${esc(t.label||'TRILHA')}</span><h3>${esc(t.title||'Sem título')}</h3><small>${t.kind==='file'?'Arquivo enviado do aparelho':esc(t.url||'')}</small></div><div class="row">${themeIsAudio(t)?`<button type="button" class="btn small gold" data-play-theme="${i}">▶ Tocar</button><button type="button" class="btn small" data-pause-theme="${i}">Ⅱ Pausar</button><button type="button" class="btn small" data-stop-theme="${i}">■ Parar</button>`:''}<a class="btn small" href="${esc(safeHref(t.url))}" target="_blank" rel="noopener">Abrir</a><button class="btn small danger" data-remove-theme="${i}">Remover</button></div></div>`).join(''):'<div class="empty">Nenhuma trilha cadastrada para este personagem.</div>'}</div></article>`}
+function playerThemesMarkup(p){const themes=Array.isArray(p.musicThemes)?p.musicThemes:[];return `<article class="sheet-card character-themes"><div class="section-heading"><div><span class="section-kicker">TRILHAS DO PERSONAGEM</span><h2>A música que acompanha sua história</h2></div></div><p class="muted small">Crie trilhas separadas, como Música de Morte, Tema de Combate ou Tema Pessoal. Você escolhe o título e o link.</p><div class="theme-add-grid"><input id="themeLabel" placeholder="Ex.: Música de morte"><input id="themeTitle" placeholder="Ex.: Old Doll"><input id="themeUrl" placeholder="Link do Spotify, YouTube ou YouTube Music, ou URL do MP3"><button class="btn gold" id="addTheme">Adicionar trilha</button></div><div class="theme-upload-row"><label class="btn small gold">🎵 Enviar MP3 do celular<input id="themeFile" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.opus" hidden></label><small class="muted">Preencha o tipo e o nome acima (opcional) e escolha o arquivo (até 25 MB).</small></div><div class="character-theme-list">${themes.length?themes.map((t,i)=>`<div class="character-theme-card"><div><span class="theme-label">${esc(t.label||'TRILHA')}</span><h3>${esc(t.title||'Sem título')}</h3><small>${t.kind==='file'?'Arquivo enviado do aparelho':esc(t.url||'')}</small></div><div class="row">${themeIsAudio(t)?`<button type="button" class="btn small gold" data-play-theme="${i}">▶ Tocar</button><button type="button" class="btn small" data-pause-theme="${i}">Ⅱ Pausar</button><button type="button" class="btn small" data-stop-theme="${i}">■ Parar</button>`:''}<a class="btn small" href="${esc(safeHref(t.url))}" target="_blank" rel="noopener">Abrir</a><button class="btn small danger" data-remove-theme="${i}">Remover</button></div></div>`).join(''):'<div class="empty">Nenhuma trilha cadastrada para este personagem.</div>'}</div></article>`}
 function playerWallpaperMarkup(p){return `<article class="sheet-card character-wallpaper"><div class="section-heading"><div><span class="section-kicker">WALLPAPER PESSOAL</span><h2>Fundo do seu personagem</h2></div></div><p class="muted small">Escolha uma imagem para personalizar o início do seu próprio registro.</p><div class="wallpaper-preview" id="playerWallpaperPreview" style="${p.homeWallpaper?`background-image:linear-gradient(90deg,rgba(0,0,0,.5),rgba(0,0,0,.15)),url('${esc(p.homeWallpaper)}')`:''}"></div><label class="upload-label">Alterar wallpaper<input id="playerWallpaperInput" type="file" accept="image/png,image/jpeg,image/webp,.jfif" hidden></label>${p.homeWallpaper?'<button class="btn small danger" id="clearPlayerWallpaper">Remover wallpaper</button>':''}</article>`}
 function openBookReader(id){const it=item(id);if(!it)return;const pages=Array.isArray(it.bookPages)&&it.bookPages.length?it.bookPages:(it.bookContent?[String(it.bookContent)]:[]);let page=0;openModal(`<div class="modal" id="bookReader"><div class="modal-card book-reader"><button class="modal-close" id="closeBook">×</button><span class="badge">LIVRO</span><h2>${esc(it.name)}</h2><div class="book-reader-page" id="bookReaderPage">${pages.length?esc(pages[0]).replace(/\n/g,'<br>'):'Este livro ainda não possui conteúdo. O Mestre pode escrever as páginas na administração do item.'}</div><div class="book-reader-controls"><button class="btn small" id="bookPrev" ${pages.length<=1?'disabled':''}>← Anterior</button><span id="bookPageCount">${pages.length?`Página 1 de ${pages.length}`:'Sem páginas'}</span><button class="btn small" id="bookNext" ${pages.length<=1?'disabled':''}>Próxima →</button></div></div></div>`);const renderPage=()=>{const el=document.getElementById('bookReaderPage'),count=document.getElementById('bookPageCount');if(el)el.innerHTML=pages.length?esc(pages[page]).replace(/\n/g,'<br>'):'Este livro ainda não possui conteúdo.';if(count)count.textContent=pages.length?`Página ${page+1} de ${pages.length}`:'Sem páginas';document.getElementById('bookPrev')?.toggleAttribute('disabled',page<=0);document.getElementById('bookNext')?.toggleAttribute('disabled',page>=pages.length-1)};document.getElementById('closeBook').onclick=()=>document.getElementById('bookReader')?.remove();document.getElementById('bookPrev')?.addEventListener('click',()=>{if(page>0){page--;renderPage()}});document.getElementById('bookNext')?.addEventListener('click',()=>{if(page<pages.length-1){page++;renderPage()}})}
 function updateResourceBars(p,type){const max=type==='sanity'?derivedMax(p,'Sanidade'):derivedMax(p,'Corpo'),value=type==='sanity'?clamp(p.sanity??max,0,max):clamp(p.hp??max,0,max);document.querySelectorAll(`[data-resource-bar="${esc(type)}"]`).forEach(bar=>{const old=Number(bar.dataset.value||value),pct=Math.max(0,Math.min(100,(value/max)*100));bar.dataset.value=value;const fill=bar.querySelector('.horror-bar-fill');if(fill){if(value<old){bar.classList.remove('damage');void bar.offsetWidth;bar.classList.add('damage')}fill.style.width=`${pct}%`}const strong=bar.querySelector('.horror-resource-head strong');if(strong)strong.innerHTML=`${value}<small> / ${max}</small>`;const foot=bar.querySelector('.horror-resource-foot span');if(foot)foot.textContent=`${Math.round(pct)}%`;const st=resourceState(value,max);bar.dataset.state=st;const stEl=bar.querySelector('.horror-resource-foot span:last-child');if(stEl)stEl.textContent=resourceStateLabel(type,st);});}
@@ -1877,6 +1936,7 @@ function sessionModePage(){
   const history=(c.history||[]).slice(0,8).map(h=>`<div class="combat-history-item"><small>R${Number(h.round)||1}•T${Number(h.turn)||0}</small><span>${esc(h.message)}</span></div>`).join('');
   const online=presenceActive?players.filter(playerIsOnline).length:0;
   return shell(`<section class="sm-top"><div><span class="badge">MODO SESSÃO</span><h1>${esc(c.title||'Sessão atual')}</h1><p class="small muted">${esc(c.scene||'Sem cena definida')}</p></div><div class="sm-top-status"><span id="smOnlineCount" class="corner-mark">${presenceActive?`${online}/${players.length} online`:'presença indisponível'}</span><strong>${c.active?`R${Number(c.round)||1} • T${Number(c.turn)||0}`:'○ Preparação'}</strong><small>${current?`Vez: ${esc(current.name)}`:'Combate não iniciado'}</small></div></section>
+  <div data-ashen-ai-root></div>
   <div class="sm-grid">
    <section class="sm-col sm-col-players" aria-label="Players"><div class="row space"><h2>Players <small class="muted">(${members.length} na sessão)</small></h2><button type="button" class="btn small" id="combatNewSession">＋ Nova sessão</button></div>
     ${members.length?members.map(playerCard).join(''):'<div class="empty combat-no-session"><strong>Nenhum player na sessão</strong><p>Crie uma sessão escolhendo quem participa.</p><button class="btn primary" id="combatNewSessionEmpty">＋ Nova sessão</button></div>'}
@@ -1905,6 +1965,194 @@ function bindSessionMode(){
     p[field]=clamp(cur+d,0,max);p._syncUpdatedAt=nextStamp();save();
     render('session');await saveGlobalNow().catch(()=>{});
   }));
+  bindAshenAI({
+    root: document.querySelector('[data-ashen-ai-root]'),
+    getToken: getAuthToken,
+    getContext: async () => {
+      const combat = normalizeCombatParticipants();
+      const rows = combatOrderedParticipants(combat);
+      let archive = campaignArchiveItems;
+      let archiveStatus = 'available';
+      if (!campaignArchiveLoaded) {
+        try { archive = await loadCampaignArchiveRecords(); }
+        catch { archive = campaignArchiveItems; archiveStatus = 'unavailable'; }
+      }
+      let memories = [];
+      let memoryStatus = 'available';
+      try { memories = await listAshenMemories('', 25); }
+      catch { memoryStatus = remoteEnabled ? 'migration_required' : 'supabase_unavailable'; }
+      const current = combatCurrent(combat);
+      const safeAttrs = entity => Object.fromEntries(allAttrs().map(name => [name, effectiveAttr(entity, name)]));
+      const safeSkills = entity => {
+        const heavy = Array.isArray(entity.backpack) && bagWeight(entity) >= Math.ceil(bagCapacity(entity) * 0.8);
+        const penalized = new Set(['Acrobacia', 'Crime', 'Furtividade']);
+        return Object.fromEntries(allSkills().map(name => [name, effectiveSkill(entity, name) - (heavy && penalized.has(name) ? 2 : 0)]));
+      };
+      const safeConditions = entity => (entity.conditions || []).map(id => conditionById(id)?.name || String(id));
+      const safeBackpack = entity => (entity.backpack || []).map(entry => ({ id: entry.id, name: item(entry.id)?.name || `Item ${entry.id}`, qty: entry.qty }));
+      const sessionPlayers = (state.players || []).map(player => ({
+        id: String(player.id || player.login || ''), name: player.name || player.login, class: player.class,
+        campaignType: player.campaignType, hp: player.hp, hpMax: Number(player.hpMax) || derivedMax(player, 'Corpo'),
+        sanity: player.sanity, sanityMax: Number(player.sanityMax) || derivedMax(player, 'Sanidade'),
+        attrs: safeAttrs(player), skills: safeSkills(player), hunger: player.hunger,
+        conditions: safeConditions(player), backpack: safeBackpack(player),
+        description: player.description, history: player.history, personality: player.personality,
+        fears: player.fears, classAbilities: (CLASSES[player.class]?.abilities || []).map(([name, description]) => `${name}: ${description}`)
+      }));
+      const monsters = (state.creatures || []).map(monster => ({
+        id: String(monster.id || ''), name: monster.name, hp: monster.hp, hpMax: monster.hpMax,
+        sanity: monster.sanity, sanityMax: monster.sanityMax, attack: monster.attack, defense: monster.defense,
+        damage: monster.damage, description: monster.description,
+        abilities: String(monster.abilitiesText || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean),
+        attrs: safeAttrs(monster), skills: safeSkills(monster), conditions: safeConditions(monster)
+      }));
+      const combatHistory = (combat.history || []).slice(0, 12).map(entry => ({
+        message: entry.message, round: entry.round, turn: entry.turn
+      }));
+      return {
+        session: {
+          id: combat.sessionId, title: combat.title, scene: combat.scene, active: combat.active,
+          round: combat.round, turn: combat.turn, currentName: current?.name || '', history: combatHistory
+        },
+        players: sessionPlayers,
+        participants: rows.map(row => ({ key: row.key, kind: row.kind, name: row.name, initiative: row.initiative, hidden: row.hidden })),
+        monsters,
+        archive: (archive || []).filter(record => !record.deleted_at).slice(0, 80).map(record => ({
+          id: record.id, title: record.title, kind: record.kind, location: record.location,
+          content: record.content, tags: record.tags, occurred_at: record.occurred_at
+        })),
+        memories,
+        memoryStatus,
+        archiveStatus,
+        items: (state.items || []).map(it => ({
+          id: it.id, name: it.name, category: it.category, description: it.description,
+          damage: it.damage, maxQty: it.maxQty, weight: inferWeight(it)
+        })),
+        conditionCatalog: allConditions().map(condition => ({
+          id: condition.id, name: condition.name, effect: condition.effect || condition.hint,
+          turns: condition.turns || 0
+        })),
+        spells: getSpells().map(spell => ({
+          id: spell.id, name: spell.name, description: spell.description || spell.effect,
+          cost: spell.cost, element: spell.element, type: spell.type
+        })),
+        rules: {
+          skillRollMode: skillRollMode(),
+          campaign: JSON.stringify(state.characterRules?.campaign || {}),
+          slasher: JSON.stringify(state.characterRules?.slasher || {}),
+          bookTitle: state.rulesBook?.title || 'Livro de Regras',
+          bookAvailable: Boolean(state.rulesBook?.url)
+        }
+      };
+    },
+    executeAction: async action => {
+      if (state.session?.role !== 'master') throw new Error('Somente o Mestre pode executar ações do Ashen.');
+      const persistGlobal = async () => {
+        save();
+        const synced = await saveGlobalNow().catch(() => null);
+        return synced ? 'Sincronizado com o servidor.' : 'Salvo localmente; sincronização remota não foi confirmada.';
+      };
+      if (action.type === 'change_resource') {
+        const list = action.targetType === 'monster' ? state.creatures : state.players;
+        const target = (list || []).find(entity => String(entity.id || entity.login || '') === String(action.target));
+        if (!target) throw new Error('O personagem ou monstro não está mais disponível.');
+        const field = action.resource === 'sanity' ? 'sanity' : action.resource === 'hp' ? 'hp' : '';
+        if (!field || !Number.isInteger(Number(action.delta)) || !Number(action.delta)) throw new Error('Ação de recurso inválida.');
+        const fallback = field === 'hp' ? (action.targetType === 'monster' ? 1 : derivedMax(target, 'Corpo') || 1) : derivedMax(target, 'Sanidade') || 10;
+        const max = field === 'hp' ? (Number(target.hpMax) || fallback) : (Number(target.sanityMax) || fallback);
+        const before = clamp(target[field] ?? max, 0, max);
+        target[field] = clamp(before + Number(action.delta), 0, max);
+        if (action.targetType === 'player') target._syncUpdatedAt = nextStamp();
+        const status = await persistGlobal();
+        render('session');
+        return `${field === 'hp' ? 'Vida' : 'Sanidade'} de ${target.name || target.login}: ${before} → ${target[field]}/${max}. ${status}`;
+      }
+      if (action.type === 'set_initiative') {
+        const combat = normalizeCombatParticipants();
+        const participant = combat.participants.find(row => String(row.key) === String(action.target));
+        if (!participant) throw new Error('Participante não encontrado no combate.');
+        participant.initiative = clamp(Number(action.value), -99, 999); combat.updatedAt = Date.now();
+        const status = await persistGlobal(); render('session');
+        return `Iniciativa de ${participant.name} definida como ${participant.initiative}. ${status}`;
+      }
+      if (action.type === 'advance_turn') {
+        if (!normalizeCombatParticipants().active) throw new Error('O combate ainda não foi iniciado.');
+        const advanced = await advanceCombatTurn();
+        if (!advanced) throw new Error('Não foi possível avançar o turno. Verifique se há participantes no combate.');
+        render('session');
+        return 'Turno avançado. O estado atual do combate foi atualizado.';
+      }
+      if (action.type === 'set_condition' || action.type === 'remove_condition') {
+        const list = action.targetType === 'monster' ? state.creatures : state.players;
+        const target = (list || []).find(entity => String(entity.id || entity.login || '') === String(action.target));
+        const condition = conditionById(action.conditionId);
+        if (!target || !condition) throw new Error('O alvo ou a condição não está mais disponível.');
+        target.conditions = Array.isArray(target.conditions) ? target.conditions : [];
+        target.conditionTurns = target.conditionTurns && typeof target.conditionTurns === 'object' ? target.conditionTurns : {};
+        if (action.type === 'set_condition') {
+          if (!target.conditions.includes(condition.id)) target.conditions.push(condition.id);
+          initializeConditionTurns(target);
+        } else {
+          if (!target.conditions.includes(condition.id)) throw new Error(`${target.name} não possui ${condition.name}.`);
+          target.conditions = target.conditions.filter(id => id !== condition.id);
+          delete target.conditionTurns[condition.id];
+        }
+        const status = await persistGlobal(); render('session');
+        return `${action.type === 'set_condition' ? 'Condição aplicada' : 'Condição removida'}: ${condition.name} ${action.type === 'set_condition' ? 'em' : 'de'} ${target.name}. ${status}`;
+      }
+      if (action.type === 'manage_inventory') {
+        const target = (state.players || []).find(entity => String(entity.id || entity.login || '') === String(action.target));
+        const it = item(action.itemId);
+        if (!target || !it) throw new Error('Player ou item cadastrado não encontrado.');
+        target.backpack = Array.isArray(target.backpack) ? target.backpack : [];
+        const entry = target.backpack.find(row => String(row.id) === String(it.id));
+        const current = Math.max(0, Number(entry?.qty) || 0);
+        const quantity = Math.max(1, Math.min(99, Number(action.quantity) || 1));
+        if (action.operation === 'add') {
+          const weight = inferWeight(it), used = bagWeight(target);
+          const maxByWeight = Math.floor((bagCapacity(target) - (used - weight * current)) / weight);
+          const add = Math.min((Number(it.maxQty) || 1) - current, quantity, maxByWeight);
+          if (add !== quantity) throw new Error(`Não é possível adicionar ${quantity} × ${it.name}. Limite atual: ${Math.max(0, add)} unidade(s) por quantidade/peso disponível.`);
+          if (entry) entry.qty = current + add; else target.backpack.push({ id: it.id, qty: add });
+        } else if (action.operation === 'remove') {
+          if (!entry || current < quantity) throw new Error(`A mochila de ${target.name} não possui ${quantity} × ${it.name}.`);
+          if (current === quantity) target.backpack = target.backpack.filter(row => String(row.id) !== String(it.id));
+          else entry.qty = current - quantity;
+        } else throw new Error('Operação de inventário inválida.');
+        target._syncUpdatedAt = nextStamp();
+        const status = await persistGlobal(); render('session');
+        return `${action.operation === 'add' ? 'Adicionado' : 'Removido'} ${quantity} × ${it.name} ${action.operation === 'add' ? 'à mochila' : 'da mochila'} de ${target.name}. ${status}`;
+      }
+      if (action.type === 'record_campaign_event') {
+        const payload = {
+          id: cryptoRandomId('ashen-archive'), kind: action.kind, title: action.title,
+          content: action.content, occurredAt: new Date().toISOString(), location: action.location || '',
+          linkedPlayerId: '', tags: Array.isArray(action.tags) ? action.tags.slice(0, 20) : [],
+          visibility: 'master', visiblePlayerIds: []
+        };
+        await saveCampaignArchive(payload, null);
+        campaignArchiveLoaded = false;
+        try { await loadCampaignArchiveRecords(); } catch { /* O servidor já confirmou o registro; a próxima consulta tentará novamente. */ }
+        render('session');
+        return `Registro “${action.title}” salvo no Arquivo privado da campanha.`;
+      }
+      if (action.type === 'save_memory') {
+        const saved = await saveAshenMemory({
+          id: cryptoRandomId('ashen-memory'), category: action.category, title: action.title,
+          content: action.content, importance: action.importance, tags: [],
+          sourceSessionId: String(normalizeCombatSession().sessionId || '')
+        });
+        if (!saved || saved.error) throw new Error('O Supabase não confirmou o armazenamento da memória. Verifique a migração do Ashen AI.');
+        return `Memória “${action.title}” guardada no banco privado do Ashen AI.`;
+      }
+      if (action.type === 'archive_memory') {
+        const result = await archiveAshenMemory(action.memoryId);
+        if (!result?.archived) throw new Error('A lembrança não foi encontrada ou já estava arquivada.');
+        return `Memória “${action.title || result.title || ''}” arquivada. Ela não será usada nas próximas consultas.`;
+      }
+      throw new Error('Tipo de ação não permitido.');
+    }
+  });
   updateSessionPresenceUI();
 }
 function openCombatNewSessionPicker(){
@@ -2008,18 +2256,19 @@ async function openSessionPuzzleManager(){
   const buildExtraPayload=()=>draftExtraFiles.filter(f=>String(f.name||'').trim()||String(f.content||'').trim()).slice(0,12).map(f=>{const level=normalizeLevel(f.level),corrupted=!!f.corrupted;return{id:String(f.id),name:String(f.name||'').trim().slice(0,120),folder:f.folder,content:String(f.content||'').slice(0,20000),corrupted,level,shown:corrupted?(f.shown||corruptText(f.content,level,`${f.id}:${f.seed||0}`)):''}});
   const buildMainCorruption=id=>{const corrupted=document.getElementById('spMainCorrupt').checked,level=normalizeLevel(document.getElementById('spMainCorruptLevel').value);return{corrupted,level,shown:corrupted?corruptText(document.getElementById('spFileContent').value,level,`${id}:main:${mainSeed}`):''}};
   const renderAudioList=()=>{const box=document.getElementById('spAudioList');if(!box)return;box.innerHTML=draftAudioFiles.length?draftAudioFiles.map((a,i)=>`<div class="session-puzzle-audio-item"><span>♫</span><span><b>${esc(a.name||`Gravação ${i+1}`)}</b><small>${Math.max(1,Math.round((Number(a.size)||0)/1024))} KB</small></span><button type="button" class="btn small danger" data-remove-sp-audio="${i}">Remover</button><div class="sp-audio-corrupt"><label class="row"><input type="checkbox" data-sp-audio-corrupt="${i}"${a.corrupted?' checked':''}> Corrompida</label><select data-sp-audio-mode="${i}"${a.corrupted?'':' disabled'}><option value="glitch"${a.corruptMode!=='dead'?' selected':''}>Com falhas (toca distorcida)</option><option value="dead"${a.corruptMode==='dead'?' selected':''}>Ilegível (não toca)</option></select></div></div>`).join(''):'<span class="tiny muted">Nenhuma gravação anexada.</span>';box.querySelectorAll('[data-remove-sp-audio]').forEach(b=>b.onclick=()=>{draftAudioFiles.splice(Number(b.dataset.removeSpAudio),1);renderAudioList()});box.querySelectorAll('[data-sp-audio-corrupt]').forEach(c=>c.onchange=()=>{const a=draftAudioFiles[Number(c.dataset.spAudioCorrupt)];if(!a)return;a.corrupted=c.checked;a.corruptMode=a.corruptMode==='dead'?'dead':'glitch';renderAudioList()});box.querySelectorAll('[data-sp-audio-mode]').forEach(m=>m.onchange=()=>{const a=draftAudioFiles[Number(m.dataset.spAudioMode)];if(a)a.corruptMode=m.value==='dead'?'dead':'glitch'})};
-  const formMarkup=()=>`<div class="session-puzzle-editor"><input id="spId" type="hidden"><div class="field"><label>Nome do arquivo / puzzle</label><input id="spTitle" maxlength="160" placeholder="Ex.: Registro de entrada — subsolo" required></div><div class="field"><label>Nome do terminal</label><input id="spTerminal" maxlength="100" value="TERMINAL RESTRITO" placeholder="Ex.: SISTEMA DA MANSÃO"></div><div class="field"><label>Enunciado visível aos jogadores</label><textarea id="spPrompt" rows="4" maxlength="6000" placeholder="O que aparece na tela antes do login?" required></textarea></div><div class="field"><label>Pista opcional visível aos jogadores</label><textarea id="spHint" rows="2" maxlength="2000" placeholder="Dica que eles podem consultar no terminal"></textarea></div><div class="session-puzzle-credentials"><div class="field"><label>Login correto</label><input id="spLogin" maxlength="160" placeholder="Credencial de ficção" required></div><div class="field"><label>Senha (obrigatória em novos; em edição, vazio mantém a atual)</label><input id="spPassword" type="password" maxlength="128" autocomplete="new-password" placeholder="Senha que os jogadores precisam descobrir"></div></div><div class="field"><label>Título do arquivo após desbloquear</label><input id="spFileTitle" maxlength="180" placeholder="Ex.: Relatório 04-B" required></div><div class="field"><label>Conteúdo secreto do arquivo</label><textarea id="spFileContent" rows="8" maxlength="30000" placeholder="Texto, registros, nomes, datas, revelações…" required></textarea><small class="tiny muted">O conteúdo é entregue pelo servidor só depois da validação das credenciais.</small></div><div class="field sp-corrupt-box"><label class="row"><input type="checkbox" id="spMainCorrupt"> Exibir o arquivo principal como corrompido</label><div class="row"><select id="spMainCorruptLevel">${CORRUPTION_LEVELS.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('')}</select><button type="button" class="btn small" id="spMainCorruptPreview">Pré-visualizar / sortear de novo</button></div><pre class="sp-corrupt-preview" id="spMainCorruptOut" hidden></pre><small class="tiny muted">Os jogadores recebem só a versão corrompida: o texto original não sai do servidor.</small></div><div class="field"><label>Arquivos adicionais do terminal</label><p class="tiny muted">Até 12 arquivos de texto. Cada um fica numa pasta e pode ser marcado como corrompido (leve, grave ou total).</p><div id="spExtraList"></div><button type="button" class="btn small" id="spAddExtra">+ Adicionar arquivo</button></div><div class="field session-puzzle-audio-field"><label>Gravações de áudio recuperáveis</label><p class="tiny muted">Até 3 áudios por terminal, com até 750 KB cada. Os áudios só são enviados ao jogador depois do login correto.</p><input id="spAudioUpload" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.webm"><div id="spAudioList" class="session-puzzle-audio-list"><span class="tiny muted">Nenhuma gravação anexada.</span></div></div><label class="row session-puzzle-active"><input type="checkbox" id="spActive" checked> Terminal ativo e visível aos jogadores</label><div class="row session-puzzle-editor-actions"><button type="button" class="btn" id="spClear">Novo puzzle / limpar</button><button type="button" class="btn primary" id="spSave">Salvar terminal</button></div></div>`;
-  const listMarkup=()=>puzzles.length?puzzles.map((p,i)=>`<article class="session-puzzle-admin-row"><div><span class="section-kicker">${p.active?'ATIVO':'DESATIVADO'} · ${p.hasPassword?'CREDENCIAL DEFINIDA':'SEM SENHA'}</span><h3>${esc(p.title)}</h3><p>${esc(p.terminalLabel||'TERMINAL OFFLINE')} · ${esc(p.loginName||'Sem login')}${Array.isArray(p.extraFiles)&&p.extraFiles.length?` · ${p.extraFiles.length} arquivo(s) extra(s)`:''}${(()=>{const n=(p.fileCorruption?.corrupted?1:0)+(Array.isArray(p.extraFiles)?p.extraFiles.filter(f=>f.corrupted).length:0)+(Array.isArray(p.audioFiles)?p.audioFiles.filter(a=>a.corrupted).length:0);return n?` · ${n} corrompido(s)`:''})()}</p></div><div class="row"><button type="button" class="btn small" data-edit-session-puzzle="${i}">Editar</button><button type="button" class="btn small danger" data-delete-session-puzzle="${esc(p.id)}">Excluir</button></div></article>`).join(''):'<div class="empty">Nenhum puzzle nesta sessão. Crie o primeiro terminal abaixo.</div>';
+  const formMarkup=()=>`<div class="session-puzzle-editor"><input id="spId" type="hidden"><div class="field"><label>Nome do arquivo / puzzle</label><input id="spTitle" maxlength="160" placeholder="Ex.: Registro de entrada — subsolo" required></div><div class="field"><label>Nome do terminal</label><input id="spTerminal" maxlength="100" value="TERMINAL RESTRITO" placeholder="Ex.: SISTEMA DA MANSÃO"></div><div class="field"><label>Enunciado visível aos jogadores</label><textarea id="spPrompt" rows="4" maxlength="6000" placeholder="O que aparece na tela antes do login?" required></textarea></div><div class="field"><label>Pista opcional visível aos jogadores</label><textarea id="spHint" rows="2" maxlength="2000" placeholder="Dica que eles podem consultar no terminal"></textarea></div><div class="session-puzzle-credentials"><div class="field"><label>Login correto</label><input id="spLogin" maxlength="160" placeholder="Credencial de ficção" required></div><div class="field"><label>Senha (obrigatória em novos; em edição, vazio mantém a atual)</label><input id="spPassword" type="password" maxlength="128" autocomplete="new-password" placeholder="Senha que os jogadores precisam descobrir"></div></div><div class="field"><label>Título do arquivo após desbloquear</label><input id="spFileTitle" maxlength="180" placeholder="Ex.: Relatório 04-B" required></div><div class="field"><label>Conteúdo secreto do arquivo</label><textarea id="spFileContent" rows="8" maxlength="30000" placeholder="Texto, registros, nomes, datas, revelações…" required></textarea><small class="tiny muted">O conteúdo é entregue pelo servidor só depois da validação das credenciais.</small></div><div class="field sp-corrupt-box"><label class="row"><input type="checkbox" id="spMainCorrupt"> Exibir o arquivo principal como corrompido</label><div class="row"><select id="spMainCorruptLevel">${CORRUPTION_LEVELS.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('')}</select><button type="button" class="btn small" id="spMainCorruptPreview">Pré-visualizar / sortear de novo</button></div><pre class="sp-corrupt-preview" id="spMainCorruptOut" hidden></pre><small class="tiny muted">Os jogadores recebem só a versão corrompida: o texto original não sai do servidor.</small></div><div class="field"><label>Arquivos adicionais do terminal</label><p class="tiny muted">Até 12 arquivos de texto. Cada um fica numa pasta e pode ser marcado como corrompido (leve, grave ou total).</p><div id="spExtraList"></div><button type="button" class="btn small" id="spAddExtra">+ Adicionar arquivo</button></div><div class="field session-puzzle-audio-field"><label>Gravações de áudio recuperáveis</label><p class="tiny muted">Até 3 áudios por terminal, com até 750 KB cada. Os áudios só são enviados ao jogador depois do login correto.</p><input id="spAudioUpload" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.webm"><div id="spAudioList" class="session-puzzle-audio-list"><span class="tiny muted">Nenhuma gravação anexada.</span></div></div><label class="row session-puzzle-active"><input type="checkbox" id="spActive" checked> Terminal ativo</label><label class="row session-puzzle-active"><input type="checkbox" id="spVisibleToPlayers" checked> Exibir este terminal para os Players</label><small class="tiny muted">Somente o Mestre altera esta opção. Desmarcado, o terminal permanece salvo e visível no painel do Mestre, mas não aparece nem pode ser acessado pelos Players.</small><div class="row session-puzzle-editor-actions"><button type="button" class="btn" id="spClear">Novo puzzle / limpar</button><button type="button" class="btn primary" id="spSave">Salvar terminal</button></div></div>`;
+  const listMarkup=()=>puzzles.length?puzzles.map((p,i)=>`<article class="session-puzzle-admin-row"><div><span class="section-kicker">${p.active?'ATIVO':'DESATIVADO'} · ${p.visibleToPlayers===false?'OCULTO DOS PLAYERS':'VISÍVEL AOS PLAYERS'} · ${p.hasPassword?'CREDENCIAL DEFINIDA':'SEM SENHA'}</span><h3>${esc(p.title)}</h3><p>${esc(p.terminalLabel||'TERMINAL OFFLINE')} · ${esc(p.loginName||'Sem login')}${Array.isArray(p.extraFiles)&&p.extraFiles.length?` · ${p.extraFiles.length} arquivo(s) extra(s)`:''}${(()=>{const n=(p.fileCorruption?.corrupted?1:0)+(Array.isArray(p.extraFiles)?p.extraFiles.filter(f=>f.corrupted).length:0)+(Array.isArray(p.audioFiles)?p.audioFiles.filter(a=>a.corrupted).length:0);return n?` · ${n} corrompido(s)`:''})()}</p></div><div class="row"><button type="button" class="btn small ${p.visibleToPlayers===false?'gold':''}" data-toggle-sp-visible="${i}">${p.visibleToPlayers===false?'Mostrar aos Players':'Ocultar dos Players'}</button><button type="button" class="btn small" data-edit-session-puzzle="${i}">Editar</button><button type="button" class="btn small danger" data-delete-session-puzzle="${esc(p.id)}">Excluir</button></div></article>`).join(''):'<div class="empty">Nenhum puzzle nesta sessão. Crie o primeiro terminal abaixo.</div>';
   openModal(`<div class="modal" id="sessionPuzzleManagerModal"><div class="modal-card session-puzzle-manager-modal"><button type="button" class="modal-close" id="closeSessionPuzzleManager">×</button><span class="badge">CENTRAL DE PUZZLES</span><h2>Terminais e arquivos bloqueados</h2><p class="small muted">As credenciais são guardadas como hash no banco. O login esperado e o arquivo secreto nunca são enviados no pacote global compartilhado.</p><div class="session-puzzle-list" id="sessionPuzzleList">${listMarkup()}</div><div class="divider"></div><div class="section-heading"><div><span class="section-kicker">EDITOR</span><h3>Configuração do terminal</h3></div></div>${formMarkup()}</div></div>`);
   const close=()=>document.getElementById('sessionPuzzleManagerModal')?.remove();document.getElementById('closeSessionPuzzleManager').onclick=close;
-  const clear=()=>{draftAudioFiles=[];draftExtraFiles=[];mainSeed=0;renderAudioList();renderExtraList();document.getElementById('spMainCorrupt').checked=false;document.getElementById('spMainCorruptLevel').value='partial';document.getElementById('spMainCorruptOut').hidden=true;document.getElementById('spAudioUpload').value='';document.getElementById('spId').value='';document.getElementById('spTitle').value='';document.getElementById('spTerminal').value='TERMINAL RESTRITO';document.getElementById('spPrompt').value='';document.getElementById('spHint').value='';document.getElementById('spLogin').value='';document.getElementById('spPassword').value='';document.getElementById('spFileTitle').value='';document.getElementById('spFileContent').value='';document.getElementById('spActive').checked=true;document.getElementById('spSave').textContent='Criar terminal'};
-  const fill=row=>{draftAudioFiles=Array.isArray(row.audioFiles)?row.audioFiles.map(a=>({...a})):[];draftExtraFiles=Array.isArray(row.extraFiles)?row.extraFiles.map(f=>({id:String(f.id||cryptoRandomId('file')),name:String(f.name||''),folder:f.folder||'evidence',content:String(f.content||''),corrupted:!!f.corrupted,level:normalizeLevel(f.level),shown:String(f.shown||''),seed:0})):[];mainSeed=0;renderAudioList();renderExtraList();document.getElementById('spMainCorrupt').checked=!!row.fileCorruption?.corrupted;document.getElementById('spMainCorruptLevel').value=normalizeLevel(row.fileCorruption?.level);document.getElementById('spMainCorruptOut').hidden=true;document.getElementById('spAudioUpload').value='';document.getElementById('spId').value=row.id;document.getElementById('spTitle').value=row.title||'';document.getElementById('spTerminal').value=row.terminalLabel||'TERMINAL RESTRITO';document.getElementById('spPrompt').value=row.prompt||'';document.getElementById('spHint').value=row.hint||'';document.getElementById('spLogin').value=row.loginName||'';document.getElementById('spPassword').value='';document.getElementById('spFileTitle').value=row.fileTitle||'';document.getElementById('spFileContent').value=row.fileContent||'';document.getElementById('spActive').checked=row.active!==false;document.getElementById('spSave').textContent='Salvar alterações';document.getElementById('spTitle').focus()};
-  const bindList=()=>{document.querySelectorAll('[data-edit-session-puzzle]').forEach(b=>b.onclick=()=>{const row=puzzles[Number(b.dataset.editSessionPuzzle)];if(row)fill(row)});document.querySelectorAll('[data-delete-session-puzzle]').forEach(b=>b.onclick=async()=>{const id=b.dataset.deleteSessionPuzzle;if(!confirm('Excluir este terminal e suas tentativas registradas?'))return;try{await deleteSessionPuzzle(sid,id);puzzles=puzzles.filter(x=>String(x.id)!==String(id));document.getElementById('sessionPuzzleList').innerHTML=listMarkup();bindList();clear();toast('Terminal removido.')}catch(err){toast(puzzleRpcErrorText(err))}})};
+  const clear=()=>{draftAudioFiles=[];draftExtraFiles=[];mainSeed=0;renderAudioList();renderExtraList();document.getElementById('spMainCorrupt').checked=false;document.getElementById('spMainCorruptLevel').value='partial';document.getElementById('spMainCorruptOut').hidden=true;document.getElementById('spAudioUpload').value='';document.getElementById('spId').value='';document.getElementById('spTitle').value='';document.getElementById('spTerminal').value='TERMINAL RESTRITO';document.getElementById('spPrompt').value='';document.getElementById('spHint').value='';document.getElementById('spLogin').value='';document.getElementById('spPassword').value='';document.getElementById('spFileTitle').value='';document.getElementById('spFileContent').value='';document.getElementById('spActive').checked=true;document.getElementById('spVisibleToPlayers').checked=true;document.getElementById('spSave').textContent='Criar terminal'};
+  const fill=row=>{draftAudioFiles=Array.isArray(row.audioFiles)?row.audioFiles.map(a=>({...a})):[];draftExtraFiles=Array.isArray(row.extraFiles)?row.extraFiles.map(f=>({id:String(f.id||cryptoRandomId('file')),name:String(f.name||''),folder:f.folder||'evidence',content:String(f.content||''),corrupted:!!f.corrupted,level:normalizeLevel(f.level),shown:String(f.shown||''),seed:0})):[];mainSeed=0;renderAudioList();renderExtraList();document.getElementById('spMainCorrupt').checked=!!row.fileCorruption?.corrupted;document.getElementById('spMainCorruptLevel').value=normalizeLevel(row.fileCorruption?.level);document.getElementById('spMainCorruptOut').hidden=true;document.getElementById('spAudioUpload').value='';document.getElementById('spId').value=row.id;document.getElementById('spTitle').value=row.title||'';document.getElementById('spTerminal').value=row.terminalLabel||'TERMINAL RESTRITO';document.getElementById('spPrompt').value=row.prompt||'';document.getElementById('spHint').value=row.hint||'';document.getElementById('spLogin').value=row.loginName||'';document.getElementById('spPassword').value='';document.getElementById('spFileTitle').value=row.fileTitle||'';document.getElementById('spFileContent').value=row.fileContent||'';document.getElementById('spActive').checked=row.active!==false;document.getElementById('spVisibleToPlayers').checked=row.visibleToPlayers!==false;document.getElementById('spSave').textContent='Salvar alterações';document.getElementById('spTitle').focus()};
+  const notifyPuzzles=()=>{if(remoteEnabled)broadcastLive('puzzles-changed',{sessionId:sid,at:Date.now()}).catch(()=>{})};
+  const bindList=()=>{document.querySelectorAll('[data-toggle-sp-visible]').forEach(b=>b.onclick=async()=>{const i=Number(b.dataset.toggleSpVisible),row=puzzles[i];if(!row)return;const nextVisible=row.visibleToPlayers===false;b.disabled=true;try{await saveSessionPuzzle(sid,{id:row.id,title:row.title,terminalLabel:row.terminalLabel,prompt:row.prompt,hint:row.hint||'',loginName:row.loginName,password:'',fileTitle:row.fileTitle,fileContent:row.fileContent,audioFiles:Array.isArray(row.audioFiles)?row.audioFiles:[],active:row.active!==false,visibleToPlayers:nextVisible,extraFiles:Array.isArray(row.extraFiles)?row.extraFiles:[],fileCorruption:row.fileCorruption||{corrupted:false,level:'partial',shown:''}});const fresh=await listSessionPuzzles(sid);puzzles=Array.isArray(fresh)?fresh:puzzles;document.getElementById('sessionPuzzleList').innerHTML=listMarkup();bindList();notifyPuzzles();toast(nextVisible?'Terminal liberado para os Players.':'Terminal oculto dos Players.')}catch(err){b.disabled=false;toast(puzzleRpcErrorText(err))}});document.querySelectorAll('[data-edit-session-puzzle]').forEach(b=>b.onclick=()=>{const row=puzzles[Number(b.dataset.editSessionPuzzle)];if(row)fill(row)});document.querySelectorAll('[data-delete-session-puzzle]').forEach(b=>b.onclick=async()=>{const id=b.dataset.deleteSessionPuzzle;if(!confirm('Excluir este terminal e suas tentativas registradas?'))return;try{await deleteSessionPuzzle(sid,id);notifyPuzzles();puzzles=puzzles.filter(x=>String(x.id)!==String(id));document.getElementById('sessionPuzzleList').innerHTML=listMarkup();bindList();clear();toast('Terminal removido.')}catch(err){toast(puzzleRpcErrorText(err))}})};
   document.getElementById('spClear').onclick=clear;
   document.getElementById('spAddExtra').onclick=()=>{if(draftExtraFiles.length>=12){toast('Máximo de 12 arquivos adicionais.');return}draftExtraFiles.push({id:cryptoRandomId('file'),name:'',folder:'evidence',content:'',corrupted:false,level:'partial',shown:'',seed:0});renderExtraList()};
   document.getElementById('spMainCorruptPreview').onclick=()=>{mainSeed++;const level=normalizeLevel(document.getElementById('spMainCorruptLevel').value),out=document.getElementById('spMainCorruptOut');out.textContent=corruptText(document.getElementById('spFileContent').value,level,`${document.getElementById('spId').value||'novo'}:main:${mainSeed}`)||'(arquivo vazio)';out.hidden=false;document.getElementById('spMainCorrupt').checked=true};
   document.getElementById('spAudioUpload').addEventListener('change',async ev=>{const input=ev.currentTarget;const file=input.files?.[0];if(!file)return;input.value='';if(!String(file.type||'').startsWith('audio/')){toast('Escolha um arquivo de áudio válido.');return}if(file.size>750*1024){toast('Cada gravação deve ter no máximo 750 KB.');return}if(draftAudioFiles.length>=3){toast('Este terminal já tem o máximo de 3 gravações.');return}try{const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result||''));reader.onerror=()=>reject(new Error('Não foi possível ler o áudio.'));reader.readAsDataURL(file)});draftAudioFiles.push({name:String(file.name||'Gravação').slice(0,180),type:String(file.type||'audio/mpeg').slice(0,80),size:file.size,dataUrl});renderAudioList()}catch(err){toast('Não foi possível carregar esta gravação.')}});
-  document.getElementById('spSave').onclick=async()=>{const btn=document.getElementById('spSave');const data={id:document.getElementById('spId').value||cryptoRandomId('puzzle'),title:document.getElementById('spTitle').value.trim(),terminalLabel:document.getElementById('spTerminal').value.trim()||'TERMINAL RESTRITO',prompt:document.getElementById('spPrompt').value.trim(),hint:document.getElementById('spHint').value.trim(),loginName:document.getElementById('spLogin').value.trim(),password:document.getElementById('spPassword').value,fileTitle:document.getElementById('spFileTitle').value.trim()||'Arquivo recuperado',fileContent:document.getElementById('spFileContent').value,audioFiles:draftAudioFiles,active:document.getElementById('spActive').checked,extraFiles:buildExtraPayload()};data.fileCorruption=buildMainCorruption(data.id);if(data.extraFiles.length>12||data.extraFiles.some(f=>!f.name)){toast('Use no máximo 12 arquivos adicionais e dê um nome a cada arquivo.');return}if(data.audioFiles.length>3||data.audioFiles.some(a=>!String(a.type||'').startsWith('audio/')||Number(a.size)>750*1024)){toast('Cada terminal aceita até 3 áudios válidos de no máximo 750 KB.');return}if(JSON.stringify(data.audioFiles).length>3200000||JSON.stringify(data.extraFiles).length>550000){toast('Os anexos excedem o limite seguro de tamanho deste terminal. Reduza os arquivos e tente novamente.');return}if(!data.title||!data.prompt||!data.loginName||!data.fileContent.trim()){toast('Preencha nome, enunciado, login correto e conteúdo secreto.');return}if(!document.getElementById('spId').value&&!data.password){toast('Defina a senha que os jogadores precisarão descobrir.');return}const savingSessionId=String(state.combatSession?.sessionId||'');if(savingSessionId!==sid){toast('A sessão mudou. Reabra o gerenciador de terminais antes de salvar.');return}btn.disabled=true;btn.textContent='Salvando…';try{await saveSessionPuzzle(sid,data);if(String(state.combatSession?.sessionId||'')!==sid)throw new Error('SESSAO_PUZZLE_EXPIRADA');const rows=await listSessionPuzzles(sid);const refreshed=Array.isArray(rows)?rows:[];const savedRow=refreshed.find(x=>String(x.id)===String(data.id));if(!savedRow)throw new Error('PUZZLE_SAVE_NOT_CONFIRMED');puzzles=refreshed;const needsMigration=!Array.isArray(savedRow.extraFiles)&&(data.extraFiles.length||data.fileCorruption.corrupted||data.audioFiles.some(a=>a.corrupted));document.getElementById('sessionPuzzleList').innerHTML=listMarkup();bindList();clear();toast(needsMigration?'Terminal salvo, mas os anexos/corrupções não foram confirmados. Aplique a migração de reparo de puzzles e tente novamente.':'Terminal salvo e confirmado no servidor.')}catch(err){console.warn('Puzzle save failed:',err);toast(err?.message==='PUZZLE_SAVE_NOT_CONFIRMED'?'O servidor não confirmou o terminal na releitura. Seus dados continuam no editor; tente novamente.':puzzleRpcErrorText(err))}finally{btn.disabled=false;btn.textContent=document.getElementById('spId').value?'Salvar alterações':'Salvar terminal'}};
+  document.getElementById('spSave').onclick=async()=>{const btn=document.getElementById('spSave');const data={id:document.getElementById('spId').value||cryptoRandomId('puzzle'),title:document.getElementById('spTitle').value.trim(),terminalLabel:document.getElementById('spTerminal').value.trim()||'TERMINAL RESTRITO',prompt:document.getElementById('spPrompt').value.trim(),hint:document.getElementById('spHint').value.trim(),loginName:document.getElementById('spLogin').value.trim(),password:document.getElementById('spPassword').value,fileTitle:document.getElementById('spFileTitle').value.trim()||'Arquivo recuperado',fileContent:document.getElementById('spFileContent').value,audioFiles:draftAudioFiles,active:document.getElementById('spActive').checked,visibleToPlayers:document.getElementById('spVisibleToPlayers').checked,extraFiles:buildExtraPayload()};data.fileCorruption=buildMainCorruption(data.id);if(data.extraFiles.length>12||data.extraFiles.some(f=>!f.name)){toast('Use no máximo 12 arquivos adicionais e dê um nome a cada arquivo.');return}if(data.audioFiles.length>3||data.audioFiles.some(a=>!String(a.type||'').startsWith('audio/')||Number(a.size)>750*1024)){toast('Cada terminal aceita até 3 áudios válidos de no máximo 750 KB.');return}if(JSON.stringify(data.audioFiles).length>3200000||JSON.stringify(data.extraFiles).length>550000){toast('Os anexos excedem o limite seguro de tamanho deste terminal. Reduza os arquivos e tente novamente.');return}if(!data.title||!data.prompt||!data.loginName||!data.fileContent.trim()){toast('Preencha nome, enunciado, login correto e conteúdo secreto.');return}if(!document.getElementById('spId').value&&!data.password){toast('Defina a senha que os jogadores precisarão descobrir.');return}const savingSessionId=String(state.combatSession?.sessionId||'');if(savingSessionId!==sid){toast('A sessão mudou. Reabra o gerenciador de terminais antes de salvar.');return}btn.disabled=true;btn.textContent='Salvando…';try{await saveSessionPuzzle(sid,data);if(String(state.combatSession?.sessionId||'')!==sid)throw new Error('SESSAO_PUZZLE_EXPIRADA');const rows=await listSessionPuzzles(sid);const refreshed=Array.isArray(rows)?rows:[];const savedRow=refreshed.find(x=>String(x.id)===String(data.id));if(!savedRow)throw new Error('PUZZLE_SAVE_NOT_CONFIRMED');puzzles=refreshed;notifyPuzzles();const needsMigration=!Array.isArray(savedRow.extraFiles)&&(data.extraFiles.length||data.fileCorruption.corrupted||data.audioFiles.some(a=>a.corrupted));document.getElementById('sessionPuzzleList').innerHTML=listMarkup();bindList();clear();toast(needsMigration?'Terminal salvo, mas os anexos/corrupções não foram confirmados. Aplique a migração de reparo de puzzles e tente novamente.':'Terminal salvo e confirmado no servidor.')}catch(err){console.warn('Puzzle save failed:',err);toast(err?.message==='PUZZLE_SAVE_NOT_CONFIRMED'?'O servidor não confirmou o terminal na releitura. Seus dados continuam no editor; tente novamente.':puzzleRpcErrorText(err))}finally{btn.disabled=false;btn.textContent=document.getElementById('spId').value?'Salvar alterações':'Salvar terminal'}};
   bindList();
 }
 async function openSessionMasterNotes(){
@@ -2193,7 +2442,7 @@ async function nexusHandleLive(message){
   const {event,payload}=message||{};if(!event||!payload)return;
   if(event==='sound-trigger'){const s=(state.sounds||[]).find(x=>String(x.id)===String(payload.soundId));if(s&&payload.sender!==nexusPeerId)await playSoundEntry(s,{remote:true});return}
   if(event==='secret-clue'){if(nexusIsMaster()||String(payload.targetLogin||'').toLowerCase()!==String(state.session?.login||'').toLowerCase())return;storeSecretClue(payload.clue||{});toast('Você recebeu uma informação secreta.');queueRemoteRender(currentView||'home');return}
-  if(event==='nexus-join'&&nexusIsMaster()){await nexusCreatePeer(payload.from);return}
+  if(event==='nexus-join'&&nexusIsMaster()){await nexusCreatePeer(payload.from,payload.kind);return}
   if(event==='nexus-offer'&&!nexusIsMaster()&&payload.target===nexusPeerId){await nexusAcceptOffer(payload);return}
   if(event==='nexus-answer'&&nexusIsMaster()&&payload.target===nexusPeerId){const pc=nexusMasterPeers.get(payload.from);if(pc)await pc.setRemoteDescription(payload.answer).catch(()=>{});return}
   if(event==='nexus-ice'){
@@ -2201,39 +2450,196 @@ async function nexusHandleLive(message){
     else if(!nexusIsMaster()&&payload.target===nexusPeerId&&nexusPlayerPc&&payload.candidate)await nexusPlayerPc.addIceCandidate(payload.candidate).catch(()=>{});
     return;
   }
-  if(event==='nexus-stop'&&!nexusIsMaster()){nexusClosePlayer();updateNexusViewerState(false);}
-  if(event==='nexus-start'&&!nexusIsMaster()){setTimeout(nexusJoin,250);}
+  if(event==='nexus-stop'&&!nexusIsMaster()){state.nexus={...defaultNexus(),...(state.nexus||{}),active:false};clearTimeout(nexusJoinTimer);nexusClosePlayer();updateNexusViewerState(false);}
+  if(event==='nexus-start'&&!nexusIsMaster()){state.nexus={...defaultNexus(),...(state.nexus||{}),active:true,updatedAt:Number(payload.at)||Date.now()};nexusRetryCount=0;setTimeout(()=>nexusJoin({force:true}),250);}
 }
-async function nexusCreatePeer(playerPeer){
+const nexusPeerKinds=new Map();let nexusRetryCount=0,nexusJoinTimer=null,nexusRetryTimer=null;
+function nexusViewersSummary(){let tv=0,pl=0;for(const [id,pc] of nexusMasterPeers){if(pc.connectionState!=='connected')continue;if(nexusPeerKinds.get(id)==='tv')tv++;else pl++}return {tv,players:pl,total:tv+pl}}
+function nexusUpdateViewers(){const el=document.getElementById('nexusViewersInfo');if(!el)return;const v=nexusViewersSummary();el.textContent=nexusLocalStream?`Conectados agora: ${v.tv} TV • ${v.players} Player(s)`:'Sem transmissão ativa.'}
+async function nexusTuneSender(pc,kind){
+  try{
+    for(const sender of pc.getSenders()){
+      if(sender.track?.kind!=='video')continue;
+      const params=sender.getParameters();if(!params.encodings||!params.encodings.length)params.encodings=[{}];
+      const tv=kind==='tv',q=state.nexus?.quality||'auto';
+      const base=tv?6000000:1800000,mult=q==='low'?0.5:q==='high'?1.5:1;
+      params.encodings[0].maxBitrate=Math.round(base*mult);
+      params.encodings[0].maxFramerate=tv?24:15;
+      if(!tv)params.encodings[0].scaleResolutionDownBy=1.5;
+      params.degradationPreference='maintain-resolution';
+      await sender.setParameters(params);
+    }
+  }catch(e){console.warn('Não foi possível ajustar a qualidade do Nexus:',e)}
+}
+async function nexusCreatePeer(playerPeer,kind){
   if(!playerPeer||!nexusLocalStream||!window.RTCPeerConnection)return;
   const old=nexusMasterPeers.get(playerPeer);if(old){try{old.close()}catch{}}
-  const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});nexusMasterPeers.set(playerPeer,pc);
-  nexusLocalStream.getTracks().forEach(t=>pc.addTrack(t,nexusLocalStream));
-  pc.onicecandidate=e=>{if(e.candidate)broadcastLive('nexus-ice',{from:nexusPeerId,target:playerPeer,candidate:e.candidate.toJSON?.()||e.candidate}).catch(()=>{})};
-  pc.onconnectionstatechange=()=>{if(['failed','closed','disconnected'].includes(pc.connectionState))nexusMasterPeers.delete(playerPeer)};
-  const offer=await pc.createOffer();await pc.setLocalDescription(offer);await broadcastLive('nexus-offer',{from:nexusPeerId,target:playerPeer,offer:pc.localDescription});
+  nexusPeerKinds.set(playerPeer,kind==='tv'?'tv':'player');
+  const pc=new RTCPeerConnection({iceServers:nexusIceServers()});nexusMasterPeers.set(playerPeer,pc);
+  try{
+    nexusLocalStream.getTracks().forEach(t=>pc.addTrack(t,nexusLocalStream));
+    await nexusTuneSender(pc,kind);
+    pc.onconnectionstatechange=()=>{nexusUpdateViewers();if(['failed','closed','disconnected'].includes(pc.connectionState)){if(nexusMasterPeers.get(playerPeer)===pc)nexusMasterPeers.delete(playerPeer);nexusPeerKinds.delete(playerPeer);try{pc.close()}catch{}nexusUpdateViewers()}};
+    const offer=await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    if(!await waitForIceGatheringComplete(pc))throw new Error('A coleta dos candidatos de rede expirou.');
+    if(nexusMasterPeers.get(playerPeer)!==pc)return;
+    const sent=await broadcastLive('nexus-offer',{from:nexusPeerId,target:playerPeer,offer:pc.localDescription});
+    if(sent!=='ok')throw new Error('O canal de sinalização não confirmou a oferta.');
+  }catch(error){
+    if(nexusMasterPeers.get(playerPeer)===pc)nexusMasterPeers.delete(playerPeer);
+    try{pc.close()}catch{}
+    console.warn('Falha ao preparar conexão Nexus:',error);
+    toast(kind==='tv'?'Não foi possível conectar a TV. Recarregue a Tela da TV.':'Não foi possível estabelecer a conexão com um Player. Ele tentará de novo sozinho.');
+  }
 }
 async function nexusStartShare(){
   if(!nexusIsMaster())return;
-  if(!navigator.mediaDevices?.getDisplayMedia){toast('Este navegador não permite transmissão de tela. Use Chrome/Edge em HTTPS.');return}
+  if(!remoteEnabled){toast('O Nexus precisa do Supabase conectado para compartilhar a transmissão com os Players.');return}
+  if(!navigator.mediaDevices?.getDisplayMedia){toast('Este navegador não permite transmissão de tela. Abra o site em HTTPS em um navegador compatível.');return}
   try{
-    nexusLocalStream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:15,max:24},width:{ideal:1920,max:1920},height:{ideal:1080,max:1080}},audio:true});
-    const track=nexusLocalStream.getVideoTracks()[0];if(track)track.onended=()=>nexusStopShare();
-    state.nexus={...defaultNexus(),...(state.nexus||{}),active:true,updatedAt:Date.now()};await saveGlobalNow().catch(()=>{});await broadcastLive('nexus-start',{at:Date.now()});toast('Nexus sendo transmitido.');render('nexus');
-  }catch(e){toast('A transmissão foi cancelada ou não pôde ser iniciada.');}
+    nexusLocalStream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:24,max:30},width:{ideal:1920,max:1920},height:{ideal:1080,max:1080}},audio:true,selfBrowserSurface:'exclude',surfaceSwitching:'include',systemAudio:'include'});
+    const track=nexusLocalStream.getVideoTracks()[0];
+    if(!track)throw new Error('O navegador não forneceu uma faixa de vídeo.');
+    try{track.contentHint='detail'}catch{}
+    track.onended=()=>nexusStopShare();
+    state.nexus={...defaultNexus(),...(state.nexus||{}),active:true,updatedAt:Date.now()};
+    const saved=await saveGlobalNow();
+    if(!saved?.verified){throw new Error('A transmissão não foi confirmada no servidor.');}
+    const sent=await broadcastLive('nexus-start',{at:state.nexus.updatedAt||Date.now()});
+    if(sent!=='ok')throw new Error('O canal ao vivo não confirmou o início da transmissão.');
+    toast('Nexus transmitindo. Os Players já podem conectar.');
+    render('nexus');
+  }catch(e){
+    nexusLocalStream?.getTracks().forEach(t=>{try{t.stop()}catch{}});
+    nexusLocalStream=null;
+    nexusStopMasterPeers();
+    state.nexus={...defaultNexus(),...(state.nexus||{}),active:false,updatedAt:Date.now()};
+    await saveGlobalNow().catch(()=>{});
+    const message=String(e?.message||'');
+    toast(/cancel|permission|denied|NotAllowed/i.test(message)?'A transmissão foi cancelada ou o navegador não concedeu acesso à tela.':`Não foi possível iniciar o Nexus: ${message||'erro de conexão'}`);
+  }
 }
-async function nexusStopShare(){if(!nexusIsMaster()||nexusStopping)return;nexusStopping=true;nexusLocalStream?.getTracks().forEach(t=>{try{t.stop()}catch{}});nexusLocalStream=null;nexusStopMasterPeers();state.nexus={...defaultNexus(),...(state.nexus||{}),active:false,updatedAt:Date.now()};nexusStopping=false;await saveGlobalNow().catch(()=>{});await broadcastLive('nexus-stop',{at:Date.now()}).catch(()=>{});render('nexus')}
-async function nexusJoin(){if(nexusIsMaster()||!state.nexus?.active||!remoteEnabled)return;if(!window.RTCPeerConnection)return;await broadcastLive('nexus-join',{from:nexusPeerId,login:state.session?.login||''})}
+async function nexusStopShare(){
+  if(!nexusIsMaster()||nexusStopping)return;
+  nexusStopping=true;
+  nexusLocalStream?.getTracks().forEach(t=>{try{t.stop()}catch{}});
+  nexusLocalStream=null;nexusStopMasterPeers();
+  state.nexus={...defaultNexus(),...(state.nexus||{}),active:false,updatedAt:Date.now()};
+  const saved=await saveGlobalNow();
+  const sent=await broadcastLive('nexus-stop',{at:Date.now()}).catch(()=>null);
+  nexusStopping=false;
+  render('nexus');
+  if(!saved?.verified&&!saved?.unchanged)toast('Transmissão encerrada neste aparelho, mas o estado não foi confirmado no servidor.');
+  else if(sent!=='ok')toast('Transmissão encerrada aqui; o aviso aos Players pode não ter sido entregue.');
+}
+function nexusIsTv(){try{return isTvMode()}catch{return false}}
+function nexusPlayVideo(v){
+  if(!v)return;
+  const p=v.play();
+  if(p&&p.catch)p.catch(()=>{v.muted=true;v.play().catch(()=>{});document.getElementById('nexusUnmute')?.classList.remove('hidden')});
+}
+function nexusScheduleRetry(reason){
+  clearTimeout(nexusRetryTimer);
+  if(nexusIsMaster()||!state.nexus?.active||nexusRetryCount>=6)return;
+  const wait=Math.min(15000,1500*Math.pow(1.7,nexusRetryCount));nexusRetryCount++;
+  nexusRetryTimer=setTimeout(()=>{if(state.nexus?.active&&!nexusRemoteStream)nexusJoin({force:true})},wait);
+}
+async function nexusJoin(opts={}){
+  if(nexusIsMaster())return;
+  if(!state.nexus?.active&&!opts.force)return;
+  if(!remoteEnabled){toast('A conexão ao Nexus exige comunicação com o servidor.');return}
+  if(!window.RTCPeerConnection){toast('Este navegador não oferece suporte à visualização WebRTC.');return}
+  clearTimeout(nexusJoinTimer);
+  try{
+    const sent=await broadcastLive('nexus-join',{from:nexusPeerId,login:state.session?.login||'',kind:nexusIsTv()?'tv':'player'});
+    if(sent!=='ok')throw new Error('O servidor não confirmou o pedido de conexão.');
+    nexusViewerJoinAt=Date.now();
+    updateNexusViewerState(false);
+    nexusJoinTimer=setTimeout(()=>{if(!nexusRemoteStream&&state.nexus?.active)nexusScheduleRetry('sem oferta')},9000);
+  }catch(error){console.warn('Falha ao pedir conexão Nexus:',error);nexusScheduleRetry('envio');if(!nexusIsTv())toast('Não foi possível solicitar a transmissão. Nova tentativa automática em instantes.');}
+}
 async function nexusAcceptOffer(payload){
+  if(!payload?.from||!payload?.offer||!window.RTCPeerConnection)return;
+  clearTimeout(nexusJoinTimer);
   if(nexusPlayerPc)try{nexusPlayerPc.close()}catch{}
-  nexusMasterPeerId=payload.from;nexusPlayerPc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
-  nexusPlayerPc.ontrack=e=>{if(e.streams[0]){nexusRemoteStream=e.streams[0];const v=document.getElementById('nexusPlayerVideo');if(v){v.srcObject=nexusRemoteStream;v.play().catch(()=>{});document.getElementById('nexusPlaceholder')?.classList.add('hidden')}updateNexusViewerState(true)}};
-  nexusPlayerPc.onicecandidate=e=>{if(e.candidate)broadcastLive('nexus-ice',{from:nexusPeerId,target:payload.from,candidate:e.candidate.toJSON?.()||e.candidate}).catch(()=>{})};
-  await nexusPlayerPc.setRemoteDescription(payload.offer);const answer=await nexusPlayerPc.createAnswer();await nexusPlayerPc.setLocalDescription(answer);await broadcastLive('nexus-answer',{from:nexusPeerId,target:payload.from,answer:nexusPlayerPc.localDescription});
+  const pc=new RTCPeerConnection({iceServers:nexusIceServers()});
+  nexusPlayerPc=pc;nexusMasterPeerId=payload.from;
+  pc.ontrack=e=>{if(e.streams[0]){nexusRemoteStream=e.streams[0];nexusRetryCount=0;const v=document.getElementById('nexusPlayerVideo');if(v){v.srcObject=nexusRemoteStream;nexusPlayVideo(v);document.getElementById('nexusPlaceholder')?.classList.add('hidden')}updateNexusViewerState(true)}};
+  pc.onconnectionstatechange=()=>{
+    if(['failed','closed','disconnected'].includes(pc.connectionState)){
+      updateNexusViewerState(false);
+      if(pc.connectionState!=='closed'&&nexusPlayerPc===pc){nexusRemoteStream=null;nexusScheduleRetry('conexão')}
+      if(pc.connectionState==='failed'&&!nexusIsTv())toast('A rede impediu a conexão ao Nexus. Tentando de novo… (se persistir, o Mestre precisa configurar um servidor TURN)');
+    }
+  };
+  try{
+    await pc.setRemoteDescription(payload.offer);
+    const answer=await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    if(!await waitForIceGatheringComplete(pc))throw new Error('A coleta dos candidatos de rede expirou.');
+    const sent=await broadcastLive('nexus-answer',{from:nexusPeerId,target:payload.from,answer:pc.localDescription});
+    if(sent!=='ok')throw new Error('O servidor não confirmou a resposta WebRTC.');
+  }catch(error){
+    try{pc.close()}catch{}
+    if(nexusPlayerPc===pc)nexusPlayerPc=null;
+    nexusRemoteStream=null;
+    updateNexusViewerState(false);
+    console.warn('Falha ao aceitar oferta Nexus:',error);
+    nexusScheduleRetry('oferta');
+    if(!nexusIsTv())toast('Não foi possível conectar ao Nexus. Tentando de novo automaticamente.');
+  }
 }
-function updateNexusViewerState(active){const s=document.getElementById('nexusViewerState');if(s)s.textContent=active?'CONEXÃO ATIVA':'AGUARDANDO TRANSMISSÃO'}
-function nexusPage(){const n={...defaultNexus(),...(state.nexus||{})};const master=nexusIsMaster();return shell(`<section class="hero nexus-hero"><span class="badge">NEXUS TABLETOP</span><h1>${esc(n.title||'Nexus Tabletop')}</h1><p>${master?'Transmita a janela ou tela do Nexus para os Players. O vídeo é enviado diretamente entre os navegadores.':'Acompanhe a transmissão do Mestre sem sair de Ashen Testimony.'}</p><div class="nexus-status ${n.active?'live':''}"><span id="nexusViewerState">${n.active?(master?'TRANSMISSÃO ATIVA':'CONECTANDO...'):'AGUARDANDO TRANSMISSÃO'}</span></div></section><section class="nexus-stage"><div class="nexus-video-wrap"><video id="nexusPlayerVideo" autoplay playsinline controls></video><div class="nexus-placeholder" id="nexusPlaceholder"><span>◇</span><strong>${n.active?'Conectando ao Nexus…':'Nenhuma transmissão ativa'}</strong><small>${master?'Clique em transmitir e escolha a janela do Nexus.':'Quando o Mestre iniciar, a imagem aparecerá aqui.'}</small></div></div><div class="nexus-controls">${master?`<div class="field"><label>Nome da transmissão</label><input id="nexusTitle" value="${esc(n.title||'Nexus Tabletop')}" placeholder="Nexus Tabletop"></div><div class="field"><label>Link opcional do Nexus</label><input id="nexusUrl" value="${esc(n.url||'')}" placeholder="https://..."></div><div class="row"><button class="btn primary" id="nexusStart">${n.active?'Transmitindo…':'Transmitir Nexus'}</button>${n.active?'<button class="btn danger" id="nexusStop">Parar transmissão</button>':''}${n.url?`<a class="btn ghost" href="${esc(safeHref(n.url))}" target="_blank" rel="noopener">Abrir Nexus</a>`:''}</div><p class="tiny muted">A transmissão depende do suporte WebRTC do navegador e de HTTPS. O áudio da aba pode ser compartilhado quando o navegador oferecer essa opção.</p>`:`<div class="nexus-player-note"><strong>Visualização dos Players</strong><p>Esta tela mostra somente a transmissão do Mestre. O controle do Nexus continua com quem estiver conduzindo a mesa.</p><button class="btn gold" id="nexusReconnect">Conectar novamente</button></div>`}</div></section>`,'nexus')}
-function bindNexus(){const video=document.getElementById('nexusPlayerVideo');if(!nexusIsMaster()&&nexusRemoteStream&&video){video.srcObject=nexusRemoteStream;video.play().catch(()=>{});document.getElementById('nexusPlaceholder')?.classList.add('hidden');updateNexusViewerState(true)}if(nexusIsMaster()&&nexusLocalStream&&video){video.srcObject=nexusLocalStream;document.getElementById('nexusPlaceholder')?.classList.add('hidden')}if(!nexusIsMaster()&&nexusPlayerPc){video?.addEventListener('loadedmetadata',()=>{document.getElementById('nexusPlaceholder')?.classList.add('hidden')},{once:true})}if(nexusIsMaster()){document.getElementById('nexusStart')?.addEventListener('click',async()=>{const title=document.getElementById('nexusTitle')?.value.trim()||'Nexus Tabletop',url=document.getElementById('nexusUrl')?.value.trim()||'';state.nexus={...defaultNexus(),...(state.nexus||{}),title,url};await saveGlobalNow().catch(()=>{});if(!state.nexus.active)await nexusStartShare()});document.getElementById('nexusStop')?.addEventListener('click',nexusStopShare);if(state.nexus?.active&&!nexusLocalStream){state.nexus.active=false;saveGlobalNow().catch(()=>{});toast('A transmissão anterior foi encerrada porque o Mestre recarregou a página.');}}else{document.getElementById('nexusReconnect')?.addEventListener('click',nexusJoin);if(state.nexus?.active){setTimeout(nexusJoin,250)}}}
+function updateNexusViewerState(active){const s=document.getElementById('nexusViewerState');if(s)s.textContent=active?'CONEXÃO ATIVA':'AGUARDANDO TRANSMISSÃO';const tv=document.getElementById('tvScreen');if(tv)tv.classList.toggle('tv-nexus-on',!!active)}
+function nexusPage(){const n={...defaultNexus(),...(state.nexus||{})};const master=nexusIsMaster();const tvUrl=`${location.origin}${location.pathname}?tv=1`;const turn=n.turn||{};
+return shell(`<section class="hero nexus-hero"><span class="badge">NEXUS TABLETOP</span><h1>${esc(n.title||'Nexus Tabletop')}</h1><p>${master?'Transmita a janela do Nexus Tabletop: ela aparece na TV (Tela da TV) e, se os Players quiserem, no celular deles.':'Acompanhe a mesa do Mestre pelo celular, sem sair de Ashen Testimony.'}</p><div class="nexus-status ${n.active?'live':''}"><span id="nexusViewerState">${n.active?(master?'TRANSMISSÃO ATIVA':'CONECTANDO...'):'AGUARDANDO TRANSMISSÃO'}</span></div></section>
+<section class="nexus-stage"><div class="nexus-video-wrap"><video id="nexusPlayerVideo" autoplay playsinline controls ${master?'muted':''}></video><div class="nexus-placeholder" id="nexusPlaceholder"><span>◇</span><strong>${n.active?'Conectando ao Nexus…':'Nenhuma transmissão ativa'}</strong><small>${master?'Siga o passo a passo abaixo e clique em Transmitir.':'Quando o Mestre iniciar, a imagem aparecerá aqui.'}</small></div></div>
+${master?'':'<div class="row nexus-viewer-actions"><button class="btn" type="button" id="nexusFullscreen">⛶ Tela cheia</button><button class="btn hidden" type="button" id="nexusUnmute">🔊 Ativar som</button></div>'}
+<div class="nexus-controls">${master?`<div class="nexus-steps"><strong>Como ligar na TV (uma vez por sessão)</strong><ol>
+<li>Na TV/Fire Stick, abra o navegador no endereço abaixo e dê OK em “Iniciar Tela da TV”.</li>
+<li>No computador, abra o Nexus Tabletop em <b>outra janela</b> (use o botão “Abrir Nexus”).</li>
+<li>Volte aqui, toque em <b>Transmitir Nexus</b> e escolha a janela do Nexus (marque “compartilhar áudio”).</li>
+<li>Os Players que quiserem abrem esta aba “Nexus” no celular — conecta sozinho.</li></ol>
+<code>${esc(tvUrl)}</code><button class="btn small" type="button" id="nexusCopyTv">Copiar endereço da TV</button></div>
+<div class="field"><label>Nome da transmissão</label><input id="nexusTitle" value="${esc(n.title||'Nexus Tabletop')}" placeholder="Nexus Tabletop"></div>
+<div class="field"><label>Link do Nexus Tabletop (para o botão “Abrir Nexus”)</label><input id="nexusUrl" value="${esc(n.url||'')}" placeholder="https://..."></div>
+<div class="field"><label>Qualidade</label><select id="nexusQuality"><option value="auto" ${n.quality==='auto'||!n.quality?'selected':''}>Automática (TV em alta, celulares leves)</option><option value="low" ${n.quality==='low'?'selected':''}>Econômica (internet fraca)</option><option value="high" ${n.quality==='high'?'selected':''}>Máxima</option></select></div>
+<details class="nexus-turn"><summary>Servidor TURN (opcional — Players em 4G/5G ou outra rede)</summary><p class="tiny muted">Sem TURN, quem estiver fora do seu Wi-Fi pode não receber o vídeo. Cole os dados de um serviço TURN. Atenção: estes dados são sincronizados com os Players (necessário para conectarem).</p><div class="field"><label>URL(s) (separe por vírgula)</label><input id="nexusTurnUrls" value="${esc(turn.urls||'')}" placeholder="turn:servidor:3478?transport=udp, turns:servidor:443?transport=tcp"></div><div class="field"><label>Usuário</label><input id="nexusTurnUser" value="${esc(turn.username||'')}"></div><div class="field"><label>Senha</label><input id="nexusTurnPass" type="password" value="${esc(turn.credential||'')}" autocomplete="off"></div></details>
+<div class="row"><button class="btn primary" id="nexusStart">${n.active?'Salvar configurações':'Transmitir Nexus'}</button>${n.active?'<button class="btn danger" id="nexusStop">Parar transmissão</button>':''}${n.url?`<a class="btn ghost" href="${esc(safeHref(n.url))}" target="_blank" rel="noopener">Abrir Nexus</a>`:''}</div>
+<p id="nexusViewersInfo" class="small muted">Sem transmissão ativa.</p>
+<p class="tiny muted">Exige HTTPS e computador com Chrome/Edge/Firefox. A transmissão para se você recarregar esta página. Dica: compartilhe a janela do Nexus (não a tela inteira) para a TV não mostrar o próprio site.</p>`:`<div class="nexus-player-note"><strong>Visualização dos Players</strong><p>Esta tela mostra somente a transmissão do Mestre. Se não conectar sozinho, toque em “Conectar novamente”.</p><button class="btn gold" id="nexusReconnect">Conectar novamente</button></div>`}</div></section>`,'nexus')}
+function bindNexus(){
+  const video=document.getElementById('nexusPlayerVideo');
+  if(!nexusIsMaster()&&nexusRemoteStream&&video){video.srcObject=nexusRemoteStream;video.play().catch(()=>{});document.getElementById('nexusPlaceholder')?.classList.add('hidden');updateNexusViewerState(true)}
+  if(nexusIsMaster()&&nexusLocalStream&&video){video.srcObject=nexusLocalStream;video.muted=true;video.play().catch(()=>{});document.getElementById('nexusPlaceholder')?.classList.add('hidden')}
+  if(!nexusIsMaster()&&nexusPlayerPc)video?.addEventListener('loadedmetadata',()=>{document.getElementById('nexusPlaceholder')?.classList.add('hidden')},{once:true});
+  if(nexusIsMaster()){
+    nexusUpdateViewers();
+    document.getElementById('nexusCopyTv')?.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(`${location.origin}${location.pathname}?tv=1`);toast('Endereço da TV copiado.')}catch{toast('Copie o endereço mostrado acima.')}});
+    document.getElementById('nexusStart')?.addEventListener('click',async()=>{
+      const title=document.getElementById('nexusTitle')?.value.trim()||'Nexus Tabletop',url=document.getElementById('nexusUrl')?.value.trim()||'';
+      const quality=['low','high'].includes(document.getElementById('nexusQuality')?.value)?document.getElementById('nexusQuality').value:'auto';
+      const tu=document.getElementById('nexusTurnUrls')?.value.trim()||'',tn=document.getElementById('nexusTurnUser')?.value.trim()||'',tp=document.getElementById('nexusTurnPass')?.value||'';
+      if(tu&&!/^turns?:/i.test(tu.split(',')[0].trim())){toast('A URL do TURN deve começar com turn: ou turns:');return}
+      if(tu&&(!tn||!tp)){toast('Informe usuário e senha do TURN (ou deixe tudo em branco).');return}
+      state.nexus={...defaultNexus(),...(state.nexus||{}),title,url,quality,turn:tu?{urls:tu,username:tn,credential:tp}:null};
+      if(state.nexus.active){const saved=await saveGlobalNow();if(saved?.verified||saved?.unchanged){toast('Configurações do Nexus salvas.');render('nexus')}else toast('As configurações foram mantidas neste aparelho, mas não sincronizaram.');}
+      else await nexusStartShare();
+    });
+    document.getElementById('nexusStop')?.addEventListener('click',nexusStopShare);
+    if(state.nexus?.active&&!nexusLocalStream){
+      state.nexus={...defaultNexus(),...(state.nexus||{}),active:false,updatedAt:Date.now()};
+      saveGlobalNow().catch(error=>console.warn('Não foi possível sincronizar o encerramento da transmissão:',error));
+      broadcastLive('nexus-stop',{at:Date.now()}).catch(error=>console.warn('Aviso de encerramento Nexus não entregue:',error));
+      toast('A transmissão anterior foi encerrada porque o Mestre recarregou a página.');
+    }
+  }else{
+    document.getElementById('nexusFullscreen')?.addEventListener('click',()=>{const w=document.querySelector('.nexus-video-wrap');(w?.requestFullscreen?.()||Promise.reject()).catch(()=>video?.webkitEnterFullscreen?.())});
+    document.getElementById('nexusUnmute')?.addEventListener('click',e=>{if(video){video.muted=false;video.play().catch(()=>{})}e.currentTarget.classList.add('hidden')});
+    document.getElementById('nexusReconnect')?.addEventListener('click',()=>{nexusRetryCount=0;nexusJoin({force:!!state.nexus?.active})});
+    if(state.nexus?.active)setTimeout(nexusJoin,250);
+  }
+}
 let nexusViewerJoinAt=0;
 function bindNexusViewer(){
   const video=document.getElementById('nexusPlayerVideo');
@@ -2475,6 +2881,47 @@ function savePrivateDiary(text){try{localStorage.setItem(privateDiaryKey(),JSON.
 function diaryPage(){const p=player(),d=getPrivateDiary();return shell(`<section class="hero"><span class="badge">REGISTRO PRIVADO</span><h1>Meu Diário</h1><p>Suas anotações ficam neste dispositivo e não são enviadas para o Mestre nem para os outros Players.</p></section><section class="diary-layout diary-layout-single"><article class="card diary-editor"><div class="section-heading"><div><span class="section-kicker">ANOTAÇÕES PESSOAIS</span><h2>${esc(p?.name||'Player')}</h2></div><span class="corner-mark">PRIVADO</span></div><textarea id="privateDiaryText" rows="24" placeholder="Escreva pistas, teorias, nomes, suspeitas e acontecimentos...">${esc(d.text)}</textarea><div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn primary" id="savePrivateDiary">Salvar diário</button></div></article></section>`,'diary')}
 function rulesPage(){const rules=state.rulesBook||{title:'Livro de Regras',url:'',kind:'url'};const url=safeHref(rules.url,'');return shell(`<section class="hero rules-hero"><span class="badge">DOCUMENTO DA CAMPANHA</span><h1>${esc(rules.title||'Livro de Regras')}</h1><p>Consulte o livro de regras disponibilizado pelo Mestre.</p></section>${url?`<section class="card rules-reader"><div class="row space"><strong>${esc(rules.title||'Livro de Regras')}</strong><a class="btn small" href="${esc(url)}" target="_blank" rel="noopener">Abrir em nova aba ↗</a></div><iframe title="${esc(rules.title||'Livro de Regras')}" src="${esc(url)}#toolbar=1&navpanes=0&view=FitH" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe></section>`:'<section class="card empty">O Mestre ainda não disponibilizou um livro de regras.</section>'}`,'rules')}
 
+function diceRulesTable(head,rows){return `<div class="table-wrap dice-table"><table><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`}
+function diceRulesPage(){
+ const pointsRows=[0,1,2,3,4,5,6,7,8,9,10].map(n=>{const d=Math.max(1,Math.min(3,n)),b=Math.max(0,n-3)*2;return [String(n),`${d}d20`,b?`+${b}`:'+0']});
+ const dtRows=[['5','Muito fácil','Perceber um objeto evidente'],['10','Fácil','Abrir uma fechadura simples'],['15','Moderada','Encontrar uma pista escondida'],['20','Difícil','Arrombar uma fechadura resistente'],['25','Muito difícil','Identificar uma substância desconhecida'],['30','Extrema','Uma tarefa extremamente complexa'],['35+','Extraordinária','Algo além da capacidade humana comum']];
+ const degreeRows=[['Abaixo da DT','Falha'],['DT até DT +4','Sucesso'],['DT +5 até DT +9','Sucesso elevado'],['DT +10 ou mais','Sucesso excepcional'],['DT −10 ou menos','Falha grave']];
+ const advRows=[['1d20 com vantagem','2d20'],['2d20 com vantagem','3d20'],['3d20 com vantagem','3d20'],['3d20 com desvantagem','2d20'],['2d20 com desvantagem','1d20'],['1d20 com desvantagem','1d20']];
+ const quick=[['1 ponto','1d20'],['2 pontos','2d20'],['3 pontos','3d20'],['Acima de 3','3d20 + 2 por ponto excedente'],['Máximo','3d20'],['Escolha dos dados','Maior resultado (não some os dados)'],['Vantagem / Desvantagem','+1 dado / −1 dado'],['20 natural','Sucesso crítico'],['Todos os dados em 1','Falha crítica'],['DT −10','Falha grave']];
+ const box=(kicker,title,body)=>`<article class="card dice-rules-card"><div class="section-heading"><div><span class="section-kicker">${kicker}</span><h2>${title}</h2></div></div>${body}</article>`;
+ return shell(`<section class="hero rules-hero"><span class="badge">TUTORIAL</span><h1>Sistema de Rolagens</h1><p>Como rolar, somar e interpretar os dados. No máximo 3d20 por teste: a experiência além disso vira bônus.</p></section>
+<section class="dice-rules-grid">
+${box('O ESSENCIAL','Três princípios',`<ol class="dice-steps"><li><strong>Cada ponto vale um dado</strong>, até o limite de três.</li><li><strong>Cada ponto acima de 3 dá +2</strong> no resultado final.</li><li><strong>Vale o maior resultado</strong> entre os dados. Nunca some os dados.</li></ol><p class="small muted">Vale para perícias, atributos, ataques e resistências. Dados de dano das armas seguem as regras próprias de cada arma ou efeito.</p>`)}
+${box('TESTE AGORA','Simulador',`<p class="small muted">Experimente sem gastar rolagem da ficha: nada aqui é salvo.</p><div class="dice-sim"><label>Pontos<input type="number" id="dsPoints" min="0" max="20" value="5" inputmode="numeric"></label><label>Situação<select id="dsAdv"><option value="">Normal</option><option value="adv">Vantagem</option><option value="dis">Desvantagem</option></select></label><label>DT (opcional)<input type="number" id="dsDt" min="1" max="99" placeholder="—" inputmode="numeric"></label></div><button type="button" class="btn gold" id="dsRoll">Rolar exemplo</button><div id="dsOut" class="dice-sim-out" aria-live="polite"><span class="muted">Escolha os pontos e role.</span></div>`)}
+${box('TABELA','Pontos, dados e bônus',diceRulesTable(['Pontos','Dados','Bônus'],pointsRows)+`<p class="small muted">Com 0 ou 1 ponto a rolagem é a mesma (1d20), mas o personagem com 0 não tem treinamento. O Mestre pode exigir treino para certas ações. O bônus é somado depois de escolher o maior dado, nunca em cada dado.</p>`)}
+${box('PASSO A PASSO','Como fazer uma rolagem',`<ol class="dice-steps"><li>Veja qual perícia ou atributo o Mestre pediu.</li><li>Confira seus pontos nela.</li><li>Defina quantos d20 rolar (máximo 3).</li><li>Role todos juntos e <strong>escolha o maior</strong>.</li><li>Some o bônus, se houver (+2 por ponto acima de 3).</li><li>Compare o total com a DT do Mestre.</li></ol>
+<div class="dice-example"><strong>Exemplo:</strong> 5 pontos em Investigação → <b>3d20 + 4</b>. Dados: 7, 12 e 18. O maior é 18; 18 + 4 = <b>22</b>.</div>
+<div class="dice-example"><strong>Especialista:</strong> 8 pontos em Medicina → <b>3d20 + 10</b>. Dados: 6, 13 e 16. 16 + 10 = <b>26</b>.</div>`)}
+${box('DIFICULDADE','DT dos testes',diceRulesTable(['DT','Nível','Exemplo'],dtRows)+`<p class="small muted">São referências. Falta de equipamento, pressão, ferimentos ou ambiente ruim podem subir a DT.</p>`)}
+${box('RESULTADO','Graus de sucesso',diceRulesTable(['Total comparado à DT','Resultado'],degreeRows)+`<p class="small muted">Exemplo com DT 20: 17 é falha; 22, sucesso; 26, sucesso elevado; 31, sucesso excepcional. O Mestre adapta as consequências à cena; nem todo teste precisa de benefícios extras.</p>`)}
+${box('CRÍTICOS','Acertos e falhas críticas',`<ul class="dice-list"><li><strong>Sucesso crítico:</strong> o <em>maior dado</em> mostra 20 natural. Garante pelo menos um sucesso, desde que a ação seja possível. O bônus continua valendo.</li><li><strong>Falha crítica:</strong> <em>todos os dados</em> mostram 1. Acontece independentemente do bônus. Com 1, 1 e 12 não há falha crítica, pois o maior dado é 12.</li><li><strong>Sucesso excepcional por margem:</strong> total 10 ou mais acima da DT, sem depender de sorte.</li><li><strong>Falha grave por margem:</strong> total 10 ou mais abaixo da DT. Se vier junto com falha crítica, o Mestre aplica uma só consequência coerente.</li><li>O resultado natural nunca transforma uma ação impossível em possível.</li></ul>`)}
+${box('SITUAÇÕES','Vantagem e desvantagem',`<p>Vantagem dá <strong>+1 dado</strong>; desvantagem tira <strong>1 dado</strong>. O limite de 3 e o mínimo de 1 sempre valem. Se houver as duas, elas se anulam.</p>`+diceRulesTable(['Situação','Rolagem'],advRows)+`<p class="small muted">A desvantagem reduz dados, mas não remove o bônus de especialização. Ex.: 6 pontos em Medicina, que seria 3d20 + 6, vira 2d20 + 6.</p>`)}
+${box('ESCOLHA','Atributo ou perícia?',`<ul class="dice-list"><li><strong>Perícia:</strong> quando pesa o conhecimento, treino ou experiência (Medicina, Investigação, Ocultismo, Furtividade, Tecnologia).</li><li><strong>Atributo:</strong> quando pesa a capacidade natural (Força para levantar, Agilidade para equilíbrio, Vigor para resistir).</li><li>Se os dois parecem importantes, o Mestre escolhe o principal. <strong>Não se somam dois grupos de dados</strong>; o outro pode alterar a DT ou dar vantagem.</li></ul>`)}
+${box('COMBATE','Ataques, defesas e dano',`<p>O limite de 3 dados vale para ataques e resistências. Ex.: 5 pontos no ataque = 3d20 + 4; com 8, 16 e 11, o total é 16 + 4 = 20 contra a defesa do alvo.</p><p class="small muted">Dados de dano (como 2d6 de uma arma) não mudam e não têm o limite de 3.</p>`)}
+${box('DISPUTAS','Testes opostos',`<p>Cada lado faz o seu teste e o maior total vence.</p>`+diceRulesTable(['Diferença','Resultado'],[['0','Empate'],['1 a 4','Vitória apertada'],['5 a 9','Vitória significativa'],['10 ou mais','Vitória excepcional']])+`<p class="small muted">No empate, a situação anterior se mantém ou o defensor leva vantagem, salvo decisão do Mestre.</p>`)}
+${box('NO SITE','Rolando pela ficha',`<ul class="dice-list"><li>Toque no dadinho ao lado da perícia ou do atributo: o site já aplica os dados, o limite de 3 e o bônus.</li><li>Use <strong>Vantagem</strong> ou <strong>Desvantagem</strong> antes de rolar; volta ao normal depois.</li><li>Se o Mestre disser a DT, digite no campo <strong>DT</strong> e o site mostra o grau de sucesso.</li><li>Carga pesada ainda dá −2 nas perícias que sofrem esse efeito.</li></ul>`)}
+${box('CONSULTA RÁPIDA','Resumo',diceRulesTable(['Regra','Funcionamento'],quick))}
+${box('DÚVIDAS','Perguntas frequentes',`<dl class="dice-faq"><dt>Preciso rolar seis dados com seis pontos?</dt><dd>Não. Role três dados e some +6.</dd><dt>Tirei 1 em um dos três dados. É falha crítica?</dt><dd>Não. Só é falha crítica se todos os dados forem 1.</dd><dt>Tirei 20 e não bati a DT. Passei?</dt><dd>Sim, se a ação for possível: o 20 natural garante pelo menos o sucesso.</dd><dt>Com desvantagem perco o bônus?</dt><dd>Não, só perde um dado.</dd><dt>Quem tem 8 pontos pode superar quem tem 3?</dt><dd>Sim. O bônus existe para marcar essa diferença.</dd><dt>Posso somar bônus de equipamento?</dt><dd>Sim, quando uma regra específica permitir. O Mestre evita acumular bônus demais.</dd></dl>`)}
+</section>`,'dicerules');
+}
+function bindDiceRules(){
+ const btn=document.getElementById('dsRoll');if(!btn)return;
+ btn.onclick=()=>{
+  const pts=Math.max(0,Math.min(20,Math.floor(Number(document.getElementById('dsPoints').value))||0));
+  const adv=document.getElementById('dsAdv').value,dt=Math.max(0,Math.min(99,Math.floor(Number(document.getElementById('dsDt').value))||0));
+  const count=Math.max(1,Math.min(3,Math.max(1,Math.min(3,pts))+(adv==='adv'?1:adv==='dis'?-1:0)));
+  const dice=Array.from({length:count},rollOneD20),natural=Math.max(...dice),bonus=Math.max(0,pts-3)*2,total=natural+bonus,grade=rollGrade(natural,total,dt);
+  const out=document.getElementById('dsOut');
+  out.innerHTML=`<div>${dice.map(d=>`<span class="dice-chip${d===natural?' kept':''}">${esc(d)}</span>`).join('')}</div><p>Dados: <strong>${count}d20</strong> → maior = <strong>${natural}</strong>${bonus?` + bônus <strong>${esc(bonus)}</strong>`:''} = <strong class="dice-total">${total}</strong></p>${natural===20?'<p class="dice-flag good">20 natural: sucesso crítico!</p>':natural===1?'<p class="dice-flag bad">Todos os dados em 1: falha crítica!</p>':''}${grade?`<p class="dice-flag">DT ${esc(dt)}: <strong>${esc(grade)}</strong></p>`:''}`;
+ };
+ btn.click();
+}
+
 function libraryPage(){const p=player();const books=(p?.backpack||[]).map(b=>item(b.id)).filter(it=>it&&(Array.isArray(it.bookPages)&&it.bookPages.length||it.bookContent||String(it.category||'').toLowerCase().includes('livro')));return shell(`<section class="hero"><span class="badge">ARQUIVO</span><h1>Biblioteca</h1><p>Livros que estão na sua mochila ficam disponíveis aqui para leitura.</p></section><section class="library-grid">${books.length?books.map(it=>`<article class="card library-book-card"><div class="library-book-icon">${itemIcon(it)}</div><div><span class="section-kicker">LIVRO</span><h2>${esc(it.name)}</h2><p class="small muted">${esc(it.description||'Sem descrição.')}</p><button class="btn gold" data-read-book="${esc(it.id)}">Ler livro</button></div></article>`).join(''):'<div class="card empty">Nenhum livro está na sua mochila no momento.</div>'}</section>`,'library')}
 
 function isTvMode(){
@@ -2522,6 +2969,7 @@ function tvPage(){
   const s=tvCurrent();
   return `<main class="tv-screen" id="tvScreen" data-kind="${esc(s.kind||'black')}">
     <div class="tv-stage" id="tvStage"></div>
+    <div class="tv-nexus-layer"><video id="nexusPlayerVideo" autoplay playsinline muted></video></div>
     <div class="tv-overlay-ui" id="tvOverlayUi"><span class="tv-live-dot">●</span><span id="tvSceneTitle">${esc(s.title||'')}</span></div>
     <button class="tv-fullscreen-btn" id="tvFullscreen" title="Tela cheia">⛶</button>
     <div class="tv-start-overlay" id="tvStartOverlay"><button type="button" class="btn primary tv-start-btn" id="tvStartButton" autofocus>▶ Iniciar Tela da TV</button><p>Um toque aqui (ou "OK" no controle) libera o som dos vídeos e entra em tela cheia.</p></div>
@@ -2649,8 +3097,11 @@ function bindTvPage(){
     document.documentElement.requestFullscreen?.().catch(()=>{});
     const v=document.querySelector('#tvStage video');
     if(v){v.muted=false;v.play().catch(()=>{})}
+    const nv=document.getElementById('nexusPlayerVideo');
+    if(nv){nv.muted=false;nv.play().catch(()=>{nv.muted=true;nv.play().catch(()=>{})})}
     startOverlay?.remove();
   });
+  if(state.nexus?.active)setTimeout(()=>nexusJoin({force:true}),600);
   if(!tvVisibilityBound){
     tvVisibilityBound=true;
     document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&currentView==='tv')applyTvCommand(tvCurrent(),false)});
@@ -2667,7 +3118,85 @@ function siteBrandAdmin(){const b=siteBrand();return `<div class="card"><div cla
 function bindSiteBrand(){const preview=document.getElementById('siteBrandPreview');const input=document.getElementById('siteBrandImage');input?.addEventListener('change',()=>{const f=input.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');input.value='';return}if(preview){if(preview.dataset.objectUrl)URL.revokeObjectURL(preview.dataset.objectUrl);const u=URL.createObjectURL(f);preview.dataset.objectUrl=u;preview.src=u;}});document.getElementById('clearSiteBrandImage')?.addEventListener('click',()=>{state.siteBrand=state.siteBrand||{};state.siteBrand.image='runa-gold.png';save();applySiteBrand();toast('Imagem principal restaurada.');document.getElementById('adminContent').innerHTML=siteBrandAdmin();bindSiteBrand()});document.getElementById('saveSiteBrand')?.addEventListener('click',async()=>{const name=document.getElementById('siteBrandName')?.value.trim()||'Ashen Testimony';const f=input?.files?.[0];try{let image=state.siteBrand?.image||'runa-gold.png';if(f){if(!remoteEnabled){const data=await imageFileToDataURL(f,900,.82);image=data}else{const ext=(f.name.split('.').pop()||'png').replace(/[^a-z0-9]/gi,'')||'png';image=await uploadGlobalFile(`branding/site-${Date.now()}.${ext}`,f);if(!image)throw new Error('URL da imagem não disponível')}}state.siteBrand={name,image};await saveGlobalNow();applySiteBrand();toast('Identidade do site atualizada globalmente.');render('master')}catch(e){toast('Não foi possível salvar a identidade do site.')}})}
 
 function recoveryAdmin(){return `<div class="card"><div class="row space"><div><span class="section-kicker">SEGURANÇA</span><h2>Recuperação de dados</h2><p class="small muted">Backups locais e remotos protegem a campanha. Players excluídos também ficam em uma lixeira local até serem restaurados ou removidos definitivamente.</p></div></div><div class="row"><button class="btn primary" id="restoreLatestLocal">Restaurar último backup local</button><button class="btn" id="makeRecoveryNow">Criar backup agora</button><button class="btn" id="restoreRemoteBackup">Ver backups do Supabase</button><button class="btn" id="exportEmergencyBackup">Exportar backup de emergência</button><button class="btn" id="runIntegrityCheck">Verificar integridade</button></div><div id="recoveryList" class="recovery-list"></div><div class="divider"></div><div class="row space"><div><span class="section-kicker">LIXEIRA DE PLAYERS</span><h3>Players excluídos</h3><p class="small muted">Uma cópia local permite recuperar uma exclusão confirmada no servidor. A restauração usa uma operação exclusiva do Mestre.</p></div><button class="btn small" id="refreshPlayerTrash">Atualizar</button></div><div id="playerTrashList" class="recovery-list"></div></div>`}
-async function bindRecovery(){document.getElementById('makeRecoveryNow')?.addEventListener('click',async()=>{await saveLocalRecovery('backup-manual');await integrityAudit('manual-snapshot');toast('Backup local criado.');});document.getElementById('exportEmergencyBackup')?.addEventListener('click',exportCampaignEmergency);document.getElementById('runIntegrityCheck')?.addEventListener('click',()=>{const r=campaignIntegrityReport();integrityAudit('integrity-check',r);toast(r.ok?`Integridade OK: ${r.players} Players, ${r.uniqueIds} IDs únicos.`:`Atenção: ${r.duplicates.length} duplicados, ${r.missingId.length} sem ID, ${r.invalid.length} inválidos.`)});document.getElementById('restoreLatestLocal')?.addEventListener('click',async()=>{if(!confirm('Restaurar o último backup local? O estado atual será salvo antes da restauração.'))return;try{await restoreLocalRecovery()}catch(e){toast(e?.message||'Não foi possível restaurar.')}});document.getElementById('restoreRemoteBackup')?.addEventListener('click',async()=>{const box=document.getElementById('recoveryList');if(!box)return;box.innerHTML='<div class="empty">Carregando backups...</div>';try{const rows=await listGlobalBackups(20);box.innerHTML=rows.length?rows.map((r,i)=>`<div class="recovery-row"><div><strong>Backup ${i+1}</strong><small>${new Date(r.updated_at).toLocaleString('pt-BR')}</small></div><button class="btn small" data-remote-recovery="${esc(r.id)}">Restaurar</button></div>`).join(''):'<div class="empty">Nenhum backup remoto disponível ainda.</div>';box.querySelectorAll('[data-remote-recovery]').forEach(b=>b.onclick=async()=>{const rows2=await listGlobalBackups(20),r=rows2.find(x=>x.id===b.dataset.remoteRecovery);if(!r?.data)return;if(!confirm('Restaurar este backup remoto? O estado atual será salvo antes.'))return;try{await saveLocalRecovery('antes-da-restauracao-remota');const d=clone(r.data);delete d.__backup;remoteApplying=true;mergeGlobal(d);await pushGlobalTracked(globalPayload());remoteApplying=false;storageSet(KEY,serializeState());render('master');toast('Backup remoto restaurado.')}catch(e){remoteApplying=false;toast(e?.message||'Falha ao restaurar backup remoto.')}})}catch(e){box.innerHTML='<div class="empty">Não foi possível consultar os backups.</div>'}})
+async function bindRecovery(){
+  document.getElementById('makeRecoveryNow')?.addEventListener('click',async()=>{
+    const button=document.getElementById('makeRecoveryNow');
+    if(button)button.disabled=true;
+    try{
+      await saveLocalRecovery('backup-manual');
+      let remoteBackupCreated=false,remoteBackupError=null;
+      if(remoteEnabled&&state.session?.role==='master'){
+        try{
+          const current=await fetchGlobal();
+          const currentData=current?.data&&typeof current.data==='object'?current.data:current;
+          if(currentData&&typeof currentData==='object'){
+            const result=await backupGlobal(currentData,'backup-manual');
+            remoteBackupCreated=!!result;
+          }
+        }catch(error){
+          remoteBackupError=error;
+          console.warn('Backup local foi criado, mas o remoto falhou:',error);
+        }
+      }
+      await integrityAudit('manual-snapshot');
+      if(remoteBackupCreated)toast('Backups local e remoto criados e verificados.');
+      else if(remoteBackupError)toast(`Backup local criado; o remoto falhou: ${remoteBackupError?.message||'erro de conexão'}`);
+      else toast('Backup local criado e verificado.');
+    }catch(e){
+      console.error('Falha ao criar backup local:',e);
+      toast(e?.message||'Não foi possível criar o backup local.');
+    }finally{
+      if(button)button.disabled=false;
+    }
+  });
+  document.getElementById('exportEmergencyBackup')?.addEventListener('click',exportCampaignEmergency);
+  document.getElementById('runIntegrityCheck')?.addEventListener('click',()=>{
+    const r=campaignIntegrityReport();
+    integrityAudit('integrity-check',r);
+    toast(r.ok?`Integridade OK: ${r.players} Players, ${r.uniqueIds} IDs únicos.`:`Atenção: ${r.duplicates.length} duplicados, ${r.missingId.length} sem ID, ${r.invalid.length} inválidos.`);
+  });
+  document.getElementById('restoreLatestLocal')?.addEventListener('click',async()=>{
+    if(!confirm('Restaurar o último backup local? O estado atual será salvo antes da restauração.'))return;
+    try{await restoreLocalRecovery()}
+    catch(e){toast(e?.message||'Não foi possível restaurar.')}
+  });
+  document.getElementById('restoreRemoteBackup')?.addEventListener('click',async()=>{
+    const box=document.getElementById('recoveryList');
+    if(!box)return;
+    box.innerHTML='<div class="empty">Carregando backups...</div>';
+    try{
+      const rows=await listGlobalBackups(20);
+      box.innerHTML=rows.length?rows.map((r,i)=>`<div class="recovery-row"><div><strong>Backup ${i+1}</strong><small>${new Date(r.updated_at).toLocaleString('pt-BR')}</small></div><button class="btn small" data-remote-recovery="${esc(r.id)}">Restaurar</button></div>`).join(''):'<div class="empty">Nenhum backup remoto disponível ainda.</div>';
+      box.querySelectorAll('[data-remote-recovery]').forEach(button=>button.addEventListener('click',async()=>{
+        button.disabled=true;
+        try{
+          const latestRows=await listGlobalBackups(20);
+          const backup=latestRows.find(row=>String(row.id)===String(button.dataset.remoteRecovery));
+          if(!backup?.data)throw new Error('Este backup não está mais disponível. Atualize a lista e tente novamente.');
+          if(!confirm('Restaurar este backup remoto? O estado atual será salvo antes.'))return;
+          await saveLocalRecovery('antes-da-restauracao-remota');
+          const restored=clone(backup.data);
+          delete restored.__backup;
+          remoteApplying=true;
+          try{
+            mergeGlobal(restored);
+            const saved=await pushGlobalTracked(globalPayload());
+            if(!saved?.verified)throw new Error('O servidor não confirmou a restauração do backup.');
+            storageSet(KEY,serializeState());
+          }finally{remoteApplying=false}
+          render('master');
+          toast('Backup remoto restaurado.');
+        }catch(e){
+          remoteApplying=false;
+          console.error('Falha ao restaurar backup remoto:',e);
+          toast(e?.message||'Falha ao restaurar backup remoto.');
+        }finally{button.disabled=false}
+      }));
+    }catch(e){
+      console.error('Falha ao consultar backups remotos:',e);
+      box.innerHTML=`<div class="empty">${esc(e?.message||'Não foi possível consultar os backups remotos.')}</div>`;
+    }
+  });
 async function renderPlayerTrash(){const box=document.getElementById('playerTrashList');if(!box)return;const rows=await getPlayerTrash();box.innerHTML=rows.length?rows.map(r=>`<div class="recovery-row"><div><strong>${esc(r.player?.name||r.player?.login||'Player')}</strong><small>Excluído em ${esc(new Date(r.deletedAt).toLocaleString('pt-BR'))}</small></div><button class="btn small primary" data-restore-player="${esc(r.id)}">Restaurar</button></div>`).join(''):'<div class="empty">A lixeira está vazia.</div>';box.querySelectorAll('[data-restore-player]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await restoreDeletedPlayerFromTrash(b.dataset.restorePlayer);toast('Player restaurado com sucesso.');render('master')}catch(e){toast(authErrorText(e));b.disabled=false}})}
 document.getElementById('refreshPlayerTrash')?.addEventListener('click',renderPlayerTrash);await renderPlayerTrash();
 }
@@ -2676,25 +3205,7 @@ function masterTabsMarkup(){const cur=adminTabCurrent||'players';const isMain=MA
 function adminTabContent(t){return t==='players'?playersAdmin():t==='archive'?campaignArchivePage({items:campaignArchiveItems,isMaster:true,players:state.players,loading:campaignArchiveLoading,error:campaignArchiveError,showArchived:campaignArchiveShowDeleted}):t==='load'?loadAdmin(APP_VERSION):t==='map'?campaignMapPage(state,true,null):t==='monsters'?monstersAdmin():t==='classes'?classesAdmin():t==='items'?itemsAdmin():t==='sounds'?soundsAdmin():t==='secrets'?secretCluesAdmin():t==='symbols'?symbolsAdmin():t==='spells'?spellsAdmin():t==='content'?contentAdmin():t==='backgrounds'?backgroundsAdmin():t==='branding'?siteBrandAdmin():t==='tv'?tvAdmin():t==='recovery'?recoveryAdmin():t==='trash'?trashAdmin():t==='rolls'?rollsAdmin():musicAdmin()}
 const MASTER_TOOLS=[['sounds','♪','Soundboard','Efeitos sonoros para tocar na mesa'],['secrets','✦','Pistas secretas','Segredos entregues aos Players'],['symbols','☉','Símbolos','Símbolos e ícones da campanha'],['spells','✧','Magias','Criar magias, custo em Sanidade, rituais e quem as conhece'],['content','❖','Conteúdo','Atributos, perícias, condições e habilidades'],['backgrounds','▣','Fundos','Planos de fundo do site'],['branding','◈','Identidade','Nome e brasão do site'],['tv','▶','Tela da TV','Cinemáticas e cenas'],['recovery','⟲','Recuperação','Backups e restauração'],['rolls','⚄','Rolagens','Dados e perícias dos Players ao vivo'],['archive','▤','Arquivo de Campanha','Cronologia, sessões, evidências e documentos com acesso controlado'],['trash','⌫','Lixeira','Restaurar monstros, itens e conteúdo excluídos'],['load','⚙','Teste de carga','Diagnóstico de desempenho']];
 function admin(){return shell(`<section class="hero master-hero"><div><span class="badge">MESTRE</span><h1>Câmara do Mestre</h1><p>Gerenciamento completo de Players, Monstros, classes, itens e trilha.</p></div><span class="app-version-corner">${APP_VERSION}</span></section>${masterTabsMarkup()}<div id="adminContent">${adminTabContent(adminTabCurrent)}</div>`,'master')}
-window.__aProfeciaMaintenanceContext=()=>({guardian:{state:sessionGuardian.state,message:sessionGuardian.message,lastCheck:sessionGuardian.lastCheck},session:{role:state.session?.role||'',playerId:state.session?.playerId||'',login:state.session?.login||''},players:{count:Array.isArray(state.players)?state.players.filter(p=>!p.deletedAt&&!p._deleted&&!p.deleted_at).length:0,readOnly:!!ps.readOnly,circuitOpen:!!ps.circuitOpen,lastSyncAt:ps.lastSyncAt||0},integrity:campaignIntegrityReport(),stress:window.__aProfeciaStressReport||null,remoteEnabled:!!remoteEnabled});
-window.__aProfeciaIntegrityReport=()=>campaignIntegrityReport();
-window.__aProfeciaRunIntegrityCheck=async()=>{await runSessionGuardian('ashen-ai-integrity');const campaign=campaignIntegrityReport();await integrityAudit('ashen-ai-integrity-check',campaign);return {campaign,guardian:{state:sessionGuardian.state,message:sessionGuardian.message,lastCheck:sessionGuardian.lastCheck}}};
-window.__ashenSessionPlayers=()=>state.session?.role==='master'?state.players.filter(p=>!p.deletedAt&&!p._deleted&&!p.deleted_at).map(p=>({id:String(p.id),name:String(p.name||''),hp:Number(p.hp)||0,hpMax:Number(p.hpMax)||derivedMax(p,'Corpo')})):[];
-window.__ashenApplySessionHp=async({playerId,delta,expectedHp}={})=>{
-  if(state.session?.role!=='master')return {ok:false,message:'Somente o Mestre pode confirmar alterações.'};
-  if(playerStoreEnabled&&ps.readOnly)return {ok:false,message:'A sincronização está em modo somente leitura. Verifique a integridade antes de alterar a ficha.'};
-  const player=state.players.find(p=>String(p.id)===String(playerId)&&!p.deletedAt&&!p._deleted&&!p.deleted_at);
-  if(!player)return {ok:false,message:'O personagem não está mais disponível.'};
-  const previousHp=Number(player.hp)||0;
-  if(previousHp!==Number(expectedHp))return {ok:false,message:'A ficha mudou desde a identificação do comando. Atualize a proposta antes de confirmar.'};
-  const change=Number(delta);if(!Number.isFinite(change)||change===0||Math.abs(change)>100)return {ok:false,message:'Valor de PV inválido.'};
-  const maximum=Number(player.hpMax)||derivedMax(player,'Corpo');
-  const hpChange=calculateHpChange(previousHp,maximum,change);
-  if(!hpChange||hpChange.appliedDelta===0)return {ok:false,message:'Os PV já estão no limite correspondente.'};
-  player.hp=hpChange.hp;player._syncUpdatedAt=nextStamp();normalize(player);flushSave(true);
-  await integrityAudit('ashen-presence-hp-change',{playerId:String(player.id),previousHp,hp:player.hp,delta:player.hp-previousHp});
-  return {ok:true,id:String(player.id),name:String(player.name||'Personagem'),previousHp,hp:player.hp};
-};
+window.__aProfeciaMaintenanceContext=()=>({guardian:{state:sessionGuardian.state,message:sessionGuardian.message,lastCheck:sessionGuardian.lastCheck},session:{role:state.session?.role||'',playerId:state.session?.playerId||'',login:state.session?.login||''},players:{count:Array.isArray(state.players)?state.players.filter(p=>!p.deletedAt&&!p._deleted&&!p.deleted_at).length:0,readOnly:!!ps.readOnly,circuitOpen:!!ps.circuitOpen,lastSyncAt:ps.lastSyncAt||0},stress:window.__aProfeciaStressReport||null,remoteEnabled:!!remoteEnabled});
 window.__aProfeciaMaintenanceRecover=async()=>{try{await runSessionGuardian('maintenance');return true}catch(e){console.warn('Falha na recuperação segura:',e);return false}};
 function updateSessionGuardian(stateName,message){sessionGuardian.state=stateName;sessionGuardian.message=message;sessionGuardian.lastCheck=Date.now();const el=document.getElementById('siteStatusIndicator');if(el){const map={ok:['🟢','SITE OK'],attention:['🟡','ATENÇÃO'],offline:['🔴','OFFLINE'],checking:['🔵','VERIFICANDO'],session:['🟣','SESSÃO']};const [icon,label]=map[stateName]||map.checking;el.className=`site-status-indicator status-${stateName}`;el.title=message;el.innerHTML=`<span>${icon}</span><b>${label}</b>`;el.setAttribute('aria-label',message)}}
 function guardianSummary(){const last=ps.lastSyncAt?`Última sincronização: ${new Date(ps.lastSyncAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:'Ainda não confirmada nesta abertura';return `Guardião da Sessão\n${sessionGuardian.message}\n${last}`;}
@@ -2753,24 +3264,23 @@ function musicAdmin(){
     <section class="music-admin-section">
       <div class="section-kicker">TRILHA GLOBAL DA CAMPANHA</div>
       <h3>Áudio para todos os Players</h3>
-      <p class="small muted">Envie um arquivo para o Supabase Storage ou salve um link de uma plataforma compatível. O Mestre escolhe a trilha da sessão; cada dispositivo reproduz a fonte conforme as regras do serviço.</p>
+      <p class="small muted">Envie uma música para o Supabase Storage. Qualquer Player poderá ouvir, sem Spotify. O Mestre controla Play, Pause, Stop e Loop; cada pessoa escolhe apenas o próprio volume.</p>
       <div class="input-grid">
         <div class="field"><label>Nome da trilha</label><input id="musicTitle" value="${esc(m.title||'')}" placeholder="Ex.: Floresta do Abismo"></div>
       </div>
       <div class="field"><label>Enviar arquivo de áudio</label><input id="musicFile" type="file" accept="audio/*,.mp3,.mpeg,.wav,.ogg,.oga,.m4a,.aac,.flac,.opus,.webm"><small class="tiny muted">MP3 recomendado. Também aceita WAV, OGG, M4A, AAC, FLAC, OPUS e WEBM quando suportados pelo navegador. Até 50 MB.</small></div>
-      <div class="field"><label>Ou adicionar link de música / vídeo</label><input id="musicUrl" value="${esc(m.url||'')}" placeholder="Spotify, YouTube Music, YouTube ou link direto .mp3"><small class="tiny muted">A fonte é detectada automaticamente. Links de páginas comuns não são aceitos como áudio.</small></div>
-      <p class="spotify-admin-note">Spotify exige que cada pessoa conecte sua própria conta; reprodução completa pelo Web Playback SDK exige Premium. YouTube e YouTube Music abrem no player oficial incorporado. Nenhuma plataforma é convertida em MP3.</p>
-      ${m.url?`<div class="music-current-admin"><strong>Atual:</strong> ${esc(m.title||'Trilha da campanha')} ${m.playing?'<span>● TOCANDO</span>':'<span>● PAUSADA</span>'}</div>`:''}<div class="music-library-admin"><div class="section-kicker">BIBLIOTECA PERSISTENTE</div>${(state.musicLibrary||[]).length?(state.musicLibrary||[]).map(t=>`<div class="music-library-row ${String(t.url)===String(m.url)?'active':''}"><div><strong>${esc(t.title||'Sem nome')}</strong><small>${esc((t.provider||normalizeMusicLibraryEntry(t).provider||'audio').toUpperCase())} · ${esc(t.url||'')}</small></div><div class="row"><button class="btn small" data-use-global-music="${esc(t.id)}">Usar</button><button class="btn small danger" data-delete-global-music="${esc(t.id)}">Excluir</button></div></div>`).join(''):'<div class="empty">Nenhuma trilha salva.</div>'}</div>
+      <div class="field"><label>Ou URL direta de áudio</label><input id="musicUrl" value="${m.kind==='url'?esc(m.url||''):''}" placeholder="https://.../musica.mp3"></div>
+      ${m.url?`<div class="music-current-admin"><strong>Atual:</strong> ${esc(m.title||'Trilha da campanha')} ${m.playing?'<span>● TOCANDO</span>':'<span>● PAUSADA</span>'}</div>`:''}<div class="music-library-admin"><div class="section-kicker">BIBLIOTECA PERSISTENTE</div>${(state.musicLibrary||[]).length?(state.musicLibrary||[]).map(t=>`<div class="music-library-row ${String(t.url)===String(m.url)?'active':''}"><div><strong>${esc(t.title||'Sem nome')}</strong><small>${esc(t.url||'')}</small></div><div class="row"><button class="btn small" data-use-global-music="${esc(t.id)}">Usar</button><button class="btn small danger" data-delete-global-music="${esc(t.id)}">Excluir</button></div></div>`).join(''):'<div class="empty">Nenhuma trilha salva.</div>'}</div>
       <div class="row"><button class="btn primary" id="saveMusic">Enviar / salvar trilha global</button><button class="btn danger" id="clearMusic">Remover trilha</button></div>
     </section>
     <section class="music-admin-section">
-      <div class="section-kicker">SPOTIFY • CONEXÃO DA CONTA</div>
-      <h3>Conta Spotify neste dispositivo</h3>
-      <p class="small muted">A conexão é individual por navegador. Para usar uma faixa do Spotify, salve o link na biblioteca e conecte a conta em cada dispositivo que for reproduzi-la.</p>
+      <div class="section-kicker">SPOTIFY • OPCIONAL</div>
+      <h3>Conta do Mestre</h3>
+      <p class="small muted">Mantido para uso pessoal do Mestre. Para música compartilhada com todos, use o upload de áudio ao lado.</p>
       <div class="field"><label>Client ID</label><input id="spotifyClientId" value="${esc(clientId)}" placeholder="Client ID do Spotify for Developers"></div>
       <div class="field"><label>Redirect URI exata</label><input value="${esc(redirect)}" readonly></div>
       <div class="row"><button class="btn gold" id="spotifyLogin">${spotifyLogged()?'Spotify conectado':'Entrar com Spotify'}</button>${spotifyLogged()?'<button class="btn" id="spotifyLogout">Desconectar</button>':''}</div>
-      <div class="spotify-admin-note">O Spotify não transmite o áudio da conta do Mestre para os demais Players. Cada pessoa precisa autorizar o próprio dispositivo; o plano Premium é exigido para reprodução completa pelo SDK.</div>
+      <div class="spotify-admin-note">Spotify não é necessário para os Players ouvirem os arquivos enviados pelo Mestre.</div>
     </section>
   </div>`
 }
@@ -2812,7 +3322,51 @@ function bindAdmin(){
   if(adminTabCurrent==='archive')bindArchiveUI(true);
 }
 function bindClassBonuses(){const btn=document.getElementById('saveClassBonuses');if(!btn)return;btn.onclick=async()=>{const next=clone(CLASS_BONUSES_DEFAULTS_V107);document.querySelectorAll('[data-class-bonus]').forEach(x=>{const n=x.dataset.classBonus,k=x.dataset.bonusKey;next[n]=next[n]||{};next[n][k]=clamp(x.value,0,20)});state.classBonuses=next;save();await saveGlobalNow().catch(()=>{});toast('Bônus das profissões Slasher atualizados. As fichas já usam os novos totais.');document.getElementById('adminContent').innerHTML=classesAdmin();bindAdminContent()}}
-function bindAdminContent(){bindPerformanceReportExport();bindRollsAdmin();if(document.getElementById('campaignMapSvg'))bindCampaignMap({state,isMaster:true,currentPlayer:null,save,saveGlobal:saveGlobalNow,toast,rerender:()=>{document.getElementById('adminContent').innerHTML=campaignMapPage(state,true,null);bindAdminContent()}});bindSessionDiagnostics();if(document.querySelector('.card')&&document.getElementById('restoreLatestLocal'))bindRecovery();if(document.querySelector('.bonus-editor'))bindClassBonuses();if(document.querySelector('.tv-admin'))bindTvAdmin();if(document.querySelector('#saveSiteBrand'))bindSiteBrand();if(document.querySelector('.content-admin'))bindContentAdmin();if(document.querySelector('.trash-admin'))bindTrash();document.getElementById('sendSecretClue')?.addEventListener('click',sendSecretClue);const playerGrid=document.querySelector('.master-player-grid');if(playerGrid&&!playerGrid.dataset.boundFicha){playerGrid.dataset.boundFicha='1';playerGrid.addEventListener('click',e=>{const view=e.target.closest('[data-view-player]');if(view){e.preventDefault();e.stopPropagation();const id=view.dataset.playerId;const p=state.players.find(x=>String(x.id)===String(id))||state.players[Number(view.dataset.viewPlayer)];if(p)openPlayerViewById(p.id);return}})}const rr=document.getElementById('openCharacterRules');if(rr)rr.onclick=()=>{document.getElementById('adminContent').innerHTML=rulesAdmin();bindRulesAdmin()};const stress=document.getElementById('runPlayerStressTest');if(stress)stress.onclick=()=>runPlayerStressTest({version:APP_VERSION,state,ps,applyPlayerRows,clone,playerStoreEnabled,getAuthToken,fetchPlayersByIds,e2e:buildBrowserE2E(),confirmE2E:()=>window.confirm('O teste ponta a ponta grava fichas descartáveis "__loadtest_*" (ocultas, e apagadas no final) no servidor que o site está usando, e gera alguns avisos de Realtime para quem estiver conectado. Rode com a mesa parada. As fichas reais não são lidas nem alteradas. Continuar?'),toast});const deploymentCacheTest=document.getElementById('runDeploymentCacheCheck');if(deploymentCacheTest)deploymentCacheTest.onclick=async()=>{const report=await runDeploymentCacheSelfTest();if(report)toast(report.ok?'Verificação de versão/cache passou.':'Verificação de versão/cache encontrou pontos para revisar.');};const performanceTest=document.getElementById('runPerformanceDiagnostics');if(performanceTest)performanceTest.onclick=async()=>{const report=await runPerformanceDiagnosticsSelfTest();if(report)toast(report.error?'Medição de desempenho não concluída.':'Métricas locais coletadas; confira o relatório.');};const persistenceTest=document.getElementById('runPersistenceSelfTest');if(persistenceTest)persistenceTest.onclick=()=>{const report=runPersistenceSelfTest();if(report)toast(report.ok?'Teste de persistência passou (4/4).':'Teste de persistência encontrou falhas.');};const syncCheck=document.getElementById('runPlayerSyncCheck');if(syncCheck)syncCheck.onclick=async()=>{const status=document.getElementById('playerSyncCheckStatus');if(!confirm('Executar a sincronização real da sessão? Alterações locais pendentes podem ser enviadas ao servidor.'))return;syncCheck.disabled=true;const old=syncCheck.textContent;syncCheck.textContent='Sincronizando...';if(status)status.textContent='Executando verificação real...';try{if(!playerStoreEnabled)throw new Error('Armazenamento remoto de Players desativado');if(!getAuthToken())throw new Error('Sessão autenticada não encontrada');ps.circuitOpen=false;await hydratePlayersDb();if(ps.readOnly)throw new Error('Leitura do servidor falhou; dados locais preservados em modo somente leitura');const synced=await syncPlayersDbNow(true);if(!synced||ps.readOnly)throw new Error('Servidor não confirmou a sincronização');const report={ok:true,message:'🟢 Sincronização concluída sem erro',at:Date.now()};window.__aProfeciaSyncCheck=report;if(status)status.textContent=report.message;toast('Verificação de sincronização concluída.');}catch(err){const report={ok:false,message:`🔴 Falha na sincronização: ${authErrorText(err)}`,at:Date.now()};window.__aProfeciaSyncCheck=report;if(status)status.textContent=report.message;toast(authErrorText(err));}finally{syncCheck.disabled=false;syncCheck.textContent=old;}};const syncNow=document.getElementById('syncPlayersNow');if(syncNow)syncNow.onclick=async()=>{const oldText=syncNow.textContent;syncNow.disabled=true;syncNow.textContent='Sincronizando...';try{ps.circuitOpen=false;await hydratePlayersDb();if(ps.hydrated)await syncPlayersDbNow(true);toast('Players sincronizados com o servidor.');if(currentView==='master'&&adminTabCurrent==='players'&&!document.getElementById('entityModal')){document.getElementById('adminContent').innerHTML=playersAdmin();bindAdminContent()}}catch(err){toast(authErrorText(err))}finally{syncNow.disabled=false;syncNow.textContent=oldText}};document.querySelectorAll('[data-view-player-detail]').forEach(b=>b.onclick=()=>openPlayerMasterDossier(b.dataset.viewPlayerDetail));document.querySelectorAll('[data-print-player]').forEach(b=>b.onclick=()=>printPlayerPhysicalSheet(b.dataset.printPlayer));document.querySelectorAll('[data-read-book]').forEach(b=>b.onclick=()=>openBookReader(Number(b.dataset.readBook)));document.getElementById('saveRulesBook')?.addEventListener('click',async()=>{const btn=document.getElementById('saveRulesBook'),title=document.getElementById('rulesBookTitle')?.value.trim()||'Livro de Regras',file=document.getElementById('rulesBookFile')?.files?.[0],typedUrl=document.getElementById('rulesBookUrl')?.value.trim()||'';try{btn.disabled=true;btn.textContent=file?'Enviando PDF...':'Salvando...';let url=typedUrl;if(file){if(file.size>25*1024*1024){toast('O PDF deve ter até 25 MB.');return}if(!remoteEnabled){toast('Configure o Supabase para enviar o PDF.');return}url=await uploadGlobalFile(`rules/${Date.now()}-${Math.random().toString(36).slice(2,7)}.pdf`,file);if(!url)throw new Error('URL pública não disponível')}state.rulesBook={title,url,kind:'url',updatedAt:Date.now()};save();await saveGlobalNow().catch(()=>{});toast('Livro de regras salvo.');document.getElementById('adminContent').innerHTML=playersAdmin();bindAdminContent()}catch(err){console.error(err);toast('Não foi possível salvar o livro.')}finally{btn.disabled=false;btn.textContent='Salvar livro'}});document.getElementById('openItemBankFromPlayers')?.addEventListener('click',()=>{adminTabCurrent='items';document.getElementById('adminContent').innerHTML=itemsAdmin();bindAdminContent()});document.getElementById('createWeaponQuick')?.addEventListener('click',()=>{openModal(itemModal());bindItemModal(null);setTimeout(()=>{const cat=document.getElementById('iCat');if(cat)cat.value='Armas';const name=document.getElementById('iName');if(name&&!name.value)name.value='Nova arma';const dmg=document.getElementById('iDamage');if(dmg&&!dmg.value)dmg.value='1d8';},0)});const np=document.getElementById('newPlayer');if(np)np.onclick=()=>openEntity('player',null);document.querySelectorAll('[data-edit-p]').forEach(b=>b.onclick=()=>{const key=b.dataset.editP;const i=state.players.findIndex(p=>String(p.id||p.login)===String(key));if(i>=0)openEntity('player',i)});document.querySelectorAll('[data-bag-p]').forEach(b=>b.onclick=()=>{const key=b.dataset.bagP;const i=state.players.findIndex(p=>String(p.id||p.login)===String(key));if(i>=0){openModal(bagAdminModal(i));bindBagAdmin(i)}});document.querySelectorAll('[data-round-p]').forEach(b=>b.onclick=()=>{const p=state.players[Number(b.dataset.roundP)];if(!p)return;const events=applyConditionRound(p);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-p]').forEach(b=>b.onclick=async()=>{const i=Number(b.dataset.delP),p=state.players[i];if(!p||!confirm('Excluir este Player?'))return;b.disabled=true;const oldText=b.textContent;b.textContent='Excluindo...';try{await savePlayerTrash(p);await deletePlayerConfirmed(p);const k=playerSyncKey(p);state.players=state.players.filter(x=>playerSyncKey(x)!==k);ps.lastSnapshot=clone(state.players);persistCriticalCache();persistSessionCache();storageSet(KEY,serializeState());toast('Player excluído e confirmado no servidor.');render('master')}catch(err){toast(authErrorText(err));b.disabled=false;b.textContent=oldText}});const nm=document.getElementById('newMonster');if(nm)nm.onclick=()=>openEntity('monster',null);const ms=document.getElementById('monsterSearch');if(ms)ms.oninput=renderMonsters;const monsterBox=document.getElementById('monsterResults');if(monsterBox&&!monsterBox.dataset.bound){monsterBox.dataset.bound='1';monsterBox.addEventListener('click',async ev=>{
+function asyncConfirm(message){
+  return new Promise(resolve=>{
+    const wrap=document.createElement('div');
+    wrap.setAttribute('role','dialog');wrap.setAttribute('aria-modal','true');
+    wrap.style.cssText='position:fixed;inset:0;z-index:200000;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:16px';
+    const box=document.createElement('div');box.style.cssText='max-width:520px;background:#15110f;color:#eee;border:1px solid #6a5a3a;border-radius:10px;padding:18px';
+    const t=document.createElement('p');t.textContent=message;t.style.whiteSpace='pre-wrap';
+    const row=document.createElement('div');row.className='row';row.style.cssText='justify-content:flex-end;gap:8px;margin-top:12px';
+    const done=v=>{wrap.remove();resolve(v)};
+    const no=document.createElement('button');no.className='btn';no.type='button';no.textContent='Cancelar';no.onclick=()=>done(false);
+    const yes=document.createElement('button');yes.className='btn primary';yes.type='button';yes.textContent='Continuar';yes.onclick=()=>done(true);
+    row.append(no,yes);box.append(t,row);wrap.append(box);document.body.append(wrap);yes.focus();
+  });
+}
+function verifyRollApi(){
+  return {
+    mode:skillRollMode,
+    pool:(points,adv)=>{const prev=rollAdvMode;rollAdvMode=adv==='adv'||adv==='dis'?adv:'';try{return rollPoolLimit(points)}finally{rollAdvMode=prev}},
+    grade:rollGrade,
+    skills:allSkills,attrs:allAttrs,
+    skillPoints:(p,sk)=>effectiveSkill(p,sk),attrPoints:(p,a)=>effectiveAttr(p,a)
+  };
+}
+function nexusIceServers(){
+  const list=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
+  const t=state.nexus?.turn;
+  if(t&&t.urls&&t.username&&t.credential)list.push({urls:String(t.urls).split(',').map(x=>x.trim()).filter(Boolean),username:String(t.username),credential:String(t.credential)});
+  return list;
+}
+function buildVerificationDeps(){
+  return {
+    version:APP_VERSION,env:window,role:state.session?.role||null,state,
+    supabaseUrl:supabaseRuntime.url,supabaseKey:supabaseRuntime.key,remoteEnabled,
+    getAuthToken,authCheck,fetchGlobal,fetchPlayers:fetchPlayerRows,listSessionPuzzles,listCampaignArchive,listAshenMemories,
+    pendingPlayerSyncCount,flushPendingPlayerSync,syncHealth,
+    runDeploymentCacheCheck,campaignIntegrityReport,
+    perf:async()=>{const s=collectPerformanceSnapshot();s.responsiveness=await runResponsivenessProbe();s.assessment=classifyPerformanceSnapshot(s);return s},
+    e2e:buildBrowserE2E(),
+    confirmE2E:()=>asyncConfirm('A verificação vai gravar fichas descartáveis "__loadtest_*" (ocultas e apagadas no final) no servidor real e gerar avisos de Realtime. Rode com a mesa parada. As fichas reais não são alteradas. Continuar?'),
+    broadcastLive,createSecondClient:createVerificationClient,liveChannelName:LIVE_CHANNEL_NAME,
+    iceServers:nexusIceServers,nexusHasLocalStream:()=>!!nexusLocalStream,
+    rollApi:verifyRollApi()
+  };
+}
+function bindAdminContent(){bindSiteVerification(buildVerificationDeps);bindPerformanceReportExport();bindRollsAdmin();if(document.getElementById('campaignMapSvg'))bindCampaignMap({state,isMaster:true,currentPlayer:null,save,saveGlobal:saveGlobalNow,toast,rerender:()=>{document.getElementById('adminContent').innerHTML=campaignMapPage(state,true,null);bindAdminContent()}});bindSessionDiagnostics();if(document.querySelector('.card')&&document.getElementById('restoreLatestLocal'))bindRecovery();if(document.querySelector('.bonus-editor'))bindClassBonuses();if(document.querySelector('.tv-admin'))bindTvAdmin();if(document.querySelector('#saveSiteBrand'))bindSiteBrand();if(document.querySelector('.content-admin'))bindContentAdmin();if(document.querySelector('.trash-admin'))bindTrash();document.getElementById('sendSecretClue')?.addEventListener('click',sendSecretClue);const playerGrid=document.querySelector('.master-player-grid');if(playerGrid&&!playerGrid.dataset.boundFicha){playerGrid.dataset.boundFicha='1';playerGrid.addEventListener('click',e=>{const view=e.target.closest('[data-view-player]');if(view){e.preventDefault();e.stopPropagation();const id=view.dataset.playerId;const p=state.players.find(x=>String(x.id)===String(id))||state.players[Number(view.dataset.viewPlayer)];if(p)openPlayerViewById(p.id);return}})}const rr=document.getElementById('openCharacterRules');if(rr)rr.onclick=()=>{document.getElementById('adminContent').innerHTML=rulesAdmin();bindRulesAdmin()};const stress=document.getElementById('runPlayerStressTest');if(stress)stress.onclick=()=>runPlayerStressTest({version:APP_VERSION,state,ps,applyPlayerRows,clone,playerStoreEnabled,getAuthToken,fetchPlayersByIds,e2e:buildBrowserE2E(),confirmE2E:()=>asyncConfirm('O teste ponta a ponta grava fichas descartáveis "__loadtest_*" (ocultas, e apagadas no final) no servidor que o site está usando, e gera alguns avisos de Realtime para quem estiver conectado. Rode com a mesa parada. As fichas reais não são lidas nem alteradas. Continuar?'),toast});const deploymentCacheTest=document.getElementById('runDeploymentCacheCheck');if(deploymentCacheTest)deploymentCacheTest.onclick=async()=>{const report=await runDeploymentCacheSelfTest();if(report)toast(report.ok?'Verificação de versão/cache passou.':'Verificação de versão/cache encontrou pontos para revisar.');};const performanceTest=document.getElementById('runPerformanceDiagnostics');if(performanceTest)performanceTest.onclick=async()=>{const report=await runPerformanceDiagnosticsSelfTest();if(report)toast(report.error?'Medição de desempenho não concluída.':'Métricas locais coletadas; confira o relatório.');};const persistenceTest=document.getElementById('runPersistenceSelfTest');if(persistenceTest)persistenceTest.onclick=()=>{const report=runPersistenceSelfTest();if(report)toast(report.ok?'Teste de persistência passou (4/4).':'Teste de persistência encontrou falhas.');};const syncCheck=document.getElementById('runPlayerSyncCheck');if(syncCheck)syncCheck.onclick=async()=>{const status=document.getElementById('playerSyncCheckStatus');if(!await asyncConfirm('Executar a sincronização real da sessão? Alterações locais pendentes podem ser enviadas ao servidor.'))return;syncCheck.disabled=true;const old=syncCheck.textContent;syncCheck.textContent='Sincronizando...';if(status)status.textContent='Executando verificação real...';try{if(!playerStoreEnabled)throw new Error('Armazenamento remoto de Players desativado');if(!getAuthToken())throw new Error('Sessão autenticada não encontrada');ps.circuitOpen=false;await hydratePlayersDb();if(ps.readOnly)throw new Error('Leitura do servidor falhou; dados locais preservados em modo somente leitura');const synced=await syncPlayersDbNow(true);if(!synced||ps.readOnly)throw new Error('Servidor não confirmou a sincronização');const report={ok:true,message:'🟢 Sincronização concluída sem erro',at:Date.now()};window.__aProfeciaSyncCheck=report;if(status)status.textContent=report.message;toast('Verificação de sincronização concluída.');}catch(err){const report={ok:false,message:`🔴 Falha na sincronização: ${authErrorText(err)}`,at:Date.now()};window.__aProfeciaSyncCheck=report;if(status)status.textContent=report.message;toast(authErrorText(err));}finally{syncCheck.disabled=false;syncCheck.textContent=old;}};const syncNow=document.getElementById('syncPlayersNow');if(syncNow)syncNow.onclick=async()=>{const oldText=syncNow.textContent;syncNow.disabled=true;syncNow.textContent='Sincronizando...';try{ps.circuitOpen=false;await hydratePlayersDb();if(ps.hydrated)await syncPlayersDbNow(true);toast('Players sincronizados com o servidor.');if(currentView==='master'&&adminTabCurrent==='players'&&!document.getElementById('entityModal')){document.getElementById('adminContent').innerHTML=playersAdmin();bindAdminContent()}}catch(err){toast(authErrorText(err))}finally{syncNow.disabled=false;syncNow.textContent=oldText}};document.querySelectorAll('[data-view-player-detail]').forEach(b=>b.onclick=()=>openPlayerMasterDossier(b.dataset.viewPlayerDetail));document.querySelectorAll('[data-print-player]').forEach(b=>b.onclick=()=>printPlayerPhysicalSheet(b.dataset.printPlayer));document.querySelectorAll('[data-read-book]').forEach(b=>b.onclick=()=>openBookReader(Number(b.dataset.readBook)));document.getElementById('saveRulesBook')?.addEventListener('click',async()=>{const btn=document.getElementById('saveRulesBook'),title=document.getElementById('rulesBookTitle')?.value.trim()||'Livro de Regras',file=document.getElementById('rulesBookFile')?.files?.[0],typedUrl=document.getElementById('rulesBookUrl')?.value.trim()||'';try{btn.disabled=true;btn.textContent=file?'Enviando PDF...':'Salvando...';let url=typedUrl;if(file){if(file.size>25*1024*1024){toast('O PDF deve ter até 25 MB.');return}if(!remoteEnabled){toast('Configure o Supabase para enviar o PDF.');return}url=await uploadGlobalFile(`rules/${Date.now()}-${Math.random().toString(36).slice(2,7)}.pdf`,file);if(!url)throw new Error('URL pública não disponível')}state.rulesBook={title,url,kind:'url',updatedAt:Date.now()};save();await saveGlobalNow().catch(()=>{});toast('Livro de regras salvo.');document.getElementById('adminContent').innerHTML=playersAdmin();bindAdminContent()}catch(err){console.error(err);toast('Não foi possível salvar o livro.')}finally{btn.disabled=false;btn.textContent='Salvar livro'}});document.getElementById('openItemBankFromPlayers')?.addEventListener('click',()=>{adminTabCurrent='items';document.getElementById('adminContent').innerHTML=itemsAdmin();bindAdminContent()});document.getElementById('createWeaponQuick')?.addEventListener('click',()=>{openModal(itemModal());bindItemModal(null);setTimeout(()=>{const cat=document.getElementById('iCat');if(cat)cat.value='Armas';const name=document.getElementById('iName');if(name&&!name.value)name.value='Nova arma';const dmg=document.getElementById('iDamage');if(dmg&&!dmg.value)dmg.value='1d8';},0)});const np=document.getElementById('newPlayer');if(np)np.onclick=()=>openEntity('player',null);document.querySelectorAll('[data-edit-p]').forEach(b=>b.onclick=()=>{const key=b.dataset.editP;const i=state.players.findIndex(p=>String(p.id||p.login)===String(key));if(i>=0)openEntity('player',i)});document.querySelectorAll('[data-bag-p]').forEach(b=>b.onclick=()=>{const key=b.dataset.bagP;const i=state.players.findIndex(p=>String(p.id||p.login)===String(key));if(i>=0){openModal(bagAdminModal(i));bindBagAdmin(i)}});document.querySelectorAll('[data-round-p]').forEach(b=>b.onclick=()=>{const p=state.players[Number(b.dataset.roundP)];if(!p)return;const events=applyConditionRound(p);save();toast(events.length?events.join(' • '):'Rodada avançada. Nenhum efeito automático ativo.');render('master')});document.querySelectorAll('[data-del-p]').forEach(b=>b.onclick=async()=>{const i=Number(b.dataset.delP),p=state.players[i];if(!p||!confirm('Excluir este Player?'))return;b.disabled=true;const oldText=b.textContent;b.textContent='Excluindo...';try{await savePlayerTrash(p);await deletePlayerConfirmed(p);const k=playerSyncKey(p);state.players=state.players.filter(x=>playerSyncKey(x)!==k);ps.lastSnapshot=clone(state.players);persistCriticalCache();persistSessionCache();storageSet(KEY,serializeState());toast('Player excluído e confirmado no servidor.');render('master')}catch(err){toast(authErrorText(err));b.disabled=false;b.textContent=oldText}});const nm=document.getElementById('newMonster');if(nm)nm.onclick=()=>openEntity('monster',null);const ms=document.getElementById('monsterSearch');if(ms)ms.oninput=renderMonsters;const monsterBox=document.getElementById('monsterResults');if(monsterBox&&!monsterBox.dataset.bound){monsterBox.dataset.bound='1';monsterBox.addEventListener('click',async ev=>{
     const btn=ev.target.closest('button');if(!btn||!monsterBox.contains(btn))return;const d=btn.dataset;
     const idxOf=v=>Number(v),mAt=v=>state.creatures[idxOf(v)];
     if(d.editM!==undefined){openEntity('monster',idxOf(d.editM));return}
@@ -2826,10 +3380,10 @@ function bindAdminContent(){bindPerformanceReportExport();bindRollsAdmin();if(do
   const title=document.getElementById('musicTitle')?.value.trim()||'';
   const file=document.getElementById('musicFile')?.files?.[0];
   const url=document.getElementById('musicUrl')?.value.trim()||'';
-  if(!file&&!url){toast('Escolha um arquivo de áudio ou informe um link de música.');return}
+  if(!file&&!url){toast('Escolha um arquivo de áudio ou informe uma URL direta.');return}
   try{
-    sm.disabled=true;sm.textContent='Salvando...';
-    let remoteUrl=url,kind='url',name=title,source={provider:'audio',type:'audio',url:''};
+    sm.disabled=true;sm.textContent='Enviando...';
+    let remoteUrl=url,kind='url',name=title;
     if(file){
       const ext=(file.name.split('.').pop()||'mp3').toLowerCase().replace(/[^a-z0-9]/g,'')||'mp3';
       const allowed=['mp3','mpeg','wav','ogg','oga','m4a','aac','flac','opus','webm'];
@@ -2839,34 +3393,19 @@ function bindAdminContent(){bindPerformanceReportExport();bindRollsAdmin();if(do
       const safeName=`music/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`;
       remoteUrl=await uploadGlobalFile(safeName,file);
       if(!remoteUrl)throw new Error('Não foi possível obter a URL pública do áudio.');
-      kind='url';name=title||file.name.replace(/\.[^.]+$/,'');source=detectMusicSource(remoteUrl);
-    }else{
-      let sourceUrl=url;
-      if(isSpotifyShortLink(sourceUrl)){
-        const resolved=await fetch(`/api/resolve-spotify?url=${encodeURIComponent(sourceUrl)}`);
-        const payload=await resolved.json().catch(()=>({}));
-        if(!resolved.ok||!payload.url)throw new Error('Não foi possível resolver esse link curto do Spotify.');
-        sourceUrl=payload.url;
-      }
-      source=detectMusicSource(sourceUrl);
-      if(source.error){toast(source.error==='unsupported_url'?'Link não reconhecido. Use Spotify, YouTube/YouTube Music ou um link direto para arquivo de áudio.':'O link informado é inválido.');return}
-      remoteUrl=source.url;kind=source.provider;
+      kind='url';name=title||file.name.replace(/\.[^.]+$/,'');
     }
-    const trackId=`music-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-    state.musicLibrary=Array.isArray(state.musicLibrary)?state.musicLibrary:[];
-    state.musicLibrary=state.musicLibrary.filter(x=>String(x.url)!==String(remoteUrl));
-    state.musicLibrary.unshift({id:trackId,title:name||'Trilha da campanha',url:remoteUrl,kind,provider:source.provider,type:source.type,sourceId:source.id||'',createdAt:Date.now()});
-    state.music={type:source.type||'audio',provider:source.provider,url:remoteUrl,title:name||'Trilha da campanha',kind,mediaId:trackId,playing:false,loop:!!state.music?.loop,position:0,startedAt:0,commandAt:Date.now()};
+    const trackId=`music-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;state.musicLibrary=Array.isArray(state.musicLibrary)?state.musicLibrary:[];state.musicLibrary=state.musicLibrary.filter(x=>String(x.url)!==String(remoteUrl));state.musicLibrary.unshift({id:trackId,title:name||'Trilha da campanha',url:remoteUrl,kind,createdAt:Date.now()});state.music={type:'audio',url:remoteUrl,title:name||'Trilha da campanha',kind,mediaId:trackId,playing:false,loop:!!state.music?.loop,position:0,startedAt:0,commandAt:Date.now()};
     await saveGlobalNow();
     globalMusicBlocked=false;
     syncGlobalMusic(true);
-    toast(source.provider==='spotify'?'Link Spotify salvo na biblioteca. Cada dispositivo precisa conectar sua conta.':source.provider==='youtube'?'Link do YouTube salvo e incorporado à sessão.':'Trilha enviada e disponível para todos os Players.');
+    toast('Trilha enviada e disponível para todos os Players.');
     render('master');
   }catch(e){
-    console.error(e);toast(`Não foi possível salvar a trilha: ${e?.message||'erro desconhecido'}`);
+    console.error(e);toast(`Não foi possível enviar a trilha: ${e?.message||'erro desconhecido'}`);
   }finally{sm.disabled=false;sm.textContent='Enviar / salvar trilha global'}
 };
-const scid=document.getElementById('spotifyClientId');if(scid)scid.onchange=()=>{try{localStorage.setItem(SPOTIFY_CLIENT_KEY,scid.value.trim())}catch{}};const slog=document.getElementById('spotifyLogin');if(slog)slog.onclick=async()=>{try{if(scid?.value.trim())localStorage.setItem(SPOTIFY_CLIENT_KEY,scid.value.trim())}catch{};if(spotifyLogged()){await ensureSpotifyPlayer();syncGlobalMusic()}else await spotifyLogin()};const slout=document.getElementById('spotifyLogout');if(slout)slout.onclick=()=>{spotifyLogout();render('master')};const cm=document.getElementById('clearMusic');if(cm)cm.onclick=async()=>{state.music={type:'audio',url:'',title:'',kind:'url',mediaId:'',playing:false,loop:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();syncGlobalMusic(true);toast('Trilha removida globalmente.');render('master')};document.querySelectorAll('[data-use-global-music]').forEach(b=>b.onclick=async()=>{const t=(state.musicLibrary||[]).find(x=>String(x.id)===String(b.dataset.useGlobalMusic));if(!t)return;const entry=normalizeMusicLibraryEntry(t);state.music={...normalizeMusic(),type:entry.type||'audio',provider:entry.provider,url:entry.url,title:entry.title,kind:entry.kind||'url',mediaId:t.id,playing:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();syncGlobalMusic(true);toast('Trilha selecionada.');render('master')});document.querySelectorAll('[data-delete-global-music]').forEach(b=>b.onclick=async()=>{const id=String(b.dataset.deleteGlobalMusic),t=(state.musicLibrary||[]).find(x=>String(x.id)===id);if(!t)return;if(!confirm(`Excluir a trilha ${t.title||''} da biblioteca?`))return;state.musicLibrary=state.musicLibrary.filter(x=>String(x.id)!==id);if(String(state.music?.mediaId)===id)state.music={type:'audio',url:'',title:'',kind:'url',mediaId:'',playing:false,loop:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();render('master')});const as=document.getElementById('addSound');if(as)as.onclick=async()=>{const name=document.getElementById('soundName').value.trim(),file=document.getElementById('soundFile').files[0],url=document.getElementById('soundUrl').value.trim(),category=document.getElementById('soundCategory')?.value||'Outros';if(!name){toast('Informe o nome do som.');return}if(!file&&!url){toast('Envie um arquivo ou informe uma URL.');return}if(file&&file.size>25*1024*1024){toast('O arquivo deve ter até 25 MB.');return}try{as.disabled=true;as.textContent='Enviando...';let remoteUrl=url,kind='url';if(file){if(!remoteEnabled){toast('Configure o Supabase para sincronizar arquivos de som com os Players.');return}const ext=(file.name.split('.').pop()||'mp3').toLowerCase().replace(/[^a-z0-9]/g,'')||'mp3';remoteUrl=await uploadGlobalFile(`sounds/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`,file);if(!remoteUrl)throw new Error('URL pública não disponível');kind='url'}const id=`s-${Date.now()}`;state.sounds.push({id,name,kind,url:remoteUrl,category,createdAt:Date.now()});await saveGlobalNow();toast('Som salvo e sincronizado.');render('master')}catch(e){toast(`Não foi possível salvar o som: ${e?.message||'erro'}`)}finally{as.disabled=false;as.textContent='+ Salvar som na biblioteca'}};document.getElementById('soundStopMaster')?.addEventListener('click',stopAllSounds);document.querySelectorAll('[data-play-sound]').forEach(b=>b.onclick=()=>{const sound=state.sounds.find(x=>String(x.id)===String(b.dataset.playSound));if(sound)playSoundEntry(sound)});document.querySelectorAll('[data-del-sound]').forEach(b=>b.onclick=async()=>{const id=b.dataset.delSound;state.sounds=state.sounds.filter(x=>x.id!==id);await saveGlobalNow().catch(()=>{});render('master')});document.querySelectorAll('[data-class-choice]').forEach(b=>b.onclick=()=>{const p=player();if(!p)return;p.class=b.dataset.classChoice;if(!hasMagicClass(p.class))p.initialSpell='';save();const phrase=document.getElementById('destinyPhrase');if(phrase){phrase.classList.remove('show');void phrase.offsetWidth;phrase.classList.add('show')}toast('Seu destino está selado.');render('sheet')});const saveSymbols=document.getElementById('saveSymbols');if(saveSymbols)saveSymbols.onclick=()=>{state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};state.uiIcons.attrs=state.uiIcons.attrs||{};state.uiIcons.skills=state.uiIcons.skills||{};document.querySelectorAll('[data-symbol-attr]').forEach(x=>state.uiIcons.attrs[x.dataset.symbolAttr]=x.value.trim()||DEFAULT_ATTR_ICONS[x.dataset.symbolAttr]);document.querySelectorAll('[data-symbol-skill]').forEach(x=>state.uiIcons.skills[x.dataset.symbolSkill]=x.value.trim()||DEFAULT_SKILL_ICONS[x.dataset.symbolSkill]);save();toast('Símbolos atualizados.');render('master')};document.querySelectorAll('[data-symbol-file]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const kind=inp.dataset.symbolFile,key=inp.dataset.symbolKey;const path=`symbols/${kind}-${key.replace(/[^a-z0-9_-]/gi,'-')}.webp`;const data=await imageFileToRemoteURL(f,path,256,.82);state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};if(kind==='attr')state.uiIcons.attrs[key]=data;else state.uiIcons.skills[key]=data;await saveGlobalNow();toast('Símbolo atualizado e salvo no banco.');document.getElementById('adminContent').innerHTML=symbolsAdmin();bindAdminContent()}catch(err){console.error(err);toast('Não foi possível salvar o símbolo.')}finally{inp.value=''}});document.querySelectorAll('[data-spell-image]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const sp=state.spells.find(x=>x.id===inp.dataset.spellImage);if(!sp)return;const data=await imageFileToRemoteURL(f,`spells/${sp.id}.webp`,900,.82);sp.image=data;await saveGlobalNow();toast('Imagem da magia salva no banco.');render('master')}catch(err){console.error(err);toast('Não foi possível salvar a imagem da magia.')}finally{inp.value=''}});document.querySelectorAll('[data-clear-spell-image]').forEach(b=>b.onclick=async()=>{const sp=state.spells.find(x=>x.id===b.dataset.clearSpellImage);if(sp){sp.image='';await saveGlobalNow().catch(()=>{});toast('Imagem da magia removida.');render('master')}});bindSpellsAdminExtras();document.getElementById('openPointsManager')?.addEventListener('click',openPointsManager);document.querySelectorAll('[data-condition-image]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const key=inp.dataset.conditionImage;const data=await imageFileToRemoteURL(f,`conditions/${key.replace(/[^a-z0-9_-]/gi,'-')}.webp`,512,.82);state.uiIcons=state.uiIcons||{};state.uiIcons.conditions=state.uiIcons.conditions||{};state.uiIcons.conditions[key]=data;await saveGlobalNow();toast('Símbolo da condição salvo no banco.');render('master')}catch(err){console.error(err);toast('Não foi possível salvar a imagem da condição.')}finally{inp.value=''}});if(document.getElementById('itemResults'))renderItems();if(document.querySelector('[data-bg-upload]'))bindBackgrounds();bindSessionThemeEditor()}
+const scid=document.getElementById('spotifyClientId');if(scid)scid.onchange=()=>{try{localStorage.setItem(SPOTIFY_CLIENT_KEY,scid.value.trim())}catch{}};const slog=document.getElementById('spotifyLogin');if(slog)slog.onclick=async()=>{try{if(scid?.value.trim())localStorage.setItem(SPOTIFY_CLIENT_KEY,scid.value.trim())}catch{};if(spotifyLogged()){await ensureSpotifyPlayer();syncGlobalMusic()}else await spotifyLogin()};const slout=document.getElementById('spotifyLogout');if(slout)slout.onclick=()=>{spotifyLogout();render('master')};const cm=document.getElementById('clearMusic');if(cm)cm.onclick=async()=>{state.music={type:'audio',url:'',title:'',kind:'url',mediaId:'',playing:false,loop:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();syncGlobalMusic(true);toast('Trilha removida globalmente.');render('master')};document.querySelectorAll('[data-use-global-music]').forEach(b=>b.onclick=async()=>{const t=(state.musicLibrary||[]).find(x=>String(x.id)===String(b.dataset.useGlobalMusic));if(!t)return;state.music={...normalizeMusic(),type:'audio',url:t.url,title:t.title,kind:t.kind||'url',mediaId:t.id,playing:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();syncGlobalMusic(true);toast('Trilha selecionada.');render('master')});document.querySelectorAll('[data-delete-global-music]').forEach(b=>b.onclick=async()=>{const id=String(b.dataset.deleteGlobalMusic),t=(state.musicLibrary||[]).find(x=>String(x.id)===id);if(!t)return;if(!confirm(`Excluir a trilha ${t.title||''} da biblioteca?`))return;state.musicLibrary=state.musicLibrary.filter(x=>String(x.id)!==id);if(String(state.music?.mediaId)===id)state.music={type:'audio',url:'',title:'',kind:'url',mediaId:'',playing:false,loop:false,position:0,startedAt:0,commandAt:Date.now()};await saveGlobalNow();render('master')});const as=document.getElementById('addSound');if(as)as.onclick=async()=>{const name=document.getElementById('soundName').value.trim(),file=document.getElementById('soundFile').files[0],url=document.getElementById('soundUrl').value.trim(),category=document.getElementById('soundCategory')?.value||'Outros';if(!name){toast('Informe o nome do som.');return}if(!file&&!url){toast('Envie um arquivo ou informe uma URL.');return}if(file&&file.size>25*1024*1024){toast('O arquivo deve ter até 25 MB.');return}try{as.disabled=true;as.textContent='Enviando...';let remoteUrl=url,kind='url';if(file){if(!remoteEnabled){toast('Configure o Supabase para sincronizar arquivos de som com os Players.');return}const ext=(file.name.split('.').pop()||'mp3').toLowerCase().replace(/[^a-z0-9]/g,'')||'mp3';remoteUrl=await uploadGlobalFile(`sounds/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`,file);if(!remoteUrl)throw new Error('URL pública não disponível');kind='url'}const id=`s-${Date.now()}`;state.sounds.push({id,name,kind,url:remoteUrl,category,createdAt:Date.now()});await saveGlobalNow();toast('Som salvo e sincronizado.');render('master')}catch(e){toast(`Não foi possível salvar o som: ${e?.message||'erro'}`)}finally{as.disabled=false;as.textContent='+ Salvar som na biblioteca'}};document.getElementById('soundStopMaster')?.addEventListener('click',stopAllSounds);document.querySelectorAll('[data-play-sound]').forEach(b=>b.onclick=()=>{const sound=state.sounds.find(x=>String(x.id)===String(b.dataset.playSound));if(sound)playSoundEntry(sound)});document.querySelectorAll('[data-del-sound]').forEach(b=>b.onclick=async()=>{const id=b.dataset.delSound;state.sounds=state.sounds.filter(x=>x.id!==id);await saveGlobalNow().catch(()=>{});render('master')});document.querySelectorAll('[data-class-choice]').forEach(b=>b.onclick=()=>{const p=player();if(!p)return;p.class=b.dataset.classChoice;if(!hasMagicClass(p.class))p.initialSpell='';save();const phrase=document.getElementById('destinyPhrase');if(phrase){phrase.classList.remove('show');void phrase.offsetWidth;phrase.classList.add('show')}toast('Seu destino está selado.');render('sheet')});const saveSymbols=document.getElementById('saveSymbols');if(saveSymbols)saveSymbols.onclick=()=>{state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};state.uiIcons.attrs=state.uiIcons.attrs||{};state.uiIcons.skills=state.uiIcons.skills||{};document.querySelectorAll('[data-symbol-attr]').forEach(x=>state.uiIcons.attrs[x.dataset.symbolAttr]=x.value.trim()||DEFAULT_ATTR_ICONS[x.dataset.symbolAttr]);document.querySelectorAll('[data-symbol-skill]').forEach(x=>state.uiIcons.skills[x.dataset.symbolSkill]=x.value.trim()||DEFAULT_SKILL_ICONS[x.dataset.symbolSkill]);save();toast('Símbolos atualizados.');render('master')};document.querySelectorAll('[data-symbol-file]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const kind=inp.dataset.symbolFile,key=inp.dataset.symbolKey;const path=`symbols/${kind}-${key.replace(/[^a-z0-9_-]/gi,'-')}.webp`;const data=await imageFileToRemoteURL(f,path,256,.82);state.uiIcons=state.uiIcons||{attrs:{},skills:{},conditions:{}};if(kind==='attr')state.uiIcons.attrs[key]=data;else state.uiIcons.skills[key]=data;await saveGlobalNow();toast('Símbolo atualizado e salvo no banco.');document.getElementById('adminContent').innerHTML=symbolsAdmin();bindAdminContent()}catch(err){console.error(err);toast('Não foi possível salvar o símbolo.')}finally{inp.value=''}});document.querySelectorAll('[data-spell-image]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const sp=state.spells.find(x=>x.id===inp.dataset.spellImage);if(!sp)return;const data=await imageFileToRemoteURL(f,`spells/${sp.id}.webp`,900,.82);sp.image=data;await saveGlobalNow();toast('Imagem da magia salva no banco.');render('master')}catch(err){console.error(err);toast('Não foi possível salvar a imagem da magia.')}finally{inp.value=''}});document.querySelectorAll('[data-clear-spell-image]').forEach(b=>b.onclick=async()=>{const sp=state.spells.find(x=>x.id===b.dataset.clearSpellImage);if(sp){sp.image='';await saveGlobalNow().catch(()=>{});toast('Imagem da magia removida.');render('master')}});bindSpellsAdminExtras();document.getElementById('openPointsManager')?.addEventListener('click',openPointsManager);document.querySelectorAll('[data-condition-image]').forEach(inp=>inp.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(!isSupportedImageFile(f)||f.size>IMAGE_PICK_MAX_BYTES){toast('Imagem inválida ou maior que 40 MB.');inp.value='';return}try{const key=inp.dataset.conditionImage;const data=await imageFileToRemoteURL(f,`conditions/${key.replace(/[^a-z0-9_-]/gi,'-')}.webp`,512,.82);state.uiIcons=state.uiIcons||{};state.uiIcons.conditions=state.uiIcons.conditions||{};state.uiIcons.conditions[key]=data;await saveGlobalNow();toast('Símbolo da condição salvo no banco.');render('master')}catch(err){console.error(err);toast('Não foi possível salvar a imagem da condição.')}finally{inp.value=''}});if(document.getElementById('itemResults'))renderItems();if(document.querySelector('[data-bg-upload]'))bindBackgrounds();bindSessionThemeEditor()}
 function openModal(html){const holder=document.createElement('div');holder.innerHTML=html.trim();document.body.appendChild(holder.firstElementChild)}
 function characterRules(type='campaign'){const r=state.characterRules||DEFAULT_RULES;return r[type==='slasher'?'slasher':'campaign']||DEFAULT_RULES.campaign}
 function activeSheetDraft(p){
@@ -2887,7 +3426,7 @@ function allocationRemaining(e){const t=allocationTotals(e),r=characterRules(e?.
 function pointsSum(o,names){const set=new Set(names);return Object.entries(o||{}).reduce((a,[k,x])=>set.has(k)?a+(Number(x)||0):a,0)}
 function allocationOver(e){const t=allocationTotals(e),r=characterRules(e?.campaignType);return{attrs:Math.max(0,t.attrs-(Number(r.attrPoints)+(Number(e?.attrBonusPoints)||0))),skills:Math.max(0,t.skills-(Number(r.skillPoints)+(Number(e?.skillBonusPoints)||0)))}}
 function pointsRemainText(e,kind){const o=allocationOver(e)[kind];return o>0?`Excedido em ${o} — reduza`:`Restam ${allocationRemaining(e)[kind]}`}
-function validateAllocation(e,prev){const r=characterRules(e.campaignType),t=allocationTotals(e),ap=Number(e?.attrBonusPoints)||0,sp=Number(e?.skillBonusPoints)||0,al=Number(r.attrPoints)+ap,sl=Number(r.skillPoints)+sp;const prevA=prev?pointsSum(prev.attrs,allAttrs()):null,prevS=prev?pointsSum(prev.skills,allSkills()):null;const badA=t.attrs>al&&!(prevA!==null&&t.attrs<=prevA),badS=t.skills>sl&&!(prevS!==null&&t.skills<=prevS);if(badA||badS)return `Limite excedido: ${t.attrs}/${al} pontos de Atributos e ${t.skills}/${sl} de Perícias.`;return ''}
+function validateAllocation(e,prev){if(state?.session?.role==='master')return '';const r=characterRules(e.campaignType),t=allocationTotals(e),ap=Number(e?.attrBonusPoints)||0,sp=Number(e?.skillBonusPoints)||0,al=Number(r.attrPoints)+ap,sl=Number(r.skillPoints)+sp;const prevA=prev?pointsSum(prev.attrs,allAttrs()):null,prevS=prev?pointsSum(prev.skills,allSkills()):null;const badA=t.attrs>al&&!(prevA!==null&&t.attrs<=prevA),badS=t.skills>sl&&!(prevS!==null&&t.skills<=prevS);if(badA||badS)return `Limite excedido: ${t.attrs}/${al} pontos de Atributos e ${t.skills}/${sl} de Perícias.`;return ''}
 function normalizePointText(raw,max,prev=''){
   const mx=Math.max(0,Math.floor(Number(max))||0);
   const digits=String(raw??'').replace(/\D/g,'').replace(/^0+(?=\d)/,'');
@@ -2905,14 +3444,15 @@ function allowedPointValue(wanted,max,othersSum,limit){
   return Math.max(0,Math.min(Math.floor(w),mx,Math.floor(room)));
 }
 function pointField(cls,kind,name,value,max){
-  const v=normalizePointText(value,max,'')??0,n=esc(name);
+  const fieldMax=typeof state!=='undefined'&&state.session?.role==='master'?999:max;
+  const v=normalizePointText(value,fieldMax,'')??0,n=esc(name);
   return `<span class="pt-ctl"><button type="button" class="pt-btn" data-pt-step="-1" aria-label="Diminuir ${n}">−</button><input class="${esc(cls)}" data-${esc(kind)}="${n}" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="3" aria-label="${n}" value="${Number(v)}"><button type="button" class="pt-btn" data-pt-step="1" aria-label="Aumentar ${n}">+</button></span>`;
 }
 function bindPointInputs(p,capture){
   const rules=()=>characterRules(p.campaignType);
   const groups=[
-    {sel:'.pAttr',max:MAX_ATTR,out:'attrRemaining',limit:()=>(Number(rules().attrPoints)||0)+(Number(p.attrBonusPoints)||0)},
-    {sel:'.pSkill',max:MAX_SKILL,out:'skillRemaining',limit:()=>(Number(rules().skillPoints)||0)+(Number(p.skillBonusPoints)||0)}
+    {sel:'.pAttr',max:typeof state!=='undefined'&&state.session?.role==='master'?999:MAX_ATTR,out:'attrRemaining',limit:()=>(Number(rules().attrPoints)||0)+(Number(p.attrBonusPoints)||0)},
+    {sel:'.pSkill',max:typeof state!=='undefined'&&state.session?.role==='master'?999:MAX_SKILL,out:'skillRemaining',limit:()=>(Number(rules().skillPoints)||0)+(Number(p.skillBonusPoints)||0)}
   ];
   let lastHint=0;
   const hint=msg=>{const t=Date.now();if(t-lastHint>1500){lastHint=t;try{toast(msg)}catch{}}};
@@ -2929,10 +3469,10 @@ function bindPointInputs(p,capture){
       if(g.sel==='.pAttr'&&typeof updateDerivedPreview==='function')updateDerivedPreview(p);
     };
     const apply=(el,wanted)=>{
-      const others=othersOf(el),room=Math.max(0,g.limit()-others);
-      const capped=Math.min(wanted,g.max),v=allowedPointValue(capped,g.max,others,g.limit());
+      const others=othersOf(el),room=Math.max(0,g.limit()-others),isMaster=typeof state!=='undefined'&&state.session?.role==='master';
+      const capped=Math.min(wanted,g.max),v=isMaster?Math.max(0,Math.min(Math.floor(capped),g.max)):allowedPointValue(capped,g.max,others,g.limit());
       if(wanted>g.max)hint(`O máximo deste campo é ${g.max}.`);
-      else if(v<capped)hint(room>0?`Só restam ${room} pontos para este campo.`:'Não há pontos restantes.');
+      else if(!isMaster&&v<capped)hint(room>0?`Só restam ${room} pontos para este campo.`:'Não há pontos restantes.');
       const txt=String(v);
       if(el.value!==txt)el.value=txt;
       el.dataset.prev=txt;
@@ -2965,8 +3505,8 @@ function bindPointInputs(p,capture){
     refresh();
   }
 }
-function rulesAdmin(){const r=state.characterRules||DEFAULT_RULES;return `<div class="card character-rules-card"><div class="section-kicker">REGRAS DE CRIAÇÃO</div><h2>Limites de pontos</h2><p class="small muted">Defina quantos pontos cada tipo de ficha pode distribuir. Atributos e Perícias são contados separadamente.</p><div class="rules-grid"><section><h3>Campanha principal</h3><div class="field"><label>Pontos de Atributos</label><input id="ruleCampaignAttrs" type="number" min="0" max="999" value="${Number(r.campaign?.attrPoints)||0}"></div><div class="field"><label>Pontos de Perícias</label><input id="ruleCampaignSkills" type="number" min="0" max="999" value="${Number(r.campaign?.skillPoints)||0}"></div><div class="field"><label>Vida e Sanidade máximas (25 + 4 por ponto de Corpo ou Sanidade, até 45)</label><input id="ruleCampaignHp" type="number" min="1" max="999" value="45" disabled></div></section><section><h3>Slasher</h3><div class="field"><label>Pontos de Atributos</label><input id="ruleSlasherAttrs" type="number" min="0" max="999" value="${Number(r.slasher?.attrPoints)||0}"></div><div class="field"><label>Pontos de Perícias</label><input id="ruleSlasherSkills" type="number" min="0" max="999" value="${Number(r.slasher?.skillPoints)||0}"></div><div class="field"><label>Vida máxima base</label><input id="ruleSlasherHp" type="number" min="1" max="9999" value="${Number(r.slasher?.hpMax)||100}"></div></section></div><div class="field" style="margin:14px 0"><label>Rolagem de perícia (dadinho da ficha)</label><select id="ruleSkillRollMode"><option value="cris" ${r.skillRollMode==='simple'?'':'selected'}>Estilo C.R.I.S. — d20 igual ao atributo ligado (pega o maior) + perícia</option><option value="simple" ${r.skillRollMode==='simple'?'selected':''}>Simples — 1d20 + perícia</option></select></div><div class="row" style="justify-content:flex-end"><button class="btn primary" id="saveCharacterRules">Salvar limites</button></div></div>`}
-function bindRulesAdmin(){const b=document.getElementById('saveCharacterRules');if(!b)return;b.onclick=()=>{state.characterRules={campaign:{attrPoints:clamp(document.getElementById('ruleCampaignAttrs').value,0,999),skillPoints:clamp(document.getElementById('ruleCampaignSkills').value,0,999),hpMax:clamp(document.getElementById('ruleCampaignHp').value,1,999)},slasher:{attrPoints:clamp(document.getElementById('ruleSlasherAttrs').value,0,999),skillPoints:clamp(document.getElementById('ruleSlasherSkills').value,0,999),hpMax:clamp(document.getElementById('ruleSlasherHp').value,1,9999)},skillRollMode:document.getElementById('ruleSkillRollMode')?.value==='simple'?'simple':'cris'};save();toast('Limites de criação atualizados globalmente.');document.getElementById('adminContent').innerHTML=playersAdmin();bindAdminContent()}}
+function rulesAdmin(){const r=state.characterRules||DEFAULT_RULES;return `<div class="card character-rules-card"><div class="section-kicker">REGRAS DE CRIAÇÃO</div><h2>Limites de pontos</h2><p class="small muted">Defina quantos pontos cada tipo de ficha pode distribuir. Atributos e Perícias são contados separadamente.</p><div class="rules-grid"><section><h3>Campanha principal</h3><div class="field"><label>Pontos de Atributos</label><input id="ruleCampaignAttrs" type="number" min="0" max="999" value="${Number(r.campaign?.attrPoints)||0}"></div><div class="field"><label>Pontos de Perícias</label><input id="ruleCampaignSkills" type="number" min="0" max="999" value="${Number(r.campaign?.skillPoints)||0}"></div><div class="field"><label>Vida e Sanidade máximas (25 + 4 por ponto de Corpo ou Sanidade, até 45)</label><input id="ruleCampaignHp" type="number" min="1" max="999" value="45" disabled></div></section><section><h3>Slasher</h3><div class="field"><label>Pontos de Atributos</label><input id="ruleSlasherAttrs" type="number" min="0" max="999" value="${Number(r.slasher?.attrPoints)||0}"></div><div class="field"><label>Pontos de Perícias</label><input id="ruleSlasherSkills" type="number" min="0" max="999" value="${Number(r.slasher?.skillPoints)||0}"></div><div class="field"><label>Vida máxima base</label><input id="ruleSlasherHp" type="number" min="1" max="9999" value="${Number(r.slasher?.hpMax)||100}"></div></section></div><div class="field" style="margin:14px 0"><label>Rolagem de perícia (dadinho da ficha)</label><select id="ruleSkillRollMode"><option value="limit" ${r.skillRollMode==='cris'||r.skillRollMode==='simple'?'':'selected'}>Manual de Rolagens — até 3d20 (pega o maior), +2 por ponto acima de 3</option><option value="cris" ${r.skillRollMode==='cris'?'selected':''}>Antigo: C.R.I.S. — d20 igual ao atributo ligado (pega o maior) + perícia</option><option value="simple" ${r.skillRollMode==='simple'?'selected':''}>Antigo: Simples — 1d20 + perícia</option></select></div><div class="row" style="justify-content:flex-end"><button class="btn primary" id="saveCharacterRules">Salvar limites</button></div></div>`}
+function bindRulesAdmin(){const b=document.getElementById('saveCharacterRules');if(!b)return;b.onclick=()=>{state.characterRules={campaign:{attrPoints:clamp(document.getElementById('ruleCampaignAttrs').value,0,999),skillPoints:clamp(document.getElementById('ruleCampaignSkills').value,0,999),hpMax:clamp(document.getElementById('ruleCampaignHp').value,1,999)},slasher:{attrPoints:clamp(document.getElementById('ruleSlasherAttrs').value,0,999),skillPoints:clamp(document.getElementById('ruleSlasherSkills').value,0,999),hpMax:clamp(document.getElementById('ruleSlasherHp').value,1,9999)},skillRollMode:['simple','cris'].includes(document.getElementById('ruleSkillRollMode')?.value)?document.getElementById('ruleSkillRollMode').value:'limit',rollSystemV:2};save();toast('Limites de criação atualizados globalmente.');document.getElementById('adminContent').innerHTML=playersAdmin();bindAdminContent()}}
 function registerPlayer(){lastRenderSig='';document.getElementById('root').innerHTML=`<div class="screen"><form class="login-card register-card" id="registerForm"><img class="sigil" src="/runa-gold.png" alt=""><h1 class="title">Criar Player</h1><p class="subtitle">Crie seu acesso e depois monte sua ficha.</p><div class="field"><label>Login</label><input id="regLogin" autocomplete="username" minlength="3" maxlength="32" required></div><div class="field"><label>Senha</label><input id="regPassword" type="password" autocomplete="new-password" minlength="4" maxlength="72" required></div><div class="field"><label>Tipo de ficha</label><select id="regType"><option value="campaign">Campanha principal</option><option value="slasher">Slasher</option></select></div><div class="field"><label>Nome do personagem</label><input id="regName" maxlength="60" placeholder="Pode preencher depois"></div><div class="row"><button type="button" class="btn" id="cancelRegister">Voltar</button><button class="btn primary" type="submit">Criar acesso</button></div></form></div>`;document.getElementById('cancelRegister').onclick=login;document.getElementById('registerForm').onsubmit=async e=>{e.preventDefault();const loginName=document.getElementById('regLogin').value.trim(),password=document.getElementById('regPassword').value,type=document.getElementById('regType').value==='slasher'?'slasher':'campaign',name=document.getElementById('regName').value.trim()||loginName;if(loginName.toLowerCase()==='sxscroow'){toast('Esse login é reservado ao Mestre.');return}if(state.players.some(p=>String(p.login||'').trim().toLowerCase()===loginName.toLowerCase())){toast('Esse login já existe.');return}if(!remoteEnabled){toast('O servidor de autenticação não está disponível. Tente novamente mais tarde.');return}if(playerStoreEnabled){try{const rows=await fetchPlayerRows();if(rows.some(r=>!r.deleted_at&&String(r.login||r.data?.login||'').trim().toLowerCase()===loginName.toLowerCase())){toast('Esse login já existe.');return}}catch(err){console.warn('Não foi possível consultar os Players antes do cadastro:',err)}}const r=characterRules(type);const p={id:'p-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),login:loginName,name,class:'',campaignType:type,photo:'',soul:'',soulPhoto:'',belovedObjects:'',personality:'',destiny:'',description:'',history:'',fears:'',traumas:'',likes:'',playerNotes:'',masterNotes:'',attrBonusPoints:0,skillBonusPoints:0,deityId:'',homeWallpaper:'',musicThemes:[],hp:Math.min(Number(r.hpMax)||35,MAX_HP),hpMax:Math.min(Number(r.hpMax)||35,MAX_HP),attack:0,defense:0,status:'Ativo',extra:0,attrs:blankAttrs(),attrLimits:blankLimits(),skills:blankSkills(),backpack:[],conditions:[],conditionTurns:{},rolls:[],slasherReligion:'',slasherBelief:'',element:'',hunger:100,hungerRoundCounter:0,secretLovedEffect:''};normalize(p);p._syncUpdatedAt=nextStamp();state.players.push(p);ps.lastSnapshot=clone(state.players);state.session={role:'player',login:loginName,playerId:p.id,playerSnapshot:clone(p)};storageSet(KEY,serializeState());try{if(playerStoreEnabled){const rr=await authRegisterPlayer(loginName,password,p);if(rr?.player?._syncUpdatedAt)p._syncUpdatedAt=Number(rr.player._syncUpdatedAt)||p._syncUpdatedAt;ps.hydrated=true}else{save();}}catch(err){state.players=state.players.filter(x=>playerSyncKey(x)!==p.id);state.session=null;storageSet(KEY,serializeState());console.error('Falha ao criar Player:',err);toast(/LOGIN_|SENHA_|MUITAS_/.test(String(err?.message))?authErrorText(err):'Não foi possível salvar o Player no banco. Tente novamente.');return}save();await saveGlobalNow().catch(()=>{});state.session.playerSnapshot=clone(player()||p);toast('Player criado com sucesso.');render('sheet')}}
 function login(){lastRenderSig='';curtainRevealPending=true;const brand=siteBrand();document.getElementById('root').innerHTML=`<div class="screen"><form class="login-card" id="loginForm"><img class="sigil" src="${esc(brand.image)}" alt=""><h1 class="title">${esc(brand.name)}</h1><p class="welcome">Bem-vindos ao abismo</p><p class="subtitle">Entre para continuar sua jornada.</p><div class="field"><label>Login</label><input id="login" autocomplete="username" required></div><div class="field"><label>Senha</label><input id="password" type="password" autocomplete="current-password" required></div><button class="btn primary full">Entrar</button><button type="button" class="btn full" id="registerPlayerBtn">Criar login de Player</button></form></div>`;optimizeRenderedImages();document.getElementById('registerPlayerBtn').onclick=registerPlayer;document.getElementById('loginForm').onsubmit=async e=>{e.preventDefault();const l=document.getElementById('login').value.trim(),p=document.getElementById('password').value;let found=null;
     const submitBtn=document.querySelector('#loginForm button.primary');if(submitBtn)submitBtn.disabled=true;
@@ -3174,12 +3714,12 @@ function renderCore(view='home'){
   }
   let html;
   try{
-    html=view==='sheet'?(state.session.role==='master'?masterFicha():sheet()):view==='classes'?classesPage():view==='master'&&state.session.role==='master'?admin():view==='session'&&state.session.role==='master'?sessionModePage():view==='map'&&state.session.role==='player'?shell(campaignMapPage(state,false,player()),'map'):view==='archive'&&state.session.role==='player'?shell(campaignArchivePage({items:campaignArchiveItems,isMaster:false,players:state.players,loading:campaignArchiveLoading,error:campaignArchiveError,showArchived:false}),'archive'):view==='immersive'&&state.session.role==='player'?immersivePage():view==='diary'&&state.session.role==='player'?diaryPage():view==='library'&&state.session.role==='player'?libraryPage():view==='rules'?rulesPage():view==='spells'&&state.session.role==='player'?spellsPage():view==='nexus'?nexusPage():view==='secrets'&&state.session.role==='player'?secretCluesPage():view==='tv'?tvPage():home();
+    html=view==='sheet'?(state.session.role==='master'?masterFicha():sheet()):view==='classes'?classesPage():view==='master'&&state.session.role==='master'?admin():view==='session'&&state.session.role==='master'?sessionModePage():view==='map'&&state.session.role==='player'?shell(campaignMapPage(state,false,player()),'map'):view==='archive'&&state.session.role==='player'?shell(campaignArchivePage({items:campaignArchiveItems,isMaster:false,players:state.players,loading:campaignArchiveLoading,error:campaignArchiveError,showArchived:false}),'archive'):view==='immersive'&&state.session.role==='player'?immersivePage():view==='diary'&&state.session.role==='player'?diaryPage():view==='library'&&state.session.role==='player'?libraryPage():view==='rules'?rulesPage():view==='dicerules'?diceRulesPage():view==='spells'&&state.session.role==='player'?spellsPage():view==='nexus'?nexusPage():view==='secrets'&&state.session.role==='player'?secretCluesPage():view==='tv'?tvPage():home();
   }catch(error){
     console.error('[Ashen Testimony] Falha ao montar a tela "'+view+'":',error);
     html=shell(`<div class="empty">Não foi possível carregar esta parte da ficha agora. Toque novamente na aba ou recarregue a página.<br><small class="muted">${esc(String(error?.message||error||''))}</small></div>`,view);
   }
-  const keepViewScroll=prevView===view,savedTabsScroll=(keepViewScroll&&view==='master')?(document.querySelector('.panel-tabs')?.scrollLeft||0):0,savedScrollY=keepViewScroll?window.scrollY:0;if(view==='master'&&!keepViewScroll)adminTabCurrent='players';const renderSig=makeRenderSignature(view,html);if(renderOpts.remote&&prevView===view&&renderSig===lastRenderSig&&document.getElementById('root').firstElementChild){renderSkipped=true;return}lastRenderSig=renderSig;document.getElementById('root').innerHTML=html;optimizeRenderedImages();if(view==='immersive'&&state.session?.role==='player'&&!curtainBusy&&(prevView!=='immersive'||curtainRevealPending)){curtainRevealPending=false;curtainReveal()}applySiteBrand();document.getElementById('terrorOverlay')?.remove();if(state.terrorMode?.active){document.body.insertAdjacentHTML('beforeend',terrorOverlay());document.getElementById('forceDisableTerror')?.addEventListener('click',async()=>{if(!confirm('Desativar o Modo Terror para todos os Players?'))return;state.terrorMode={...defaultTerrorMode(),active:false,updatedAt:Date.now()};try{await saveGlobalNow()}catch(e){console.warn('Falha ao sincronizar a desativação do Modo Terror:',e)}document.getElementById('terrorOverlay')?.remove();save();render(currentView||'home')})}bindNav();document.querySelectorAll('[data-open-secret-clues]').forEach(b=>b.onclick=()=>render('secrets'));if(view==='session'&&state.session?.role==='master')bindSessionMode();if(view==='home'){if(state.session?.role==='master')bindMasterHome();document.querySelectorAll('[data-play-theme]').forEach(b=>b.onclick=()=>{const p=player(),t=p?.musicThemes?.[Number(b.dataset.playTheme)];if(t)playPersonalTheme(t.url,t.title,Number(b.dataset.playTheme))});document.querySelectorAll('[data-pause-theme]').forEach(b=>b.onclick=()=>pausePersonalTheme());document.querySelectorAll('[data-stop-theme]').forEach(b=>b.onclick=()=>stopPersonalTheme());document.getElementById('spotifyHomePlay')?.addEventListener('click',spotifyPlayCurrent);document.getElementById('spotifyHomePause')?.addEventListener('click',spotifyPause);document.getElementById('spotifyHomeLogin')?.addEventListener('click',async()=>{let id=spotifyClientId();if(!id){id=prompt('Cole o Client ID do seu aplicativo Spotify:')?.trim()||'';if(id)try{localStorage.setItem(SPOTIFY_CLIENT_KEY,id)}catch{}}if(id)await spotifyLogin()})}if(view==='diary')document.getElementById('savePrivateDiary')?.addEventListener('click',()=>{savePrivateDiary(document.getElementById('privateDiaryText')?.value||'');toast('Diário salvo neste dispositivo.')});if(view==='library')document.querySelectorAll('[data-read-book]').forEach(b=>b.onclick=()=>openBookReader(Number(b.dataset.readBook)));if(view==='master'){bindAdmin();if(keepViewScroll){if(view==='master'&&adminTabCurrent!=='players')document.querySelector(`[data-tab="${adminTabCurrent}"]`)?.click();const tabsEl=document.querySelector('.panel-tabs');if(view==='master'&&tabsEl)tabsEl.scrollLeft=savedTabsScroll;window.scrollTo(0,savedScrollY);requestAnimationFrame(()=>window.scrollTo(0,savedScrollY))}}if(view==='map'&&state.session?.role==='player')bindCampaignMap({state,isMaster:false,currentPlayer:player(),save,saveGlobal:saveGlobalNow,toast,rerender:()=>render('map')});if(view==='archive'&&state.session?.role==='player')bindArchiveUI(false);if(view==='nexus')bindNexus();if(view==='tv')bindTvPage();if(view==='immersive')bindImmersive();if(view==='spells'&&state.session?.role==='player')bindSpellsPage();if(view==='sheet'&&state.session.role==='master')bindMasterFicha();if(view==='sheet'&&state.session.role==='player'){bindSheet();try{enhanceSheetTabs()}catch(err){console.warn('Abas da ficha indisponíveis:',err)}}if(view==='classes'){const p=player();document.querySelectorAll('[data-slasher-religion]').forEach(b=>b.onclick=()=>{if(!p||p.campaignType!=='slasher')return;p.slasherReligion=b.dataset.slasherReligion;p.slasherBelief='';save();render('classes')});document.querySelectorAll('[data-slasher-belief]').forEach(b=>b.onclick=()=>{if(!p||p.campaignType!=='slasher'||p.slasherReligion!=='yes')return;p.slasherBelief=b.dataset.slasherBelief;save();render('classes')});const choose=b=>{if(!p||classChosen(p)){toast('A classe já foi escolhida e não pode ser alterada.');return}if(p.campaignType==='slasher'&&!(p.slasherReligion==='no'||(p.slasherReligion==='yes'&&p.slasherBelief))){toast('Responda às perguntas de origem antes de escolher uma profissão.');return}const name=b.dataset.classChoice;const c=CLASSES[name];if(!c||((p.campaignType==='slasher')!==!!c.slasher)){toast('Essa escolha não pertence a este tipo de ficha.');return}if(!confirm(`Escolher ${name}?\n\nEsta escolha é definitiva para este personagem.`))return;p.class=name;p.initialSpell='';save();toast('Seu destino está selado.');render('sheet')};document.querySelectorAll('[data-class-choice]').forEach(b=>{b.setAttribute('role','button');b.setAttribute('tabindex','0');b.onclick=()=>choose(b);b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose(b)}}})}syncGlobalMusic();syncSoundboard();applyBackgrounds()}
+  const keepViewScroll=prevView===view,savedTabsScroll=(keepViewScroll&&view==='master')?(document.querySelector('.panel-tabs')?.scrollLeft||0):0,savedScrollY=keepViewScroll?window.scrollY:0;if(view==='master'&&!keepViewScroll)adminTabCurrent='players';const renderSig=makeRenderSignature(view,html);if(renderOpts.remote&&prevView===view&&renderSig===lastRenderSig&&document.getElementById('root').firstElementChild){renderSkipped=true;return}lastRenderSig=renderSig;document.getElementById('root').innerHTML=html;optimizeRenderedImages();if(view==='immersive'&&state.session?.role==='player'&&!curtainBusy&&(prevView!=='immersive'||curtainRevealPending)){curtainRevealPending=false;curtainReveal()}applySiteBrand();document.getElementById('terrorOverlay')?.remove();if(state.terrorMode?.active){document.body.insertAdjacentHTML('beforeend',terrorOverlay());document.getElementById('forceDisableTerror')?.addEventListener('click',async()=>{if(!confirm('Desativar o Modo Terror para todos os Players?'))return;state.terrorMode={...defaultTerrorMode(),active:false,updatedAt:Date.now()};try{await saveGlobalNow()}catch(e){console.warn('Falha ao sincronizar a desativação do Modo Terror:',e)}document.getElementById('terrorOverlay')?.remove();save();render(currentView||'home')})}bindNav();document.querySelectorAll('[data-open-secret-clues]').forEach(b=>b.onclick=()=>render('secrets'));if(view==='session'&&state.session?.role==='master')bindSessionMode();if(view==='home'){if(state.session?.role==='master')bindMasterHome();document.querySelectorAll('[data-play-theme]').forEach(b=>b.onclick=()=>{const p=player(),t=p?.musicThemes?.[Number(b.dataset.playTheme)];if(t)playPersonalTheme(t.url,t.title,Number(b.dataset.playTheme))});document.querySelectorAll('[data-pause-theme]').forEach(b=>b.onclick=()=>pausePersonalTheme());document.querySelectorAll('[data-stop-theme]').forEach(b=>b.onclick=()=>stopPersonalTheme());document.getElementById('spotifyHomePlay')?.addEventListener('click',spotifyPlayCurrent);document.getElementById('spotifyHomePause')?.addEventListener('click',spotifyPause);document.getElementById('spotifyHomeLogin')?.addEventListener('click',async()=>{let id=spotifyClientId();if(!id){id=prompt('Cole o Client ID do seu aplicativo Spotify:')?.trim()||'';if(id)try{localStorage.setItem(SPOTIFY_CLIENT_KEY,id)}catch{}}if(id)await spotifyLogin()})}if(view==='diary')document.getElementById('savePrivateDiary')?.addEventListener('click',()=>{savePrivateDiary(document.getElementById('privateDiaryText')?.value||'');toast('Diário salvo neste dispositivo.')});if(view==='dicerules')bindDiceRules();if(view==='library')document.querySelectorAll('[data-read-book]').forEach(b=>b.onclick=()=>openBookReader(Number(b.dataset.readBook)));if(view==='master'){bindAdmin();if(keepViewScroll){if(view==='master'&&adminTabCurrent!=='players')document.querySelector(`[data-tab="${adminTabCurrent}"]`)?.click();const tabsEl=document.querySelector('.panel-tabs');if(view==='master'&&tabsEl)tabsEl.scrollLeft=savedTabsScroll;window.scrollTo(0,savedScrollY);requestAnimationFrame(()=>window.scrollTo(0,savedScrollY))}}if(view==='map'&&state.session?.role==='player')bindCampaignMap({state,isMaster:false,currentPlayer:player(),save,saveGlobal:saveGlobalNow,toast,rerender:()=>render('map')});if(view==='archive'&&state.session?.role==='player')bindArchiveUI(false);if(view==='nexus')bindNexus();if(view==='tv')bindTvPage();if(view==='immersive')bindImmersive();if(view==='spells'&&state.session?.role==='player')bindSpellsPage();if(view==='sheet'&&state.session.role==='master')bindMasterFicha();if(view==='sheet'&&state.session.role==='player'){bindSheet();try{enhanceSheetTabs()}catch(err){console.warn('Abas da ficha indisponíveis:',err)}}if(view==='classes'){const p=player();document.querySelectorAll('[data-slasher-religion]').forEach(b=>b.onclick=()=>{if(!p||p.campaignType!=='slasher')return;p.slasherReligion=b.dataset.slasherReligion;p.slasherBelief='';save();render('classes')});document.querySelectorAll('[data-slasher-belief]').forEach(b=>b.onclick=()=>{if(!p||p.campaignType!=='slasher'||p.slasherReligion!=='yes')return;p.slasherBelief=b.dataset.slasherBelief;save();render('classes')});const choose=b=>{if(!p||classChosen(p)){toast('A classe já foi escolhida e não pode ser alterada.');return}if(p.campaignType==='slasher'&&!(p.slasherReligion==='no'||(p.slasherReligion==='yes'&&p.slasherBelief))){toast('Responda às perguntas de origem antes de escolher uma profissão.');return}const name=b.dataset.classChoice;const c=CLASSES[name];if(!c||((p.campaignType==='slasher')!==!!c.slasher)){toast('Essa escolha não pertence a este tipo de ficha.');return}if(!confirm(`Escolher ${name}?\n\nEsta escolha é definitiva para este personagem.`))return;p.class=name;p.initialSpell='';save();toast('Seu destino está selado.');render('sheet')};document.querySelectorAll('[data-class-choice]').forEach(b=>{b.setAttribute('role','button');b.setAttribute('tabindex','0');b.onclick=()=>choose(b);b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose(b)}}})}syncGlobalMusic();syncSoundboard();applyBackgrounds()}
 function combatRules(){return {...COMBAT_DEFAULT,...((state&&state.characterRules&&state.characterRules.combat)||{})}}
 function derivedCombat(e){
   const r=combatRules(),corpo=effectiveAttr(e,'Corpo'),slasher=e?.campaignType==='slasher';
@@ -3261,14 +3801,15 @@ function bindSpellsPage(){
 function castSpell(p,id,view='sheet'){
   const sp=spellByPlayer(p,id);if(!sp||!p)return;
   const cost=spellCost(sp),max=derivedMax(p,'Sanidade'),current=clamp(p.sanity??max,0,max);
-  if(cost>current){toast(`Sanidade insuficiente. Necessário: ${cost}. Atual: ${current}.`);return}
+  const shortfall=Math.max(0,cost-current);
   const ritualLine=spellIsRitual(sp)?`\n${spellRitualText(sp)}`:'';
-  if(!confirm(`Usar ${sp.name}?\n\nCusto: ${cost} Sanidade${ritualLine}\nSanidade atual: ${current} / ${max}`))return;
+  const consequence=shortfall?`\n\nATENÇÃO: faltam ${shortfall} de Sanidade. A magia ainda poderá ser usada; os efeitos negativos ficam a critério do Mestre.`:'';
+  if(!confirm(`Usar ${sp.name}?\n\nCusto: ${cost} Sanidade${ritualLine}\nSanidade atual: ${current} / ${max}${consequence}`))return;
   p.sanity=clamp(current-cost,0,max);save();updateResourceBars(p,'sanity');
-  toast(spellIsRitual(sp)?`${sp.name} iniciada. -${cost} Sanidade (restam ${p.sanity}). ${spellRitualText(sp)}.`:`${sp.name} usada. -${cost} Sanidade (restam ${p.sanity}).`);render(view);
+  toast(shortfall?`${sp.name} usada apesar da Sanidade insuficiente. O Mestre pode aplicar consequências narrativas.`:(spellIsRitual(sp)?`${sp.name} iniciada. -${cost} Sanidade (restam ${p.sanity}). ${spellRitualText(sp)}.`:`${sp.name} usada. -${cost} Sanidade (restam ${p.sanity}).`));render(view);
 }
 
-function themeIsAudio(t){return t?.kind==='file'||/\.(mp3|m4a|aac|wav|ogg|oga|opus)(\?|#|$)/i.test(String(t?.url||''))||!!spotifyResource(t?.url)||isSpotifyShortLink(t?.url)}
+function themeIsAudio(t){return t?.kind==='file'||/\.(mp3|m4a|aac|wav|ogg|oga|opus)(\?|#|$)/i.test(String(t?.url||''))||!!spotifyResource(t?.url)||isSpotifyShortLink(t?.url)||!!parseYouTubeUrl(t?.url)}
 let personalAudio=null;
 let personalAudioUrl='';
 let personalAudioThemeIndex=-1;
@@ -3276,7 +3817,8 @@ let personalSpotifyPlaying=false;
 let personalSpotifyResource=null;
 function personalThemeRoot(){return document.getElementById('personal-player')}
 async function stopPersonalTheme(renderControls=true){
-  if(personalAudio){try{personalAudio.pause();personalAudio.currentTime=0}catch{}}
+  if(personalAudio){try{personalAudio.pause();personalAudio.currentTime=0}catch{}try{personalAudio.destroy?.()}catch{}}
+  removeYoutubeHost();
   if(personalSpotifyPlaying){try{await spotifyPause()}catch{}}
   if(personalAudioUrl){try{URL.revokeObjectURL(personalAudioUrl)}catch{} }
   personalAudio=null;personalAudioUrl='';personalAudioThemeIndex=-1;personalSpotifyPlaying=false;personalSpotifyResource=null;
@@ -3350,12 +3892,41 @@ async function playSpotifyPersonal(url,title,index){
 }
 async function playPersonalTheme(url,title,index=-1){
   const src=safeHref(url,'');if(!src)return;
+  const yt=parseYouTubeUrl(src);
+  if(yt){await playYoutubePersonal(src,title,index,yt);return}
   const r=spotifyResource(src);
   if(r||isSpotifyShortLink(src)){await playSpotifyPersonal(src,title,index);return}
   if(personalAudio&&personalAudio.src===src){personalAudio.play().catch(()=>{});syncPersonalPlayer();return}
   await stopPersonalTheme(false);
   personalAudio=new Audio(src);personalAudio.preload='metadata';personalAudio.volume=.85;personalAudioThemeIndex=index;personalAudio.onended=()=>stopPersonalTheme();personalAudio.onerror=()=>{toast('Não foi possível reproduzir esta trilha.');stopPersonalTheme()};
   renderPersonalPlayer(title,index);personalAudio.play().catch(()=>toast('Toque em Reproduzir para liberar o áudio neste aparelho.'));syncPersonalPlayer();
+}
+function ensureYoutubeHost(title,parsed){
+  document.getElementById('yt-personal-host')?.remove();
+  const host=document.createElement('div');host.id='yt-personal-host';host.className='yt-personal-host';host.setAttribute('role','region');host.setAttribute('aria-label','Player do YouTube');
+  const bar=document.createElement('div');bar.className='yt-host-bar';
+  const name=document.createElement('span');name.className='yt-host-title';name.textContent=title||'YouTube';
+  const open=document.createElement('a');open.href=youtubeWatchUrl(parsed);open.target='_blank';open.rel='noopener noreferrer';open.textContent=parsed.music?'Abrir no YouTube Music':'Abrir no YouTube';
+  const close=document.createElement('button');close.type='button';close.className='yt-host-close';close.setAttribute('aria-label','Parar e fechar');close.textContent='✕';close.onclick=()=>stopPersonalTheme();
+  bar.append(name,open,close);
+  const box=document.createElement('div');box.className='yt-host-mount';const mount=document.createElement('div');box.append(mount);
+  host.append(bar,box);document.body.append(host);
+  return mount;
+}
+function removeYoutubeHost(){document.getElementById('yt-personal-host')?.remove()}
+async function playYoutubePersonal(src,title,index,yt){
+  if(personalAudio&&personalAudio.src===src&&!personalAudio.destroyed){personalAudio.play().catch(()=>toast('Toque em ▶ no vídeo para liberar o áudio neste aparelho.'));syncPersonalPlayer();return}
+  await stopPersonalTheme(false);
+  let YT;
+  try{YT=await loadYouTubeApi()}catch{toast('Não consegui carregar o player do YouTube. Confira a conexão ou use o link para abrir no YouTube.');return}
+  const mount=ensureYoutubeHost(title,yt);
+  const audio=createYouTubeAudio(YT,mount,yt,{volume:.85});
+  audio.src=src;personalAudio=audio;personalAudioThemeIndex=index;
+  audio.onended=()=>stopPersonalTheme();
+  audio.onerror=(e)=>{toast(e?.embedBlocked?'O YouTube não permite tocar esta faixa fora do app. Use o botão para abrir no YouTube Music.':e?.notFound?'Este vídeo do YouTube não está disponível.':'Não foi possível reproduzir esta trilha do YouTube.');stopPersonalTheme()};
+  renderPersonalPlayer(title,index);
+  audio.play().catch(()=>toast('Toque em ▶ no vídeo para liberar o áudio neste aparelho.'));
+  syncPersonalPlayer();
 }
 async function uploadThemeFile(inp){
   const p=player(),f=inp.files?.[0];inp.value='';if(!p||!f)return;
@@ -3676,7 +4247,7 @@ function bindSessionThemeEditor(){
     }
   };
 }
-function immQuickNav(){return '<nav class="imm-quicknav" aria-label="Atalhos"><button type="button" data-nav="sheet">Ficha</button><button type="button" data-nav="classes">Classes</button><button type="button" data-nav="map">Mapa</button><button type="button" data-nav="diary">Diário</button><button type="button" data-nav="library">Biblioteca</button><button type="button" data-nav="rules">Regras</button><button type="button" data-nav="nexus">Nexus</button><button type="button" data-open-secret-clues>Fragmentos ocultos</button></nav>'}
+function immQuickNav(){return '<nav class="imm-quicknav" aria-label="Atalhos"><button type="button" data-nav="sheet">Ficha</button><button type="button" data-nav="classes">Classes</button><button type="button" data-nav="map">Mapa</button><button type="button" data-nav="diary">Diário</button><button type="button" data-nav="library">Biblioteca</button><button type="button" data-nav="rules">Regras</button><button type="button" data-nav="dicerules">Rolagens</button><button type="button" data-nav="nexus">Nexus</button><button type="button" data-open-secret-clues>Fragmentos ocultos</button></nav>'}
 function bindPlayerThemes(){document.querySelectorAll('[data-play-theme]').forEach(b=>b.onclick=()=>{const p=player(),t=p?.musicThemes?.[Number(b.dataset.playTheme)];if(t)playPersonalTheme(t.url,t.title,Number(b.dataset.playTheme))});document.querySelectorAll('[data-pause-theme]').forEach(b=>b.onclick=()=>pausePersonalTheme());document.querySelectorAll('[data-stop-theme]').forEach(b=>b.onclick=()=>stopPersonalTheme());document.getElementById('spotifyHomePlay')?.addEventListener('click',spotifyPlayCurrent);document.getElementById('spotifyHomePause')?.addEventListener('click',spotifyPause);document.getElementById('spotifyHomeLogin')?.addEventListener('click',async()=>{let id=spotifyClientId();if(!id){id=prompt('Cole o Client ID do seu aplicativo Spotify:')?.trim()||'';if(id)try{localStorage.setItem(SPOTIFY_CLIENT_KEY,id)}catch{}}if(id)await spotifyLogin()})}
 function curtainReveal(){
   if(prefersReducedMotion())return;
@@ -3724,18 +4295,24 @@ function puzzleTerminalPanelMarkup(){
   if(!puzzles.length)return '<div class="section-heading"><div><span class="section-kicker">DISPOSITIVOS RECUPERADOS</span><h2>Procurando terminais</h2></div></div><div class="empty">Nenhum terminal foi localizado nesta sessão. O silêncio também contém pistas.</div>';
   return `<div class="section-heading"><div><span class="section-kicker">ARQUIVO INTERDITADO</span><h2>Dispositivos recuperados</h2><p class="small muted">Autentique-se em cada terminal. As credenciais são verificadas no servidor e o conteúdo protegido só é entregue após o acesso correto.</p></div><span class="corner-mark">${puzzles.length} TERMINAL(IS)</span><button class="btn small" type="button" id="refreshPuzzles">Reconectar</button></div><div class="ashen-terminal-stack">${puzzles.map(p=>{const unlocked=immersivePuzzleUnlocked[p.id];return unlocked?terminalDesktopMarkup(p,unlocked):terminalLoginMarkup(p)}).join('')}</div>`;
 }
-async function refreshImmersivePuzzles(){
+async function refreshImmersivePuzzles(opts){
+  const silent=!!(opts&&opts.silent===true);
   const sid=String(state.combatSession?.sessionId||'');
   if(state.session?.role!=='player')return;
   const ownerId=String(state.session?.playerId||state.session?.login||'');
   if(!sid){immersivePuzzleSessionId='';immersivePuzzleOwnerId=ownerId;immersivePuzzleUnlocked={};immersivePuzzleCache=[];immersivePuzzleStatus='idle';immersivePuzzleStatusMessage='';return;}
   if(immersivePuzzleSessionId!==sid||immersivePuzzleOwnerId!==ownerId){immersivePuzzleSessionId=sid;immersivePuzzleOwnerId=ownerId;immersivePuzzleUnlocked={};resetTerminalUiState();immersivePuzzleCache=[];immersivePuzzleStatus='idle'}
-  immersivePuzzleStatus='loading';immersivePuzzleStatusMessage='';
+  if(!silent){immersivePuzzleStatus='loading';immersivePuzzleStatusMessage='';}
   try{
     const rows=await listSessionPuzzles(sid);
     if(immersivePuzzleSessionId!==sid||String(state.combatSession?.sessionId||'')!==sid)return;
-    immersivePuzzleCache=Array.isArray(rows)?rows:[];immersivePuzzleStatus='ready';
+    const next=Array.isArray(rows)?rows.filter(x=>x&&x.visibleToPlayers!==false&&x.active!==false):[];
+    const sig=JSON.stringify(next.map(x=>[x.id,x.title,x.terminalLabel,x.prompt,x.hint]));
+    const changed=sig!==immersivePuzzleSig||immersivePuzzleStatus!=='ready';
+    immersivePuzzleSig=sig;immersivePuzzleCache=next;immersivePuzzleStatus='ready';immersivePuzzleStatusMessage='';
+    if(silent&&!changed)return;
   }catch(err){
+    if(silent)return;
     if(immersivePuzzleSessionId!==sid||String(state.combatSession?.sessionId||'')!==sid)return;
     immersivePuzzleStatus='error';immersivePuzzleStatusMessage=puzzleRpcErrorText(err);
     const schemaMissing=Boolean(err?.schemaMissing||String(err?.code||'')==='PGRST202'||Number(err?.status)===404);
@@ -3907,7 +4484,7 @@ function remoteRenderNeeded(view,domains){
     needed=new Set(['customContent','uiIcons','characterRules','classBonuses']);
   }else if(view==='library'){
     needed=new Set(['items']);
-  }else if(view==='diary'){
+  }else if(view==='diary'||view==='dicerules'){
     needed=new Set();
   }else if(view==='nexus'){
     needed=new Set(['nexus']);
@@ -3943,7 +4520,7 @@ async function boot(){
       const remote=remoteRow?.data || remoteRow;
       const bootIsMaster=state.session?.role==='master';
       if(hasRemoteSharedData(remote)){
-        await saveLocalRecovery('antes-da-sincronizacao');
+        await saveLocalRecovery('antes-da-sincronizacao').catch(e=>console.warn('Backup local antes da sincronização indisponível; mantendo os dados locais:',e));
         if(bootIsMaster&&globalDirty()&&!loadFailed){
           const stamp=Number(storageGet(GLOBAL_DIRTY_KEY)||0);
           try{await backupGlobal(remote,'antes-de-reenviar-alteracao-pendente')}catch(e){console.warn('Backup remoto indisponível:',e)}
@@ -3954,7 +4531,7 @@ async function boot(){
           try{mergeGlobal(remote);storageSet(KEY,serializeState());persistCriticalCache();persistSessionCache()}finally{remoteApplying=false}
         }
       }else if(bootIsMaster){
-        await saveLocalRecovery('antes-do-primeiro-envio');
+        await saveLocalRecovery('antes-do-primeiro-envio').catch(e=>console.warn('Backup local antes do primeiro envio indisponível:',e));
         remoteApplying=true;
         try{await pushGlobalTracked(globalPayload())}finally{remoteApplying=false}
       }
@@ -3990,6 +4567,7 @@ async function boot(){
         }
         if(currentView==='tv'){
           if(d.includes('tvScreen')||d.includes('tvScenes'))applyTvCommand(tvCurrent(),true);
+          if(d.includes('nexus')){if(state.nexus?.active&&!nexusRemoteStream)nexusJoin({force:true});else if(!state.nexus?.active){clearTimeout(nexusJoinTimer);nexusClosePlayer()}}
         }else if(remoteRenderNeeded(currentView||'home',d)){
           if(!(state.session?.role==='player'&&currentView==='sheet')&&!(state.session?.role==='master'&&currentView==='master'))queueRemoteRender(currentView||'home');
         }
@@ -4054,7 +4632,7 @@ async function boot(){
           }
         }finally{ps.applying=false}
       })}
-      subscribeLive(msg=>{if(msg.event==='tv-scene')handleTvLive(msg.payload);if(msg.event==='combat-start')combatStartLive(msg.payload);if(msg.event==='campaign-archive-changed')handleCampaignArchiveLive();nexusHandleLive(msg);});
+      subscribeLive(msg=>{if(msg.event==='tv-scene')handleTvLive(msg.payload);if(msg.event==='combat-start')combatStartLive(msg.payload);if(msg.event==='campaign-archive-changed')handleCampaignArchiveLive();if(msg.event==='puzzles-changed')puzzleAutoRefreshTick();nexusHandleLive(msg);});
       startPresence();
       const isMobile=matchMedia('(max-width: 800px)').matches;
       const pollDelay=isMobile?90000:45000;

@@ -26,7 +26,7 @@ function status(){
   const online=navigator.onLine!==false;
   const guardian=c.guardian||{};
   const errors=events.filter(e=>e.type==='error'||e.type==='rejection').length;
-  return {online,guardian,session:c.session||{},players:c.players||{},integrity:c.integrity||null,errors,agentVersion:AGENT_VERSION,checkedAt:now()};
+  return {online,guardian,session:c.session||{},players:c.players||{},errors,agentVersion:AGENT_VERSION,checkedAt:now()};
 }
 function classify(s){
   const issues=[];
@@ -34,8 +34,6 @@ function classify(s){
   if(s.guardian?.state==='session')issues.push({level:'critical',code:'SESSION',title:'Sessão não confirmada',action:'Verificar a sessão antes de tentar qualquer escrita.'});
   if(s.guardian?.state==='attention')issues.push({level:'warning',code:'SYNC',title:'Sincronização em atenção',action:'Executar recuperação segura e repetir a leitura do servidor.'});
   if(s.players?.readOnly)issues.push({level:'warning',code:'PLAYER_READONLY',title:'Sincronização dos Players pausada',action:'Executar reconciliação segura; não recriar Players localmente.'});
-  if(s.integrity && !s.integrity.ok)issues.push({level:'warning',code:'CAMPAIGN_INTEGRITY',title:'Integridade dos registros de Players requer atenção',action:`Duplicados: ${s.integrity.duplicates?.length||0}; sem ID: ${s.integrity.missingId?.length||0}; registros inválidos: ${s.integrity.invalid?.length||0}. Revisar antes de qualquer alteração.`});
-  if(s.integrity?.pendingSync)issues.push({level:'warning',code:'PENDING_SYNC',title:'Há sincronização pendente',action:'Confirmar o estado remoto antes de considerar a campanha sincronizada.'});
   if(s.errors>0)issues.push({level:'warning',code:'RUNTIME_ERRORS',title:`${s.errors} erro(s) do navegador registrados`,action:'Revisar o relatório antes de aplicar qualquer correção.'});
   if(!issues.length)issues.push({level:'ok',code:'HEALTHY',title:'Nenhum problema crítico detectado',action:'Continuar monitorando.'});
   return issues;
@@ -57,7 +55,6 @@ function proposal(){
     `Guardião: ${s.guardian?.state||'desconhecido'} — ${s.guardian?.message||'sem mensagem'}`,
     `Players: ${s.players?.count??'desconhecido'}`,
     `Erros registrados: ${s.errors}`,
-    `Integridade da campanha: ${s.integrity ? JSON.stringify(s.integrity) : 'não consultada'}`,
     '',
     '## Diagnóstico',
     ...issues.map(i=>`- [${i.level.toUpperCase()}] ${i.code}: ${i.title}. ${i.action}`),

@@ -72,10 +72,32 @@ O ZIP original não continha metadados Git (`.git`), então este pacote está pr
 - Testes: `scripts/unit/session-mode.test.mjs`, `scripts/browser/session-mode.e2e.mjs` (presença simulada pelo evento `ashen-presence-sim`).
 - **Não testado com servidor real**: a presença depende do Supabase Realtime; validar em staging com 2+ aparelhos.
 
-## Ashen AI — núcleo contextual inicial
-- Adicionada a janela Ashen AI exclusiva do Mestre na Command Desk.
-- Criado o endpoint server-side `/api/ashen-ai`, com validação de role `master` e consulta segura ao Arquivo de Campanha.
-- Criado o Context Engine lexical com limites de contexto, seleção por relevância e remoção de campos internos.
-- A IA diferencia fatos, inferências e sugestões e opera em modo somente leitura.
-- Extraída a comunicação dos provedores para `api/_lib/ai-provider.js`, compartilhada com a IA de manutenção.
-- Incluídos testes unitários e teste de endpoint; nenhuma migração nova foi necessária.
+## V1.5.78 — Ashen AI Engine
+- Added a separate player-facing/session AI engine and authenticated `/api/ashen-ai` endpoint, reusing the project's existing provider environment variables.
+- Added bounded session context, archive snippets, conversation history, safe action validation, and explicit confirmation before changing HP/Sanity, initiative, or advancing an active turn.
+- Kept maintenance AI isolated from session actions.
+- Added unit and API tests for message/context sanitation, action validation, ambiguous targets, provider parsing, and Master-only access.
+
+## V1.6.0 — Ashen AI ampliado
+
+**Motor conversacional e ferramentas**
+- Orquestração com chamadas de ferramentas em múltiplas rodadas para provedores OpenAI compatíveis e Anthropic.
+- Consultas estruturadas de fichas, monstros, combate, condições, Arquivo, memória, regras e magias.
+- Rolagens reais de dados no servidor e testes de perícia/atributo respeitando o modo de rolagem configurado e as perícias somente treinadas.
+- Ações ampliadas: condições, inventário, registros no Arquivo e memória, além de Vida/Sanidade, iniciativa e turno.
+- Ações propostas podem ser enfileiradas e confirmadas individualmente; nenhuma alteração é aplicada diretamente pelo modelo.
+
+**Memória e voz**
+- Nova migração `20261118190000_ashen_ai_memory.sql` cria memória persistente privada com RLS e RPCs que validam o token de Mestre.
+- Entrada por voz nativa do navegador com revisão antes do envio; síntese de fala opcional.
+- IA de Manutenção continua independente.
+
+**Verificações**
+- 22 testes focados de Ashen/migração passaram após a última alteração. O teste de integração da API também passou com a fila de múltiplas propostas. A suíte completa havia reportado 328 testes aprovados antes desse ajuste; a repetição final travou na suíte de estresse sem falha de asserção, portanto o resultado integral final é inconclusivo. A suíte de estresse passou isoladamente (16 testes).
+- Integração da API, manutenção, caos, sintaxe, escopo, estabilidade, sync, backup, XSS e secrets passaram.
+- Build Vite não validado por ausência de dependências no ambiente; integração real com provedor/Supabase remoto não executada.
+
+**Limites conhecidos**
+- PDF/URL de livro de regras não é extraído/indexado para o motor; `search_rules` consulta regras estruturadas e magias enviadas pelo aplicativo.
+- Rolagens solicitadas ao motor são mostradas no chat, mas não entram automaticamente no histórico individual da ficha.
+- A migração de memória precisa ser aplicada no Supabase do deploy.

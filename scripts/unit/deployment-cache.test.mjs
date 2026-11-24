@@ -42,7 +42,20 @@ test('loadAdmin exposes local performance diagnostics without removing previous 
   assert.match(html, /Desempenho local, memória e carregamento/);
   assert.match(html, /runPerformanceDiagnostics/);
   assert.match(html, /exportPerformanceReport/);
-  assert.match(html, /runPersistenceSelfTest/);
+  assert.match(html, /runSiteVerification/);
+  assert.doesNotMatch(html, /runPersistenceSelfTest/);
   assert.match(html, /runPlayerStressTest/);
   assert.match(html, /runDeploymentCacheCheck/);
+});
+
+test('Cache-Control no-cache (revalida sempre) é aceito em qualquer host, inclusive IP da rede local', async () => {
+  const { runDeploymentCacheCheck } = await import('../../src/version/deploymentDiagnostics.js');
+  const html = '<title>Ashen Testimony</title><script type="module" src="/src/main.js"></script>';
+  for (const [hostname, cc, expected] of [['192.168.0.20', 'no-cache', true], ['meu-site.vercel.app', 'no-cache', true], ['meu-site.vercel.app', 'public, max-age=31536000', false], ['meu-site.vercel.app', '', false]]) {
+    const r = await runDeploymentCacheCheck({
+      fetchImpl: async () => ({ ok: true, status: 200, text: async () => html, headers: { get: () => cc } }),
+      locationObj: { origin: `http://${hostname}`, hostname }, buildInfo: { buildId: 'x', release: 'V1.6.2' }, serviceWorkerController: null,
+    });
+    assert.equal(r.checks.find(c => c.name.includes('cache')).ok, expected, `${hostname} ${cc}`);
+  }
 });
